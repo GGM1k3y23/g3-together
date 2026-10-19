@@ -1,0 +1,3 @@
+LIBRARY Script_G3Together
+EXPORTS
+    ScriptInit=_ScriptInit@0
