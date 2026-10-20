@@ -18,6 +18,7 @@
 #include "items.h"
 #include "containers.h"
 #include "config.h"
+#include "trace.h"
 #include "log.h"
 #include "npcs.h"
 #include "qa.h"
@@ -163,6 +164,7 @@ extern "C" __declspec(dllexport) gSScriptInit const* GE_STDCALL ScriptInit()
     g3t::OpenLog("g3together.log");
     g3t::qa::Init();
     g3t::LoadConfig();
+    g3t::trace::Configure(g3t::GetConfig().trace);
     g3t::remote::Start();
     g3t::npcs::Start();
     g3t::combat::Start();

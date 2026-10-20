@@ -49,14 +49,15 @@ class Copy:
 
     def launch(self, role='host', name='Host'):
         (self.root/'g3together.ini').write_text(
-            f'role = {role}\naddress = 127.0.0.1\nport = {PORT}\nname = {name}\npuppet_template = {PUPPET_TEMPLATE}\n')
+            f'role = {role}\naddress = 127.0.0.1\nport = {PORT}\nname = {name}\npuppet_template = {PUPPET_TEMPLATE}\n'
+            + ''.join(f'{line}\n' for line in os.environ.get('G3_INI_EXTRA', '').split(';') if line))
         (self.root/'qa-enable.txt').write_text('Enabled only for this bounded QA run\n')
         # Gothic 3 allows one running game per PC (named mutex GenomeMutex); a game that finds it exits at once with
         # code 0. With two pairs of test copies (two agents) any game may be the one holding it, so every game
         # releases it as soon as its QA hook answers, and a start that exits early is retried after a random pause.
         import random
         for attempt in range(6):
-            for name in ('g3together.log', 'qa-engine.log'):
+            for name in ('g3together.log', 'qa-engine.log', 'g3trace.log'):
                 (self.root/name).unlink(missing_ok=True)
             (self.root/'qa-command.txt').write_text('1 state\n')
             self.process = subprocess.Popen([str(self.root/'Gothic3.exe')], cwd=self.root)
@@ -106,7 +107,7 @@ class Copy:
     def collect(self):
         out = self.run/self.tag
         out.mkdir(exist_ok=True)
-        for name in ('g3together.log', 'qa-engine.log', 'qa-command.txt'):
+        for name in ('g3together.log', 'qa-engine.log', 'qa-command.txt', 'g3trace.log'):
             if (self.root/name).is_file():
                 shutil.copy2(self.root/name, out/name)
         for source in (self.root/'isolated-profile').rglob('*.log'):
@@ -425,6 +426,13 @@ def stage3b(copies, report, negative=False):
     # A: one client hit. Undone locally at once, applied on the host, mirrored back.
     host_before = host_npcs[target]['hp']
     first = hit_npc(client.bot, target)
+    # A raider in a fight may parry (task ZS_Parade*): no damage, so nothing to claim. Game behaviour, swing again.
+    for _ in range(3):
+        if first['claim_sent'] or 'task=ZS_Parade' not in first['line']:
+            break
+        report.setdefault('parried', []).append(first['line'])
+        time.sleep(2)
+        first = hit_npc(client.bot, target)
     report['first_hit'] = first['line']
     assert first['after'] == first['before'], 'Client changed the NPC\'s hit points itself: '+first['line']
     assert first['claim_sent'] == 1, 'No hit claim sent: '+first['line']
@@ -3492,6 +3500,169 @@ def stageL(copies, report, negative=False):
     report['gap_after_m'] = round(wait_for(lambda: gap() < 300 and [gap()], 10, 'the client stands next to the host')[0] / 100, 1)
 
 
+TRACE_LINE = re.compile(r'^\s*(\d+) (anim|task|aitask) (\S+?)(\(puppet\)|\(mirror\))? (.*) by (\S+)$')
+
+
+def read_trace(copy):
+    path = copy.root/'g3trace.log'
+    if not path.exists():
+        return None
+    return [m.groups() for m in map(TRACE_LINE.match, path.read_text(errors='replace').splitlines()) if m]
+
+
+def tracediag(copies, report, negative=False):
+    """The runtime trace (owner 2026-10-19: trace instead of more static reverse engineering). With "trace on" each
+    machine logs to g3trace.log which code starts an animation (Engine PlayMotion) or sets a task (Game SetCurrentTask,
+    AISetTask) on a body the mod drives, with the caller as module+RVA. Checks: all three hooks installed, lines for
+    mirrors on the client and for the puppet on the host, callers resolved to modules. Negative control: no trace
+    command, no file."""
+    from collections import Counter
+    host, client = join_both(copies)
+    via_ini = 'trace = on' in os.environ.get('G3_INI_EXTRA', '')  # the players' way: INI line, no QA command
+    report['via_ini'] = via_ini
+    if not negative:
+        for copy in (host, client):
+            line = report_line(copy.bot, 'trace' if via_ini else 'trace on', 'TRACE ')
+            report[copy.tag+'_trace_on'] = line
+            assert 'mode=driven' in line and 'hooks=111' in line, copy.tag+': '+line
+    time.sleep(int(os.environ.get('G3_TRACE_SECONDS', '45')))
+    for copy, tag in ((host, '(puppet)'), (client, '(mirror)')):
+        if not negative:
+            report[copy.tag+'_trace_off'] = report_line(copy.bot, 'trace off', 'TRACE ')
+        lines = read_trace(copy)
+        if negative:
+            assert lines is None, copy.tag+': g3trace.log written without a trace command'
+            continue
+        assert lines, copy.tag+': no trace lines'
+        report[copy.tag+'_lines'] = len(lines)
+        report[copy.tag+'_by_kind'] = dict(Counter(f"{k}{m or ''}" for _, k, _, m, _, _ in lines))
+        report[copy.tag+'_top_callers'] = Counter(f'{k} by {c}' for _, k, _, _, _, c in lines).most_common(12)
+        report[copy.tag+'_top_details'] = Counter(f'{k} {d}' for _, k, _, _, d, _ in lines).most_common(15)
+        assert any(m == tag for _, _, _, m, _, _ in lines), f'{copy.tag}: no line for a {tag} body'
+        resolved = sum(1 for *_, c in lines if re.match(r'[\w.]+\.(dll|exe)\+0x[0-9a-f]+$', c, re.I))
+        report[copy.tag+'_callers_resolved'] = resolved
+        assert resolved == len(lines), f'{copy.tag}: {len(lines) - resolved} callers not resolved to a module'
+
+
+DEATH_WORDS = ('dead', 'die', 'death', 'ragdoll', 'down', 'lie')
+
+
+def deaddiag(copies, report, negative=False):
+    """Diagnostic for agent B's side finding (19.10.): orcs the host kills sometimes stand upright on the client, although
+    its NPC list says dead. The client traces (g3trace.log) while the host kills mirrored orcs near it, half by the
+    cheat kill (farkill), half by weapon hits (hitnpc, the game's damage path). Per victim: the task the client set,
+    the motions it played after that, the last motion per slot and who started it. Screenshots of the client."""
+    host, client = join_both(copies)
+    for copy in (host, client):
+        armed = report_line(copy.bot, 'arm '+WEAPON, 'ARM ')
+    time.sleep(8)
+    if negative:
+        assert 'ok=1' in report_line(client.bot, 'deadposeoff', 'DEADPOSEOFF ')
+    mode = os.environ.get('G3_TRACE_MODE', 'on')
+    report['trace_on'] = report_line(client.bot, 'trace '+mode, 'TRACE ')
+    report['host_trace_on'] = report_line(host.bot, 'trace all', 'TRACE ')  # the host's own orcs die natively there
+    host_npcs, client_npcs = npcs(host.bot), npcs(client.bot)
+    client_at = remotes(host.bot)[2]['pos']
+    alive = [g for g in set(host_npcs) & set(client_npcs)
+             if client_npcs[g]['mirrored'] and not host_npcs[g]['dead'] and host_npcs[g]['hp'] > 0
+             and host_npcs[g]['name'].startswith('Orc_')]
+    alive.sort(key=lambda g: distance(client_npcs[g]['pos'], client_at))
+    victims = alive[:int(os.environ.get('G3_VICTIMS', '4'))]
+    assert victims, 'no living mirrored orc'
+    report['victims'] = []
+    for i, g in enumerate(victims):
+        name = host_npcs[g]['name']
+        entry = {'guid': g, 'name': name, 'distance_m': round(distance(client_npcs[g]['pos'], client_at) / 100, 1)}
+        if i % 2 == 0:
+            entry['how'] = 'farkill'
+            entry['kill'] = report_line(host.bot, 'farkill '+name, 'FARKILL ')
+        else:
+            entry['how'] = 'hits'
+            hits = []
+            for _ in range(25):
+                hit = hit_npc(host.bot, g)
+                hits.append(hit['line'][-60:])
+                if hit.get('dead'):
+                    break
+                time.sleep(0.4)
+            entry['hits'] = len(hits)
+            entry['last_hit'] = hits[-1]
+        report['victims'].append(entry)
+        time.sleep(1)
+    time.sleep(10)
+    snap(client, 'after-deaths', report)
+    after = npcs(client.bot)
+    pattern = r'DEADPOSE mirror=(\S+) killed=(\d) running=(\d) height=(-?[\d.]+) ani=(-?\d+) motion=(\S+) slots=(\S*)'
+
+    def pose_lines():
+        start = client.bot.send('deadpose', 20)
+        summary = client.bot.line('DEADPOSE enabled', 10, 'deadpose', start)
+        return summary, {m[0]: {'killed': m[1] == '1', 'running': m[2] == '1', 'height': float(m[3]), 'ani': int(m[4]),
+                                'motion': m[5], 'slots': m[6]} for m in re.findall(pattern, client.bot.log()[start:])}
+    report['deadpose'], poses = pose_lines()
+    # The engine animates only bodies on screen; bones of a corpse behind the camera keep an old pose. Look at each
+    # victim (hero 4 m away, facing it), then measure it and take a picture.
+    for entry in report['victims']:
+        report_line(client.bot, 'lookat '+entry['name'], 'LOOKAT ')
+        time.sleep(2)
+        _, seen = pose_lines()
+        if entry['name'] in seen:
+            poses[entry['name']] = seen[entry['name']]
+        snap(client, 'corpse-'+entry['name'], report)
+    report['alive_heights'] = {k: v['height'] for k, v in poses.items() if not v['killed']}
+    start = client.bot.send('nearnpcs', 20)
+    client.bot.line('NEARX end', 10, 'nearnpcs', start)
+    shows = dict(re.findall(r'NEARX guid=\S+ name=(\S+) .*? motion=(\S*)', client.bot.log()[start:]))
+    host_after = npcs(host.bot)
+    report['trace_off'] = report_line(client.bot, 'trace off', 'TRACE ')
+    report['host_trace_off'] = report_line(host.bot, 'trace off', 'TRACE ')
+    lines = read_trace(client) or []
+    host_lines = read_trace(host) or []
+    report['trace_lines'] = len(lines)
+    for entry in report['victims']:
+        theirs = [l for l in host_lines if l[2] == entry['name']]
+        host_death = next((int(l[0]) for l in theirs if l[1] != 'anim' and ('Dead' in l[4] or 'Die' in l[4])), None)
+        entry['host_tasks'] = [f'{l[0]} {l[4]} by {l[5]}' for l in theirs if l[1] != 'anim'][-6:]
+        entry['host_anims_after_death'] = [f'{l[0]} {l[4]} by {l[5]}' for l in theirs
+                                           if l[1] == 'anim' and host_death is not None and int(l[0]) >= host_death][:12]
+        g, name = entry['guid'], entry['name']
+        entry['host_dead'] = host_after.get(g, {}).get('dead')
+        entry['client'] = {k: after.get(g, {}).get(k) for k in ('dead', 'mirrored', 'task', 'hp')}
+        mine = [l for l in lines if l[2] == name]
+        tasks = [(int(l[0]), l[4], l[5]) for l in mine if l[1] != 'anim']
+        death_at = next((ms for ms, d, _ in tasks if 'Dead' in d or 'Die' in d), None)
+        entry['tasks'] = [f'{ms} {d} by {c}' for ms, d, c in tasks][-8:]
+        entry['death_task_ms'] = death_at
+        later = [l for l in mine if l[1] == 'anim' and death_at is not None and int(l[0]) >= death_at]
+        entry['anims_after_death'] = len(later)
+        last = {}
+        for l in later:
+            slot = re.match(r'type=(\d+)', l[4])
+            last[slot[1] if slot else '?'] = f'{l[0]} {l[4]} by {l[5]}'
+        entry['last_anim_per_slot'] = last
+        entry['non_death_after_death'] = [f'{l[0]} {l[4]} by {l[5]}' for l in later
+                                          if not any(w in l[4].lower() for w in DEATH_WORDS)][-10:]
+        entry['looks_standing'] = bool(later) and not any(any(w in l[4].lower() for w in DEATH_WORDS) for l in later[-3:])
+        entry['client_shows'] = shows.get(name)
+        entry['client_pose'] = poses.get(name)
+    # Lying: the lying-dead motion runs on slot 0 and nothing runs on the locomotion slots 1-3 (without the fix they
+    # play walking and fighting motions on the corpse). The height of the posed body (highest bone, lying 54 cm,
+    # standing 170-205 cm) is reported too, but it is no proof: the engine animates only bodies on screen and the
+    # camera does not turn with "lookat", so a corpse behind the camera keeps an old pose (19.10.: 205 = never shown).
+    def lies(entry):
+        pose = entry.get('client_pose') or {}
+        return ('LieDead' in pose.get('motion', '') and pose.get('running') and ':run:' not in pose.get('slots', ':run:'))
+    lying = [e['name'] for e in report['victims'] if lies(e)]
+    report['flat_by_height'] = f"{sum(1 for e in report['victims'] if (e.get('client_pose') or {}).get('height', 999) < 100)}/{len(report['victims'])}"
+    report['lying_on_client'] = f'{len(lying)}/{len(report["victims"])}'
+    # Stage "dead lie down": every orc the host killed lies on the client (motion LieDead_*); negative control: none.
+    if negative:  # the bug: without laying down most corpses stand (some lie by themselves)
+        assert len(lying) < len(report['victims']), f'all dead mirrors lie although laying down is off: {lying}'
+    else:
+        assert len(lying) == len(report['victims']), 'dead mirrors not lying on the client: ' + str(
+            {e['name']: e.get('client_shows') for e in report['victims'] if e['name'] not in lying})
+
+
 def infodescdiag(copies, report, negative=False):
     """Why can a dialog option not run? Conditions and script lines of the options named in G3_INFOS."""
     host = copies['host'].launch()
@@ -3555,7 +3726,7 @@ def parity(copies, report, negative=False):
     report['client_connect_attempts'] = client.mod_log().count('net: connecting to')
 
 
-SUITES = {'parity': parity, 'stageL': stageL, 'stageP3a': stageP3a, 'invariantself': invariantself, 'puppetposediag': puppetposediag, 'syncdiag': syncdiag, 'ownerdiag': ownerdiag, 'potiondiag': potiondiag, 'transformdiag': transformdiag, 'rangeddiag': rangeddiag, 'rangedbot': rangedbot, 'stageP1': stageP1, 'stageT': stageT, 'stageV5': stageV5, 'stageV4': stageV4, 'posediag': posediag, 'stageV3': stageV3, 'stageV1': stageV1, 'stageV2': stageV2, 'viewdiag': viewdiag, 'stageE5': stageE5, 'stageQ': stageQ, 'questdiag': questdiag, 'stageE4': stageE4, 'infodescdiag': infodescdiag, 'stageE3': stageE3, 'stageE2': stageE2, 'stageE1': stageE1, 'aggrodiag': aggrodiag, 'stageH3b': stageH3b, 'infoscandiag': infoscandiag, 'gotodiag2': gotodiag2, 'walkdiag': walkdiag, 'gotodiag': gotodiag, 'navdiag': navdiag, 'soak': soak, 'stageH2': stageH2, 'stageH1': stageH1, 'infodiag': infodiag, 'stageG2': stageG2, 'stageG': stageG, 'stageD3b': stageD3b, 'stageD3a': stageD3a, 'stageD2': stageD2, 'stageD1': stageD1, 'stageC': stageC, 'stageB': stageB, 'stageA2': stageA2, 'stageA': stageA, 'herodeathdiag': herodeathdiag, 'herodiag': herodiag, 'givexpdiag': givexpdiag, 'stage3c': stage3c, 'farwritediag': farwritediag, 'stage1': stage1, 'stage2': stage2, 'animdiag': animdiag, 'stage3a': stage3a, 'scriptdiag': scriptdiag,
+SUITES = {'parity': parity, 'tracediag': tracediag, 'deaddiag': deaddiag, 'stageL': stageL, 'stageP3a': stageP3a, 'invariantself': invariantself, 'puppetposediag': puppetposediag, 'syncdiag': syncdiag, 'ownerdiag': ownerdiag, 'potiondiag': potiondiag, 'transformdiag': transformdiag, 'rangeddiag': rangeddiag, 'rangedbot': rangedbot, 'stageP1': stageP1, 'stageT': stageT, 'stageV5': stageV5, 'stageV4': stageV4, 'posediag': posediag, 'stageV3': stageV3, 'stageV1': stageV1, 'stageV2': stageV2, 'viewdiag': viewdiag, 'stageE5': stageE5, 'stageQ': stageQ, 'questdiag': questdiag, 'stageE4': stageE4, 'infodescdiag': infodescdiag, 'stageE3': stageE3, 'stageE2': stageE2, 'stageE1': stageE1, 'aggrodiag': aggrodiag, 'stageH3b': stageH3b, 'infoscandiag': infoscandiag, 'gotodiag2': gotodiag2, 'walkdiag': walkdiag, 'gotodiag': gotodiag, 'navdiag': navdiag, 'soak': soak, 'stageH2': stageH2, 'stageH1': stageH1, 'infodiag': infodiag, 'stageG2': stageG2, 'stageG': stageG, 'stageD3b': stageD3b, 'stageD3a': stageD3a, 'stageD2': stageD2, 'stageD1': stageD1, 'stageC': stageC, 'stageB': stageB, 'stageA2': stageA2, 'stageA': stageA, 'herodeathdiag': herodeathdiag, 'herodiag': herodiag, 'givexpdiag': givexpdiag, 'stage3c': stage3c, 'farwritediag': farwritediag, 'stage1': stage1, 'stage2': stage2, 'animdiag': animdiag, 'stage3a': stage3a, 'scriptdiag': scriptdiag,
           'stage3b': stage3b, 'combatdiag': combatdiag, 'stackdiag': stackdiag, 'stage4': stage4, 'stage4b': stage4b, 'talkdiag': talkdiag, 'namesdiag': namesdiag, 'talkdiag2': talkdiag2, 'stage4c': stage4c, 'itemdiag': itemdiag, 'stage5': stage5, 'lootdiag': lootdiag, 'stage5b': stage5b, 'stage5c': stage5c, 'radiusdiag': radiusdiag, 'pausediag': pausediag, 'savediag': savediag}
 
 

@@ -1,2 +1,9 @@
 build/
 __pycache__/
+/g3together.ini
+/g3together.log
+/g3trace.log
+/g3together-logs-*.zip
+/.vs/
+/out/
+*.py[cod]

@@ -83,6 +83,29 @@ void Teleport(char const* xyz, LogFn log)
     log(line);
 }
 
+// QA: look at a named entity: the hero 4 m away from it on the line from where it stands, facing it; the camera behind
+// the hero then shows the entity (the engine animates bodies on screen; deaddiag measures corpses this way).
+void LookAt(char const* name, LogFn log)
+{
+    char line[200];
+    eCDynamicEntity* hero = gCSession::GetInstance().GetHero();
+    Entity target = Entity::GetEntity(bCString(name));
+    if (!hero || !target.GetInstance()) { log("REFUSED lookat: no hero or no such entity"); return; }
+    float from[3], at[3];
+    PositionOf(hero, from);
+    PositionOf(target.GetInstance(), at);
+    float dx = at[0] - from[0], dz = at[2] - from[2];
+    const float length = std::sqrt(dx * dx + dz * dz);
+    if (length < 1.0f) dx = 0.0f, dz = 1.0f;
+    else dx /= length, dz /= length;
+    const float yaw = std::atan2(dx, dz);
+    const float rotation[4] = {0.0f, std::sin(yaw / 2), 0.0f, std::cos(yaw / 2)};
+    const float place[3] = {at[0] - dx * 400.0f, at[1] + 50.0f, at[2] - dz * 400.0f};
+    Entity(hero).MoveTo(body::Pose(*hero, place, rotation));
+    sprintf_s(line, "LOOKAT name=%s pos=%.0f_%.0f_%.0f", name, place[0], place[1], place[2]);
+    log(line);
+}
+
 void Near(char const* xyz, LogFn log)
 {
     char line[260];

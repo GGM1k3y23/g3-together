@@ -27,6 +27,7 @@
 #include "clock.h"
 #include "infocmd.h"
 #include "remote.h"
+#include "trace.h"
 
 #include <Game.h>
 #include <Windows.h>
@@ -223,7 +224,15 @@ void Quest(gCSession& session, const char* action)
 // Commands added after the chain below reached MSVC's limit of nested blocks (C1061).
 bool RunLaterAction(const char* action)
 {
-    if (!std::strcmp(action, "partnerjump")) {
+    if (!std::strcmp(action, "lookat")) {
+        g3t::explore::LookAt(argument, &Log);
+    } else if (!std::strcmp(action, "deadposeoff")) {
+        g3t::npcs::DeadPoseOff(&Log);
+    } else if (!std::strcmp(action, "deadpose")) {
+        g3t::npcs::DeadPoseReport(&Log);
+    } else if (!std::strcmp(action, "trace")) {
+        g3t::trace::Command(argument, &Log);
+    } else if (!std::strcmp(action, "partnerjump")) {
         g3t::partner::JumpQa(&Log);
     } else if (!std::strcmp(action, "partyxpoff")) {
         g3t::combat::PartyXpOff(&Log);

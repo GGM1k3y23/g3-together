@@ -66,6 +66,10 @@ struct Mirror
     uint32_t latestTicks = 0;
     uint32_t heldRight = 0, heldLeft = 0;  // what this mirror holds now (hashes)
     uint32_t holdChecked = 0;
+    char skeleton[24] = {};        // prefix of its motion names (Orc, Hero, ...), for the lying-dead motions
+    bool laid = false;             // lying-dead start motion played
+    uint32_t lieCheckAt = 0;
+    unsigned lieTries = 0;
 };
 unsigned holdChanges = 0;
 bool style = true;  // QA negative control: StyleOff (no weapons in hand, no stance on mirrors)
@@ -324,6 +328,68 @@ void ClaimTick(uint32_t now)
 }
 
 bool xpGuard = true;  // QA negative control: XpGuardOff
+bool deadPose = true;  // QA negative control: DeadPoseOff
+unsigned corpsesLaid = 0, corpseLoops = 0, slotsStopped = 0;
+
+// The motion-name prefix of a body's skeleton ("Orc" of "Orc_Stand_None_2H_..."), from what it shows or last showed
+// on the owner's machine.
+void LearnSkeleton(Mirror& m, char const* motion)
+{
+    if (*m.skeleton || !motion) return;
+    const size_t n = std::strcspn(motion, "_");
+    if (n && n < sizeof(m.skeleton) && motion[n] == '_') std::memcpy(m.skeleton, motion, n), m.skeleton[n] = '\0';
+}
+
+// A dead mirror lies down the way the game lays its dead down (deaddiag 19.10., agent B's finding "dead orcs stand on
+// the client"): on the client ZS_Dead, with AIMode 9 set first so that it skips the death script, played no motion at
+// all and the body froze in its last pose, mostly standing; the owner's ZS_Dead plays <skeleton>_..._LieDead_Begin and
+// then LieDead_Ambient_Loop every ~400 ms, and a ragdoll death falls by physics there. Here: the start motion once,
+// then the loop whenever slot 0 shows something else.
+void LayDown(Mirror& m, uint32_t now)
+{
+    if (!deadPose || m.lieTries >= 40 || static_cast<int32_t>(now - m.lieCheckAt) < 0) return;
+    m.lieCheckAt = now + 400;
+    char shows[128];
+    body::CurrentMotion(m.entity.GetInstance(), shows, sizeof(shows));
+    LearnSkeleton(m, shows);
+    if (!*m.skeleton) {
+        auto name = motionNames.find(m.latest.motion);
+        if (name != motionNames.end()) LearnSkeleton(m, name->second.c_str());
+    }
+    if (!*m.skeleton) return;
+    // Nothing of its life may go on underneath, at every check: the movement controller (a mirror walking when it died)
+    // and the locomotion slots 1-3 kept playing standing and walking motions, and 3 of 12 corpses stood with the lying
+    // loop running on slot 0 (deaddiag 19.10.); stopped once, 1 of 12 still stood (it had been in its fighting stance).
+    m.entity.CharacterMovement.StopMovement();
+    if (auto* animation = static_cast<eCVisualAnimation_PS*>(m.entity.GetInstance()->GetPropertySet(eEPropertySetType_Animation)))
+        for (int slot = 1; slot <= 3; ++slot)
+            if (animation->GetActor() && animation->GetActor()->IsMotionRunning(static_cast<eCWrapper_emfx2Actor::eEMotionType>(slot)))
+                animation->StopMotion(static_cast<eCWrapper_emfx2Actor::eEMotionType>(slot), 0.2f), ++slotsStopped;
+    // Lying already: the start motion or the loop still plays (once a motion ends the body falls back to its bind pose).
+    if (std::strstr(shows, "LieDead") && body::MotionRunning(m.entity.GetInstance())) {
+        m.lieTries = 0;  // the cap counts only starts in a row that did not run
+        return;
+    }
+    char motion[128];
+    if (!m.laid) {
+        sprintf_s(motion, "%s_Stand_None_None_P0_LieDead_Begin_N_Back_00_%%_00_P0_200", m.skeleton);
+        m.laid = true;
+        m.lieCheckAt = now + 2000;  // the start motion takes ~2 s (owner's trace)
+        ++corpsesLaid;
+    } else {
+        // The loop belongs to the lying-dead stance: it plays only once the body has that stance (body.cpp: motions of
+        // another stance do not play), and like the game's own ZS_Dead_Loop as a play-ani instruction (deaddiag: started
+        // with StartPlayAni it showed on slot 0 but did not run, and 2 of 4 corpses stood).
+        sprintf_s(motion, "%s_LieDead_None_None_P0_Ambient_Loop_N_Back_00_%%_00_P0_0", m.skeleton);
+        m.entity.Routine.AniState = gEAniState_LieDead;
+        ++corpseLoops;
+        ++m.lieTries;
+        if (!body::PlayAniInstruction(m.entity.GetInstance(), m.body, motion)) m.entity.StartPlayAni(bCString(motion), 0, GEFalse, 1.0f, GEFalse);
+        return;
+    }
+    ++m.lieTries;
+    m.entity.StartPlayAni(bCString(motion), 0, GEFalse, 1.0f, GEFalse);
+}
 
 void MirrorTick()
 {
@@ -390,6 +456,7 @@ void MirrorTick()
                 m.entity.Routine.AIMode = gEAIMode_Dead;
                 m.entity.Routine.SetTask(bCString(DeathTask));
             }
+            if (xpGuard) LayDown(m, now);
             ++it;
             continue;
         }
@@ -422,6 +489,7 @@ void MirrorTick()
         const uint32_t interval = m.latestTicks - m.previousTicks;
         const float speed = interval ? body::Distance(m.latest.position, m.previous.position) * 1000.0f / interval : 0.0f;
         auto name = motionNames.find(m.latest.motion);
+        if (name != motionNames.end()) LearnSkeleton(m, name->second.c_str());
         const body::Target target{m.latest.position, m.latest.rotation, m.latest.movementMode,
                                   name != motionNames.end() ? name->second.c_str() : nullptr, speed,
                                   style && m.latest.aniState ? static_cast<int>(m.latest.aniState) : -1};
@@ -695,5 +763,40 @@ void RecvOff(LogFn log)
 {
     receiving = false;
     log("NPCRECVOFF ok=1");
+}
+}
+
+namespace g3t::npcs {
+void DeadPoseOff(LogFn log)
+{
+    deadPose = false;
+    log("DEADPOSEOFF ok=1");
+}
+
+void DeadPoseReport(LogFn log)
+{
+    char line[700];
+    // Per mirror: the motion on slot 0, whether it runs, and the height of the animated body (lying: low).
+    unsigned alive = 0;
+    for (auto& entry : mirrors) {
+        Mirror& m = entry.second;
+        if (!m.entity.GetInstance() || (!m.killed && alive++ >= 3)) continue;
+        char shows[128];
+        body::CurrentMotion(m.entity.GetInstance(), shows, sizeof(shows));
+        char slots[400] = {};
+        if (auto* animation = static_cast<eCVisualAnimation_PS*>(m.entity.GetInstance()->GetPropertySet(eEPropertySetType_Animation)))
+            for (int slot = 1; slot <= 3; ++slot) {
+                char name[128] = {};
+                body::MotionName(animation, slot, name, sizeof(name));
+                const bool runs = animation->GetActor() && animation->GetActor()->IsMotionRunning(static_cast<eCWrapper_emfx2Actor::eEMotionType>(slot));
+                sprintf_s(slots + strlen(slots), sizeof(slots) - strlen(slots), "%s%d:%s:%s", slot > 1 ? "|" : "", slot, runs ? "run" : "off", *name ? name : "-");
+            }
+        sprintf_s(line, "DEADPOSE mirror=%s killed=%d running=%d height=%.0f ani=%d motion=%s slots=%s", m.entity.GetName().GetText(), m.killed ? 1 : 0,
+                  body::MotionRunning(m.entity.GetInstance()) ? 1 : 0, body::BoundaryHeight(m.entity.GetInstance()),
+                  static_cast<int>(m.entity.Routine.AniState), *shows ? shows : "-", slots);
+        log(line);
+    }
+    sprintf_s(line, "DEADPOSE enabled=%d laid=%u loops=%u slots_stopped=%u", deadPose ? 1 : 0, corpsesLaid, corpseLoops, slotsStopped);
+    log(line);
 }
 }

@@ -19,6 +19,8 @@ port = 34567
 name = Host
 # Key that jumps to the other player (default PAGEDOWN): F1-F24, PAGEUP, HOME, END, INSERT, DELETE or a letter
 partner_key = PAGEDOWN
+# For a bug report about NPCs: remove the # below, restart, reproduce (writes g3trace.log, see SPIELEN.md)
+# trace = on
 """
 CLIENT_INI = """# G3 Together: this player joins the host.
 role = client
@@ -26,6 +28,8 @@ address = 127.0.0.1
 port = 34567
 name = Player
 partner_key = PAGEDOWN
+# For a bug report about NPCs: remove the # below, restart, reproduce (writes g3trace.log, see SPIELEN.md)
+# trace = on
 """
 
 

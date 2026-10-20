@@ -94,7 +94,8 @@ Der Dokumente-Ordner ist standardmäßig `%USERPROFILE%\Documents`; ein abweiche
 
 ## Bekannte Grenzen
 
-- Alles ist mit Bots getestet, noch nicht mit Menschen; getestet wurde auf einem PC mit zwei Spielkopien, nicht über das Internet.
+- Alles ist mit Bots getestet. Ein erster kurzer Test mit Menschen (zwei Fenster auf einem PC) fand zwei Fehler, beide sind
+  behoben und mit Bots geprüft. Über das echte Internet ist noch nicht getestet.
 - Nur zu zweit getestet.
 - Gefolgsleute nach dem Laden findet der Host über den Spielernamen; wer seinen Namen ändert, verliert sie.
 - Lädt der Host während des Spiels einen anderen Spielstand, müssen sich die Mitspieler trennen und neu beitreten.

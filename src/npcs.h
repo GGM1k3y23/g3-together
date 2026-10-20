@@ -30,6 +30,8 @@ void ClearCompanions();
 void CompanionsOff(LogFn log);
 void StyleOff(LogFn log);
 void RecvOff(LogFn log);  // QA: ignore every NPC snapshot from now on (invariant self-test)
+void DeadPoseOff(LogFn log);     // QA negative control: dead mirrors are not laid down
+void DeadPoseReport(LogFn log);  // QA: DEADPOSE line
 unsigned HoldChanges();  // QA: weapons put into mirrors' hands so far  // QA negative control: mirrors hold no weapons and keep their stance  // QA negative control: saved companions are not handed over
 bool Claimed(eCEntity const* entity);  // client: taken over by this player
 void OwnOff(LogFn log);      // QA negative control (client): send none of its own NPCs

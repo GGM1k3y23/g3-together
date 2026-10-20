@@ -169,6 +169,42 @@ bool CurrentMotion(eCEntity* entity, char* out, size_t size)
     return animation && MotionName(animation, 0, out, size);
 }
 
+bool MotionRunning(eCEntity* entity)
+{
+    auto* animation = entity ? static_cast<eCVisualAnimation_PS*>(entity->GetPropertySet(eEPropertySetType_Animation)) : nullptr;
+    eCWrapper_emfx2Actor* actor = animation ? animation->GetActor() : nullptr;
+    return actor && actor->IsMotionRunning(static_cast<eCWrapper_emfx2Actor::eEMotionType>(0));
+}
+
+float BoneTop(eCVisualAnimation_PS* animation, bCVector const& base, int* bones)
+{
+    float top = -1e9f;
+    *bones = 0;
+    __try {
+        bCMatrix m;
+        for (int i = 0; i < 128 && animation->GetBoneMatrix(i, m); ++i) {
+            bCVector const& at = m.GetTranslation();
+            const float dx = at.GetX() - base.GetX(), dz = at.GetZ() - base.GetZ(), dy = at.GetY() - base.GetY();
+            if (dx * dx + dz * dz > 400.0f * 400.0f || dy < -200.0f || dy > 400.0f) continue;  // not part of this body's skeleton
+            if (dy > top) top = dy;
+            ++*bones;
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return -2.0f;
+    }
+    return *bones ? top : -1.0f;
+}
+
+// Height of the posed body: its highest bone above its position (a lying body is flat). The bounds of the actor do not
+// follow the pose (deaddiag: about 195 cm for standing and lying orcs alike).
+float BoundaryHeight(eCEntity* entity)
+{
+    auto* animation = entity ? static_cast<eCVisualAnimation_PS*>(entity->GetPropertySet(eEPropertySetType_Animation)) : nullptr;
+    if (!animation) return -1.0f;
+    int bones = 0;
+    return BoneTop(animation, entity->GetWorldMatrix().GetTranslation(), &bones);
+}
+
 bCMatrix Pose(eCEntity const& base, float const position[3], float const rotation[4])
 {
     bCMatrix m = base.GetWorldMatrix();
@@ -180,6 +216,11 @@ bCMatrix Pose(eCEntity const& base, float const position[3], float const rotatio
     m.ModifyRotation(q);
     m.AccessTranslation() = bCVector(position[0], position[1], position[2]);
     return m;
+}
+
+bool PlayAniInstruction(eCEntity* instance, State& state, char const* name)
+{
+    return PlayScriptAni(instance, state, name);
 }
 
 int AIModeOf(eCEntity* entity)

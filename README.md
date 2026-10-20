@@ -4,6 +4,11 @@ Co-op for Gothic 3 (Steam, Community Patch 1.75.14), built on the unofficial
 [Gothic 3 SDK](https://github.com/georgeto/gothic3sdk). GPL-3.0-or-later (see COPYING).
 Bundles [ENet](https://github.com/lsalzman/enet) 1.3.18 (MIT, thirdparty/enet/LICENSE).
 
+> **Work in progress, not reviewed by human players yet.** Every stage below is tested by
+> automated bot suites that drive two real game clients on one PC. Human playtesting has only
+> just started: nobody has finished the story in co-op, play over the internet is untested, and
+> only two players were tested. Expect bugs and back up your saves. There is no release yet.
+
 ## Status
 
 Follows the build order of the [coop-anything](https://github.com/cranebeaker/coop-anything) playbook.

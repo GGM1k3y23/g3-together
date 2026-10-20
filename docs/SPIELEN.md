@@ -1,6 +1,6 @@
 # G3 Together spielen
 
-G3 Together macht Gothic 3 zu einem Koop-Spiel für 2 bis 4 Spieler. Ein Spieler ist der **Host**: Seine Welt
+G3 Together macht Gothic 3 zu einem Koop-Spiel für 2 Spieler (mehr sind vorgesehen, aber nicht getestet). Ein Spieler ist der **Host**: Seine Welt
 ist die gemeinsame Kampagne, sein Spielstand ist der Spielstand aller. Die anderen treten bei.
 
 Stand: Testversion. Was geht und was nicht, steht unten unter „Bekannte Grenzen“.
@@ -66,7 +66,8 @@ Alternativ leitet der Host UDP-Port 34567 in seinem Router auf seinen PC weiter.
 - Alle sehen dieselben NPCs, Kämpfe und Tode. Jede Gegend läuft bei einem Spieler: in der Nähe des Hosts beim
   Host, weit weg von ihm bei dem Mitspieler, der zuerst dort war. Kommt der andere dazu, sieht er dieselbe Gegend.
 - Schaden: Einen Treffer auf ein NPC entscheidet der Rechner, bei dem dieses NPC läuft. Erfahrung bekommt, wer
-  tötet. Tötet ein NPC ein anderes, bekommt niemand Erfahrung.
+  tötet. Tötet ein Begleiter oder eine Beschwörung eines Spielers ein NPC, bekommt dieser Spieler die Erfahrung;
+  tötet ein anderes NPC es, bekommt niemand Erfahrung.
 - Gefolgsleute folgen dem Spieler, der sie angeworben hat, auch weit weg vom Host. Entlässt er sie, gehören sie
   wieder dem Host.
 - Quests und bereits geführte Dialoge sind gemeinsam; Quest-Belohnungen bekommen alle. Kill-Aufträge zählen auch Gegner, die
@@ -81,6 +82,16 @@ Alternativ leitet der Host UDP-Port 34567 in seinem Router auf seinen PC weiter.
   in einer anderen Welt oder länger als 5 Sekunden nicht im Spiel ist), stirbt man wie im Einzelspiel und lädt einen
   Spielstand. Der Mitspieler tritt danach wieder bei.
 - Tote NPCs bleiben tot, auch wenn sie weit weg vom Host gestorben sind.
+
+## Fehler melden
+
+- Fehler mit Uhrzeit aufschreiben (wer Host war, was ihr gemacht und gesehen habt).
+- Danach bei beiden `Werkzeuge\collect_logs.py` ausführen und die ZIP-Datei weitergeben.
+- Für Fehler an NPCs und Gegnern, die ihr wiederholen könnt (z. B. ein toter Ork steht beim Mitspieler aufrecht):
+  in die INI `trace = on` schreiben und neu starten. Dann schreibt das Spiel `g3trace.log` in den Spielordner: welche
+  Animation und welche Aufgabe die NPCs bekommen, die die Mod steuert, und welcher Spielcode das auslöst. Die Datei ist
+  auf etwa 50 000 Zeilen begrenzt und wird bei jedem Start neu angelegt; `collect_logs.py` nimmt sie mit. Danach die Zeile
+  wieder entfernen.
 
 ## Bekannte Grenzen
 

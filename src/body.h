@@ -13,6 +13,8 @@ float Distance(float const a[3], float const b[3]);
 // Motion slot `type` of a body; slot 0 is what it visibly plays right now. Guarded against bad slots.
 bool MotionName(eCVisualAnimation_PS* animation, int type, char* out, size_t size);
 bool CurrentMotion(eCEntity* entity, char* out, size_t size);
+bool MotionRunning(eCEntity* entity);  // slot 0 plays a motion (it is not stopped at its end)
+float BoundaryHeight(eCEntity* entity); // highest bone of the posed body above its position in cm, < 0 unknown
 bCMatrix Pose(eCEntity const& base, float const position[3], float const rotation[4]);
 
 struct State
@@ -62,5 +64,7 @@ char const* IdleTask();
 void Pacify(Entity& entity, State& state);
 void Release(Entity& entity, State& state);
 void Drive(Entity& entity, State& state, Target const& target, uint32_t now);
+// A motion as a play-ani instruction on the body's script processing unit, the way the game's scripts play them.
+bool PlayAniInstruction(eCEntity* instance, State& state, char const* name);
 int AIModeOf(eCEntity* entity);  // gEAIMode, -1 without a script routine
 }

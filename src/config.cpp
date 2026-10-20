@@ -65,6 +65,7 @@ Config const& LoadConfig()
         else if (!_stricmp(key, "name")) strncpy_s(config.name, value, _TRUNCATE);
         else if (!_stricmp(key, "puppet_template")) strncpy_s(config.puppetTemplate, value, _TRUNCATE);
         else if (!_stricmp(key, "partner_key")) strncpy_s(config.partnerKey, value, _TRUNCATE);
+        else if (!_stricmp(key, "trace")) strncpy_s(config.trace, value, _TRUNCATE);
     }
     fclose(file);
     Logf("config: role=%s address=%s port=%u name=%s puppet_template=%s", config.host ? "host" : "client",

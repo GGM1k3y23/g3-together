@@ -80,7 +80,7 @@ def _ini_without_address(path: Path) -> str:
 
 def _files_to_collect(game_dir: Path, documents_dir: Path) -> list[tuple[Path, str, bool]]:
     files: list[tuple[Path, str, bool]] = []
-    for name in ("g3together.log", "g3together.ini"):
+    for name in ("g3together.log", "g3together.ini", "g3trace.log"):
         source = game_dir / name
         if source.is_file():
             files.append((source, name, name.lower() == "g3together.ini"))
