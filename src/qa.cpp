@@ -30,6 +30,9 @@
 #include "infocmd.h"
 #include "remote.h"
 #include "trace.h"
+#include "world.h"
+#include "social.h"
+#include "doors.h"
 
 #include <Game.h>
 #include <Windows.h>
@@ -226,7 +229,29 @@ void Quest(gCSession& session, const char* action)
 // Commands added after the chain below reached MSVC's limit of nested blocks (C1061).
 bool RunLaterAction(const char* action)
 {
-    if (!std::strcmp(action, "continueroutine")) {
+    if (!std::strcmp(action, "reacthitsoff")) {
+        g3t::combat::ReactHitsOff(&Log);
+    } else if (!std::strcmp(action, "doors")) {
+        g3t::doors::Report(&Log);
+    } else if (!std::strcmp(action, "doorsyncoff")) {
+        g3t::doors::SyncOff(&Log);
+    } else if (!std::strcmp(action, "owned")) {
+        g3t::social::Owned(argument, &Log);
+    } else if (!std::strcmp(action, "enclaves")) {
+        g3t::social::Enclaves(&Log);
+    } else if (!std::strcmp(action, "crime")) {
+        g3t::social::Crime(argument, &Log);
+    } else if (!std::strcmp(action, "usables")) {
+        g3t::world::Usables(argument, &Log);
+    } else if (!std::strcmp(action, "use")) {
+        g3t::world::Use(argument, &Log);
+    } else if (!std::strcmp(action, "unlock")) {
+        g3t::world::Unlock(argument, &Log);
+    } else if (!std::strcmp(action, "useinfo")) {
+        g3t::world::UseInfo(argument, &Log);
+    } else if (!std::strcmp(action, "attitude")) {
+        g3t::explore::Attitude(argument, &Log);
+    } else if (!std::strcmp(action, "continueroutine")) {
         g3t::ai::ContinueRoutineReport(&Log);
     } else if (!std::strcmp(action, "continueroutineon")) {
         g3t::ai::ContinueRoutineOn(&Log);

@@ -35,6 +35,8 @@ unsigned xpAwarded = 0;                     // client: kills of this player's hi
 unsigned claimsSent = 0, claimsApplied = 0, playerHitsSent = 0, playerHitsTaken = 0;
 unsigned npcHitsSent = 0, npcHitsApplied = 0, npcKills = 0, npcHitsUnresolved = 0, partyKills = 0;
 bool partyXp = true;  // QA negative control: PartyXpOff
+bool reactHits = true;  // QA negative control: ReactHitsOff
+unsigned reactionsStarted = 0;  // host: client hits that made the NPC judge its attacker (AssessTarget)
 bool npcHits = true;  // QA negative control: NpcHitsOff
 unsigned forwardedJudged = 0, forwardedBare = 0;  // client: forwarded hits judged here / applied as bare hit points
 
@@ -203,6 +205,14 @@ void OnHitNpc(uint8_t from, uint8_t const guid[16], int32_t delta, uint8_t const
     struct Pass { Pass() { forwarded = true; } ~Pass() { forwarded = false; } } pass;
     if (HitPoints(target) + delta > 0 || !attacker) {
         CallScript("AddHitPoints", target.GetInstance(), attacker, delta);
+        // The game's hit path (DoLogicalDamage) also decides how the NPC reacts; AddHitPoints alone left a friendly NPC
+        // talking on while the client struck it (friendlydiag 20.10.). Let it judge the attacker as the game does when an
+        // NPC takes damage (AssessAttack -> AssessTarget with reason ReactToDamage): fight back, flee or call for help.
+        // Not again while it already has the puppet as its target.
+        if (reactHits && attacker && target.NPC.GetCurrentTarget().GetInstance() != attacker && !target.IsDead() && !target.IsDown()) {
+            CallScript("AssessTarget", target.GetInstance(), attacker, gEAttackReason_ReactToDamage);
+            ++reactionsStarted;
+        }
         return;
     }
     // Lethal. Not a hit judged by the game: for any attacker but the local player the hit judgement caps the
@@ -419,10 +429,10 @@ void Report(LogFn log)
     char line[400];
     eCDynamicEntity* hero = gCSession::GetInstance().GetHero();
     Entity self(hero);
-    sprintf_s(line, "HP hero=%d max=%d installed=%d bypass=%d filter_calls=%u dropped=%u kills=%u xp_awarded=%u xp=%d claims_sent=%u claims_applied=%u player_hits_sent=%u player_hits_taken=%u forwarded_judged=%u forwarded_bare=%u npc_hits_sent=%u npc_hits_applied=%u npc_kills=%u npc_hits_unresolved=%u party_kills=%u",
+    sprintf_s(line, "HP hero=%d max=%d installed=%d bypass=%d filter_calls=%u dropped=%u kills=%u xp_awarded=%u xp=%d claims_sent=%u claims_applied=%u player_hits_sent=%u player_hits_taken=%u forwarded_judged=%u forwarded_bare=%u npc_hits_sent=%u npc_hits_applied=%u npc_kills=%u npc_hits_unresolved=%u party_kills=%u reactions=%u",
               hero ? self.PlayerMemory.GetHitPoints() : -1, hero ? self.PlayerMemory.GetHitPointsMax() : -1, installed, bypass,
               filterCalls, dropped, kills, xpAwarded, hero ? static_cast<int>(self.PlayerMemory.XP) : -1, claimsSent, claimsApplied, playerHitsSent, playerHitsTaken,
-              forwardedJudged, forwardedBare, npcHitsSent, npcHitsApplied, npcKills, npcHitsUnresolved, partyKills);
+              forwardedJudged, forwardedBare, npcHitsSent, npcHitsApplied, npcKills, npcHitsUnresolved, partyKills, reactionsStarted);
     log(line);
 }
 
@@ -584,5 +594,11 @@ void PartyXpOff(LogFn log)
 {
     partyXp = false;
     log("PARTYXPOFF ok=1");
+}
+
+void ReactHitsOff(LogFn log)
+{
+    reactHits = false;
+    log("REACTHITSOFF ok=1");
 }
 }

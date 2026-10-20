@@ -82,6 +82,12 @@ Alternativ leitet der Host UDP-Port 34567 in seinem Router auf seinen PC weiter.
   in einer anderen Welt oder länger als 5 Sekunden nicht im Spiel ist), stirbt man wie im Einzelspiel und lädt einen
   Spielstand. Der Mitspieler tritt danach wieder bei.
 - Tote NPCs bleiben tot, auch wenn sie weit weg vom Host gestorben sind.
+- Türen und Schlösser: Öffnet einer eine Tür oder knackt ein Schloss, ist sie für alle offen, auch für den, der
+  später beitritt.
+- NPCs wehren sich gegen beide: Schlägt der Mitspieler einen NPC, reagiert dieser wie im Einzelspiel (greift an,
+  flieht oder ruft um Hilfe).
+- Pfeile, Bolzen und Feuerbälle der Spieler sieht der andere fliegen; ein Treffer zählt genau einmal. Heilzauber
+  wirken auch auf den Mitspieler.
 
 ## Fehler melden
 
@@ -116,6 +122,8 @@ Alternativ leitet der Host UDP-Port 34567 in seinem Router auf seinen PC weiter.
   und Speichern während einer Verwandlung; dabei kann es noch Fehler geben.
 - Gegner greifen beide Spieler an. Wie ein NPC zum Mitspieler steht, richtet sich nach dem Helden des Rechners, der dieses
   NPC gerade berechnet: Hat der Host bei den Orks einen schlechten Ruf, gilt der beim Host auch für den Mitspieler.
+- Diebstahl und Ruf bei Städten und Lagern (wer stiehlt, wer es sieht, was die Wachen sagen) sind noch nicht für zwei
+  Spieler angepasst und nicht getestet.
 - Nicht getestet: Monster, die auf einen am Boden liegenden Helden weiter einschlagen; Ausrauben eines
   bewusstlosen Helden; Spielen über das echte Internet (getestet wurde auf einem PC mit zwei Spielkopien);
   mehr als zwei Spieler. Alles hier wurde mit Bots getestet. Ein erster kurzer Test mit Menschen (zwei Fenster auf einem

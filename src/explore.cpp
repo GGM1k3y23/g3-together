@@ -83,6 +83,20 @@ void Teleport(char const* xyz, LogFn log)
     log(line);
 }
 
+void Attitude(char const* name, LogFn log)
+{
+    char line[200];
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    Entity npc = Entity::GetEntity(bCString(name));
+    if (!hero || !npc.GetInstance()) { log("REFUSED attitude: no hero or no such NPC"); return; }
+    auto& admin = GetScriptAdminExt();
+    const GEInt toHero = admin.CallScript(bCString("GetAttitude"), npc.GetInstance(), hero, 0);
+    eCEntity* puppet = remote::PuppetOf(2);
+    const GEInt toPuppet = puppet ? admin.CallScript(bCString("GetAttitude"), npc.GetInstance(), puppet, 0) : -1;
+    sprintf_s(line, "ATTITUDE name=%s hero=%d puppet=%d task=%s", name, toHero, toPuppet, npc.Routine.GetCurrentTask().GetText());
+    log(line);
+}
+
 void HeroPos(LogFn log)
 {
     char line[120];

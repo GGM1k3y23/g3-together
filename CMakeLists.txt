@@ -25,7 +25,7 @@ set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/enet/compres
 target_link_libraries(enet PUBLIC ws2_32 winmm)
 
 add_library(Script_G3Together SHARED src/Script_G3Together.cpp src/log.cpp src/qa.cpp src/config.cpp src/net.cpp
-            src/remote.cpp src/body.cpp src/npcs.cpp src/ai.cpp src/combat.cpp src/hitprobe.cpp src/story.cpp src/talk.cpp src/items.cpp src/containers.cpp src/explore.cpp src/parity.cpp src/downed.cpp src/hud.cpp src/range.cpp src/journal.cpp src/persist.cpp src/hero.cpp src/clock.cpp src/infocmd.cpp src/transform.cpp src/ranged.cpp src/partner.cpp src/summon.cpp src/shot.cpp src/spells.cpp src/crashlog.cpp src/trace.cpp src/exports.def)
+            src/remote.cpp src/body.cpp src/npcs.cpp src/ai.cpp src/combat.cpp src/hitprobe.cpp src/story.cpp src/talk.cpp src/items.cpp src/containers.cpp src/explore.cpp src/parity.cpp src/downed.cpp src/hud.cpp src/range.cpp src/journal.cpp src/persist.cpp src/hero.cpp src/clock.cpp src/infocmd.cpp src/transform.cpp src/ranged.cpp src/partner.cpp src/summon.cpp src/shot.cpp src/spells.cpp src/crashlog.cpp src/trace.cpp src/world.cpp src/social.cpp src/doors.cpp src/exports.def)
 target_gothic_script_options(Script_G3Together)
 # A map file, to turn crash addresses from the engine's report into functions.
 target_link_options(Script_G3Together PRIVATE /MAP)

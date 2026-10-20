@@ -118,7 +118,8 @@ void SetClockHandler(ClockHandler handler);
 // A world state after a dialog command (infocmd.cpp). kind 1: an entity's state by GUID; kind 2: a sector
 // (name in routine, status in enclave); kind 3: a dialog started a fight (guid = attacker, guard = the player
 // attacked, routine = the attack reason's name); kind 4/5: a client took over / gave back a companion (guid); kind 6: host to player `guard`: that claim is refused
-// or ended; kind 7: host to player `guard`: this NPC from the host's save is your companion.
+// or ended; kind 7: host to player `guard`: this NPC from the host's save is your companion; kind 8/9: downed.cpp;
+// kind 10: a door or lock (doors.cpp: guard = open, alignment = locked, npcClass bits 1 door, 2 lock).
 // Client: to the host; host: to every client except `except`.
 #pragma pack(push, 1)
 struct WorldState {

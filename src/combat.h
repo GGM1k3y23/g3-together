@@ -25,6 +25,7 @@ void FleeFrom(char const* guid, LogFn log);     // QA stage V5: an NPC flees fro
 void Report(LogFn log);                    // QA: HP of the local hero and counters
 void Uninstall(LogFn log);                  // QA negative control: let every hit through
 void NpcHitsOff(LogFn log);
+void ReactHitsOff(LogFn log);  // QA negative control: a client's hit does not make the host's NPC judge its attacker
 void PartyXpOff(LogFn log);  // QA negative control: kills by our companions/summons pay no one                 // QA negative control: our NPCs' hits on others' NPCs are dropped
 void Arm(char const* item, LogFn log);
 bool LethalHit(eCEntity* victim);  // QA: kill through the game's own hit judgement

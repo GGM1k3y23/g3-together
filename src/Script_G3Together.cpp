@@ -19,6 +19,7 @@
 #include "containers.h"
 #include "config.h"
 #include "trace.h"
+#include "doors.h"
 #include "log.h"
 #include "npcs.h"
 #include "qa.h"
@@ -104,6 +105,7 @@ class Module : public eCEngineComponentBase
         g3t::talk::OnWorldChange();
         g3t::journal::OnWorldChange();
         g3t::infocmd::OnWorldChange();
+        g3t::doors::OnWorldChange();
     }
     bEResult WorldActivate() override
     {
@@ -142,6 +144,7 @@ class Module : public eCEngineComponentBase
         g3t::downed::Tick();
         g3t::range::Tick();
         g3t::partner::Tick();
+        g3t::doors::Tick();
         g3t::journal::Tick();
         g3t::persist::Tick();
         g3t::clock::Tick();

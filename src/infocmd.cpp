@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+#include "doors.h"
 #include "infocmd.h"
 
 #include "body.h"
@@ -122,6 +123,10 @@ void Snapshot(Entity& e, net::WorldState& s)
 
 void Apply(net::WorldState const& s, uint8_t from)
 {
+    if (s.kind == 10) {  // a door or lock state (doors.cpp)
+        doors::OnState(from, s);
+        return;
+    }
     if (s.kind == 4 || s.kind == 5) {  // a client took over (4) or gave back (5) a companion
         if (net::IsHost()) npcs::OnClaim(s.guid, from, s.kind == 4);
         return;
