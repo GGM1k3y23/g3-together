@@ -11,8 +11,8 @@
 
 namespace g3t::net {
 namespace {
-constexpr uint16_t ProtocolVersion = 36;  // 36: summoned things (MsgSummon)
-enum : uint8_t { MsgHello = 1, MsgWelcome = 2, MsgState = 3, MsgLeave = 4, MsgNpcs = 5, MsgMotionName = 6, MsgHitNpc = 7, MsgHitPlayer = 8, MsgStates = 9, MsgTalk = 10, MsgItem = 11, MsgContents = 12, MsgContainerTx = 13, MsgTxResult = 14, MsgWatch = 15, MsgKilled = 16, MsgRefused = 17, MsgDeath = 18, MsgCampaign = 19, MsgFileChunk = 20, MsgFileDone = 21, MsgClock = 22, MsgWorldState = 23, MsgSummon = 24 };
+constexpr uint16_t ProtocolVersion = 38;  // 36: summoned things (MsgSummon); 37: shots (MsgShot); 38: spell projectiles, MsgPlayerSpell
+enum : uint8_t { MsgHello = 1, MsgWelcome = 2, MsgState = 3, MsgLeave = 4, MsgNpcs = 5, MsgMotionName = 6, MsgHitNpc = 7, MsgHitPlayer = 8, MsgStates = 9, MsgTalk = 10, MsgItem = 11, MsgContents = 12, MsgContainerTx = 13, MsgTxResult = 14, MsgWatch = 15, MsgKilled = 16, MsgRefused = 17, MsgDeath = 18, MsgCampaign = 19, MsgFileChunk = 20, MsgFileDone = 21, MsgClock = 22, MsgWorldState = 23, MsgSummon = 24, MsgShot = 25, MsgPlayerSpell = 26 };
 enum : uint8_t { ChannelState = 0, ChannelReliable = 1, ChannelNpcs = 2, ChannelCount = 3 };
 
 #pragma pack(push, 1)
@@ -41,6 +41,8 @@ struct WatchMsg { uint8_t type; uint8_t guid[16]; };
 struct KilledMsg { uint8_t type; uint8_t guid[16]; uint8_t to; };
 struct DeathMsg { uint8_t type; uint8_t guid[16]; uint8_t by; };
 struct SummonMsg { uint8_t type; uint8_t from; SummonNote note; };
+struct ShotMsg { uint8_t type; uint8_t from; ShotNote note; };
+struct PlayerSpellMsg { uint8_t type; uint8_t from; uint8_t to; char script[32]; };
 #pragma pack(pop)
 
 ENetHost* host = nullptr;
@@ -77,6 +79,8 @@ FileChunkHandler fileChunkHandler = nullptr;
 FileDoneHandler fileDoneHandler = nullptr;
 ENetPeer* peers[MaxPlayers] = {};  // host side: peer for each client id
 SummonHandler summonHandler = nullptr;
+ShotHandler shotHandler = nullptr;
+PlayerSpellHandler playerSpellHandler = nullptr;
 
 void Send(ENetPeer* peer, void const* data, size_t size, uint8_t channel, bool reliable)
 {
@@ -235,6 +239,29 @@ void OnReceive(ENetPeer* peer, ENetPacket* packet)
                 if (peers[i] && i != message.from) Send(peers[i], &message, sizeof(message), ChannelReliable, true);
         }
         if (summonHandler && message.from) summonHandler(message.from, message.note);
+    } else if (type == MsgPlayerSpell && packet->dataLength == sizeof(PlayerSpellMsg)) {
+        PlayerSpellMsg message;
+        std::memcpy(&message, packet->data, sizeof(message));
+        message.script[sizeof(message.script) - 1] = 0;
+        if (isHost) {
+            message.from = static_cast<uint8_t>(reinterpret_cast<uintptr_t>(peer->data));
+            if (message.to > 1 && message.to < MaxPlayers && peers[message.to]) {
+                Send(peers[message.to], &message, sizeof(message), ChannelReliable, true);
+                return;
+            }
+        }
+        if (playerSpellHandler && message.from && message.to == localId) playerSpellHandler(message.from, message.script);
+    } else if (type == MsgShot && packet->dataLength == sizeof(ShotMsg)) {
+        ShotMsg message;
+        std::memcpy(&message, packet->data, sizeof(message));
+        message.note.arrow[sizeof(message.note.arrow) - 1] = 0;
+        message.note.spellItem[sizeof(message.note.spellItem) - 1] = 0;
+        if (isHost) {  // from a client: the shooter is that client; pass it on to the others
+            message.from = static_cast<uint8_t>(reinterpret_cast<uintptr_t>(peer->data));
+            for (uint8_t i = 2; i < MaxPlayers; ++i)
+                if (peers[i] && i != message.from) Send(peers[i], &message, sizeof(message), ChannelReliable, true);
+        }
+        if (shotHandler && message.from) shotHandler(message.from, message.note);
     } else if (type == MsgItem && packet->dataLength == sizeof(ItemMsg)) {
         ItemMsg message;
         std::memcpy(&message, packet->data, sizeof(message));
@@ -540,6 +567,29 @@ void SendItem(ItemNote const& note, uint8_t to)
 }
 
 void SetSummonHandler(SummonHandler handler) { summonHandler = handler; }
+void SetShotHandler(ShotHandler handler) { shotHandler = handler; }
+void SetPlayerSpellHandler(PlayerSpellHandler handler) { playerSpellHandler = handler; }
+
+void SendPlayerSpell(uint8_t to, char const* script)
+{
+    if (!host || to == localId || to >= MaxPlayers) return;
+    PlayerSpellMsg message{MsgPlayerSpell, localId, to, {}};
+    strncpy_s(message.script, script, _TRUNCATE);
+    if (!isHost) { if (server && connected) Send(server, &message, sizeof(message), ChannelReliable, true); return; }
+    if (peers[to]) Send(peers[to], &message, sizeof(message), ChannelReliable, true);
+}
+
+void SendShot(ShotNote const& note)
+{
+    if (!host) return;
+    const ShotMsg message{MsgShot, localId, note};
+    if (!isHost) {
+        if (server && connected) Send(server, &message, sizeof(message), ChannelReliable, true);
+        return;
+    }
+    for (uint8_t i = 2; i < MaxPlayers; ++i)
+        if (peers[i]) Send(peers[i], &message, sizeof(message), ChannelReliable, true);
+}
 
 void SendSummon(SummonNote const& note)
 {

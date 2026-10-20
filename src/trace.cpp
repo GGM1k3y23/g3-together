@@ -121,8 +121,21 @@ void TaskLine(char const* kind, gCScriptRoutine_PS* self, bCString const& task, 
 {
     eCEntity* entity = self ? self->GetEntity() : nullptr;
     if (!Wanted(entity)) return;
-    char what[160];
+    char what[1200];
     sprintf_s(what, "task=%s", task.GetText());
+    // AISetTask is reached through Script.dll's wrapper: the direct caller alone does not say who wants the task
+    // (puppet turn, 20.10.). The frames above it, as far as the stack walk finds them, nearest first.
+    if (!std::strcmp(kind, "aitask")) {
+        void* frames[8] = {};
+        const USHORT count = RtlCaptureStackBackTrace(2, 8, frames, nullptr);
+        strcat_s(what, " stack=");
+        for (USHORT i = 0; i < count; ++i) {
+            char frame[MAX_PATH + 16];
+            Caller(frames[i], frame, sizeof(frame));
+            if (i) strcat_s(what, "<");
+            strcat_s(what, frame);
+        }
+    }
     Write(kind, entity, what, caller);
 }
 void __fastcall SetCurrentTaskDetour(gCScriptRoutine_PS* self, void* edx, bCString const& task)

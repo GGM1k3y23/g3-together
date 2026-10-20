@@ -6,6 +6,7 @@ namespace g3t::explore {
 using LogFn = void (*)(char const*);
 void Summary(LogFn log);                    // NPCSUMMARY: all NPCs this machine knows, by distance from the hero
 void Teleport(char const* xyz, LogFn log);  // "X_Y_Z" in cm: move the hero there
+void HeroPos(LogFn log);                   // QA: HEROPOS line, where the controlled body is now
 void LookAt(char const* name, LogFn log);   // put the hero 4 m from a named entity, facing it (camera looks at it)
 void Near(char const* xyz, LogFn log);      // NEAR lines: NPCs within 40 m of "X_Y_Z", then "NEAR end"
 void FarNpcs(LogFn log);                    // FARNPC lines: NPCs anywhere, found via dialog owners

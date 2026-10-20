@@ -27,6 +27,13 @@ DWORD lastTry = 0;
 unsigned blocked = 0;
 gFScript originalScript = nullptr;
 gFScriptAICallback originalCallback = nullptr;
+// The game's script ContinueRoutine (Script_Game.dll 0x100a5ea0) ends a reaction (stumble, slide) and hands the body
+// to SelectRoutineTask (0x100a9440): for a puppet that set ZS_HangAround every frame for ~3 s, which our driver undid
+// every frame, and the puppet turned on the spot (stage2 red 2 of 20; trace with call chains and scriptfind, 20.10.).
+// A player's puppet has no routine: its life is the player's.
+gFScript originalContinue = nullptr;
+bool continueBlock = true;  // QA negative control: ContinueRoutineOn
+unsigned continueBlocked = 0, continueRun = 0;
 bool statesWrapped = false;
 unsigned skipped = 0;
 unsigned unknown = 0;  // calls whose stack top named no wrapped state: must stay 0
@@ -197,6 +204,13 @@ GEInt GE_STDCALL FilterAttitude(gCScriptProcessingUnit* spu, GELPVoid self, GELP
     return originalAttitude(spu, self, other, args);
 }
 
+GEInt GE_STDCALL FilterContinue(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid other, GEInt args)
+{
+    if (continueBlock && remote::IsPuppet(Self(spu, self))) { ++continueBlocked; return 0; }
+    ++continueRun;
+    return originalContinue(spu, self, other, args);
+}
+
 GEBool GE_STDCALL FilterCallback(gCScriptProcessingUnit* spu)
 {
     if (Driven(spu ? spu->GetSelfEntity() : nullptr)) { ++blocked; return GEFalse; }
@@ -224,6 +238,43 @@ unsigned BlockedCount() { return blocked; }
 unsigned SkippedCount() { return skipped; }
 unsigned WrappedCount() { return wrapped; }
 unsigned UnknownCount() { return unknown; }
+void ContinueRoutineReport(void (*log)(char const*))
+{
+    char line[160];
+    sprintf_s(line, "CONTINUEROUTINE wrapped=%d block=%d blocked=%u run=%u", originalContinue != nullptr, continueBlock ? 1 : 0,
+              continueBlocked, continueRun);
+    log(line);
+}
+void ContinueRoutineOn(void (*log)(char const*))
+{
+    continueBlock = false;
+    log("CONTINUEROUTINEON ok=1");
+}
+
+void FindByRva(char const* rvaHex, void (*log)(char const*))
+{
+    gCScriptAdminExt& admin = GetScriptAdminExt();
+    HMODULE game = GetModuleHandleA("Script_Game.dll");
+    const uintptr_t want = reinterpret_cast<uintptr_t>(game) + std::strtoul(rvaHex, nullptr, 16);
+    char line[200];
+    unsigned found = 0;
+    auto check = [&](char const* table, char const* name, void const* fn) {
+        if (reinterpret_cast<uintptr_t>(fn) != want) return;
+        sprintf_s(line, "SCRIPTFIND rva=%s table=%s name=%s", rvaHex, table, name);
+        log(line);
+        ++found;
+    };
+    GE_MAP_FOR_EACH (name, script, admin.GetScripts())
+        if (script) check("script", name.GetText(), reinterpret_cast<void const*>(script->m_funcScript));
+    GE_MAP_FOR_EACH (name, callback, admin.GetScriptAICallbacks())
+        if (callback) check("callback", name.GetText(), reinterpret_cast<void const*>(callback->m_funcScriptAICallback));
+    GE_MAP_FOR_EACH (name, routine, admin.GetScriptAIRoutines())
+        if (routine) check("routine", name.GetText(), reinterpret_cast<void const*>(routine->m_funcScriptAIRoutine));
+    for (auto const& entry : originalStates) check("state", entry.first.c_str(), reinterpret_cast<void const*>(entry.second));
+    for (auto const& entry : originalFunctions) check("function", entry.first.c_str(), reinterpret_cast<void const*>(entry.second));
+    sprintf_s(line, "SCRIPTFIND end rva=%s found=%u", rvaHex, found);
+    log(line);
+}
 
 void Describe(char const* name, void (*log)(char const*))
 {
@@ -280,13 +331,20 @@ void Tick()
             Logf("ai: GetAttitude wrapped (%s; puppets count as the local hero)", attitudeNative ? "native jump" : "script table only");
         }
     }
-    if ((installed || searched) && statesWrapped) return;
+    if ((installed || searched) && statesWrapped && originalContinue) return;
     const DWORD now = GetTickCount();
     if (now - lastTry < 1000) return;
     lastTry = now;
     gCScriptAdminExt& admin = GetScriptAdminExt();
     // The game's scripts are registered once the game runs; wrap them then (our DLL loads first).
     if (!statesWrapped && gCSession::GetInstance().IsGameRunning()) WrapStates(admin);
+    if (!originalContinue && gCSession::GetInstance().IsGameRunning()) {
+        if (auto* script = Find(admin.GetScripts(), "ContinueRoutine"); script && script->m_funcScript && script->m_funcScript != &FilterContinue) {
+            originalContinue = script->m_funcScript;
+            script->m_funcScript = &FilterContinue;
+            Log("ai: ContinueRoutine wrapped (puppets keep no routine)");
+        }
+    }
     if (installed || searched) return;
     if (auto* script = Find(admin.GetScripts(), Name)) {
         originalScript = script->m_funcScript;
@@ -326,5 +384,44 @@ void ListNames(char const* text, void (*log)(char const*))
     scan("function", admin.GetScriptAIFunctions());
     scan("routine", admin.GetScriptAIRoutines());
     log("NAMES end");
+}
+
+// QA, for the inventory of what the game can do: every registered script, AI callback, state, function and routine
+// with the module and RVA of its function and the source file the game registered it from (m_strSource).
+void DumpNames(char const* path, void (*log)(char const*))
+{
+    FILE* file = nullptr;
+    if (fopen_s(&file, path, "wb") || !file) { log("SCRIPTDUMP refused cannot write the file"); return; }
+    std::fputs("kind\tname\tmodule\trva\tsource\r\n", file);
+    gCScriptAdminExt& admin = GetScriptAdminExt();
+    int count = 0;
+    auto dump = [&](char const* kind, auto& map, auto function) {
+        GE_MAP_FOR_EACH (name, entry, map)
+        {
+            if (!entry) continue;
+            void const* code = reinterpret_cast<void const*>(entry->*function);
+            HMODULE module = nullptr;
+            char moduleName[MAX_PATH] = "-";
+            GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               static_cast<LPCSTR>(code), &module);
+            if (module) {
+                GetModuleFileNameA(module, moduleName, sizeof(moduleName));
+                if (char const* slash = std::strrchr(moduleName, '\\')) std::memmove(moduleName, slash + 1, std::strlen(slash));
+            }
+            const uintptr_t rva = module ? reinterpret_cast<uintptr_t>(code) - reinterpret_cast<uintptr_t>(module) : 0;
+            std::fprintf(file, "%s\t%s\t%s\t%#x\t%s\r\n", kind, name.GetText(), moduleName, static_cast<unsigned>(rva),
+                         entry->m_strSource.GetText());
+            ++count;
+        }
+    };
+    dump("script", admin.GetScripts(), &gSScript::m_funcScript);
+    dump("callback", admin.GetScriptAICallbacks(), &gSScriptAICallback::m_funcScriptAICallback);
+    dump("state", admin.GetScriptAIStates(), &gSScriptAIState::m_funcScriptAIState);
+    dump("function", admin.GetScriptAIFunctions(), &gSScriptAIFunction::m_funcScriptAIFunction);
+    dump("routine", admin.GetScriptAIRoutines(), &gSScriptAIRoutine::m_funcScriptAIRoutine);
+    std::fclose(file);
+    char line[120];
+    sprintf_s(line, "SCRIPTDUMP count=%d", count);
+    log(line);
 }
 }

@@ -315,6 +315,8 @@ void OnSummon(uint8_t from, net::SummonNote const& note)
 
 void Start() { net::SetSummonHandler(&OnSummon); }
 
+void WatchHits() { watchUntil = GetTickCount() + 4000; }
+
 void Tick()
 {
     Install();

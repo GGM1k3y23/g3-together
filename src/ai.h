@@ -14,6 +14,10 @@ unsigned UnknownCount(); // wrapper calls that named no wrapped state (must stay
 // QA: which script admin table holds `name` (script, AI callback, AI state, AI function, AI routine).
 void Describe(char const* name, void (*log)(char const*));
 void ListNames(char const* text, void (*log)(char const*));  // QA: registered names containing text
+void DumpNames(char const* path, void (*log)(char const*));  // QA: every registered name, its module+RVA and source file, as TSV
+void FindByRva(char const* rvaHex, void (*log)(char const*)); // QA: registered names whose function is Script_Game.dll+rva
+void ContinueRoutineReport(void (*log)(char const*));  // QA: CONTINUEROUTINE line (puppets kept out of their routine)
+void ContinueRoutineOn(void (*log)(char const*));      // QA negative control: ContinueRoutine runs for puppets again
 // GetAttitude wrapper: an NPC judging a puppet judges the local hero instead.
 bool AttitudeInstalled();
 bool AttitudeNative();          // jump in the native function (all callers), not only the script table

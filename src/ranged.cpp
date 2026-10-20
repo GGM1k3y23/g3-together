@@ -4,6 +4,7 @@
 #include "body.h"
 #include "log.h"
 #include "remote.h"
+#include "summon.h"
 
 #include <Game.h>
 #include <Script.h>
@@ -12,6 +13,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <new>
 #include <vector>
 
 namespace g3t::ranged {
@@ -102,7 +104,7 @@ void Ready(char const* item, LogFn log)
         const gEUseType ammo = use == gEUseType_Bow ? gEUseType_Arrow : gEUseType_Bolt;
         GEInt arrows = StackWithUse(self, ammo);
         if (arrows < 0) {
-            self.Inventory.CreateItems(Template(use == gEUseType_Bow ? "It_Arrow" : "It_Bolt"), 0, 30);
+            self.Inventory.CreateItems(Template(use == gEUseType_Bow ? "Arrow" : "Bolt"), 0, 30);  // the game's ammo templates
             arrows = StackWithUse(self, ammo);
         }
         // After a shot the bow is still held and the right hand empty; holding the same stacks again changes nothing
@@ -181,64 +183,256 @@ struct PendingShot {
     DWORD since = 0;
     LogFn log = nullptr;
     int mode = 0;
+    float heldMultiplier = 0.0f;  // the held arrow's DamageHitMultiplier before Shoot (the draw; velocity = it x 200)
+    char partsOff[120] = "";      // mode 5: the body parts whose collision was off for the shot
+    float heldOffset = 0.0f;      // how far the held arrow was from the hero
 } pending;
 
 eCEntity* lastArrow = nullptr;  // QA: the arrow of the latest shootat, for LASTARROW
+bCPropertyID lastArrowId;       // looked up by ID: an arrow that sticks in something is moved under it and drops out of
+                                // Entity::GetEntities (gCProjectile_PS::OnTouch, MoveToWorldNode)
+
+void SetLastArrow(eCEntity* e)
+{
+    lastArrow = e;
+    lastArrowId = eCEntityProxy(e).GetEntityID();
+}
+
+// The latest shootat arrow if it still exists.
+Entity LastArrowEntity()
+{
+    if (!lastArrow) return Entity();
+    return Entity(lastArrowId);
+}
 eCEntity* lastTarget = nullptr;
+
+// QA: where the latest shootat arrow was in its first 1.5 s, relative to the shooter at the shot, one sample per 100 ms
+// (a later LASTARROW only shows where it ended up).
+struct Trace {
+    DWORD start = 0;
+    bCVector origin;
+    std::vector<std::pair<DWORD, bCVector>> points;
+} trace;
+
+void TraceTick()
+{
+    if (!trace.start || !lastArrow) return;
+    const DWORD t = GetTickCount() - trace.start;
+    if (t > 1500) { trace.start = 0; return; }
+    if (!trace.points.empty() && t < trace.points.back().first + 100) return;
+    if (Entity arrow = LastArrowEntity(); arrow.GetInstance()) {
+        trace.points.emplace_back(t, arrow.GetPosition() - trace.origin);
+        return;
+    }
+    if (t < 300) return;  // a fresh arrow only shows up among the entities a frame later
+    trace.points.emplace_back(t, bCVector(0.0f, -99999.0f, 0.0f));  // gone
+    trace.start = 0;
+}
 
 bool IsProjectile(eCEntity* e)
 {
     return e && e->GetPropertySet(eEPropertySetType_Projectile);
 }
+
+// QA mode 5: for the player, Shoot aims at PSCamera::GetScreenCenterPickPoint, and a bot steers no camera. While a
+// QA shot runs, Script_Game.dll's import of it answers the target's chest instead, so the script's own shot (physics
+// path, speed, everything else) flies at the target. bCVector GetScreenCenterPickPoint() const is __thiscall with a
+// hidden result pointer; __fastcall (this, edx, out) takes the same registers and stack.
+using PickFn = bCVector*(__fastcall*)(void const* camera, void* edx, bCVector* out);
+PickFn realPick = nullptr;
+bool aimActive = false;
+bCVector aimPoint;
+
+bCVector* __fastcall FakePick(void const* camera, void* edx, bCVector* out)
+{
+    if (!aimActive) return realPick(camera, edx, out);
+    return new (out) bCVector(aimPoint);
+}
+
+// Points one import of `module` (by DLL and function name) at `replacement`; returns what it pointed at.
+void* PatchImport(HMODULE module, char const* dll, char const* function, void* replacement)
+{
+    auto* base = reinterpret_cast<unsigned char*>(module);
+    auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
+    auto* nt = reinterpret_cast<IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+    const IMAGE_DATA_DIRECTORY& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    for (auto* imp = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(base + dir.VirtualAddress); imp->Name; ++imp) {
+        if (_stricmp(reinterpret_cast<char const*>(base + imp->Name), dll)) continue;
+        auto* names = reinterpret_cast<IMAGE_THUNK_DATA*>(base + (imp->OriginalFirstThunk ? imp->OriginalFirstThunk : imp->FirstThunk));
+        auto* slots = reinterpret_cast<IMAGE_THUNK_DATA*>(base + imp->FirstThunk);
+        for (; names->u1.AddressOfData; ++names, ++slots) {
+            if (IMAGE_SNAP_BY_ORDINAL(names->u1.Ordinal)) continue;
+            auto* byName = reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(base + names->u1.AddressOfData);
+            if (std::strcmp(reinterpret_cast<char const*>(byName->Name), function)) continue;
+            DWORD old = 0;
+            if (!VirtualProtect(&slots->u1.Function, sizeof(slots->u1.Function), PAGE_READWRITE, &old)) return nullptr;
+            void* previous = reinterpret_cast<void*>(slots->u1.Function);
+            slots->u1.Function = reinterpret_cast<DWORD>(replacement);
+            VirtualProtect(&slots->u1.Function, sizeof(slots->u1.Function), old, &old);
+            return previous;
+        }
+    }
+    return nullptr;
+}
+
+// QA mode 5: the bot shoots without the aiming motion's bow-forward pose, and the new arrow can start inside the
+// hero's own body-part entities (Body_Player, Head_Player), whose collision Shoot does not switch off. Their collision
+// is off for the shot and back on 400 ms later.
+std::vector<eCEntity*> partsOff;
+DWORD partsOnAt = 0;
+
+bool PartOf(eCEntity* e, eCEntity* hero)
+{
+    for (eCEntity* p = e->GetParent(); p; p = p->GetParent())
+        if (p == hero) return true;
+    const char* name = Entity(e).GetName().GetText();
+    const size_t n = std::strlen(name);
+    return n > 7 && !std::strcmp(name + n - 7, "_Player");
+}
+
+int BodyPartsOff(Entity& self, char* names, size_t size)
+{
+    eCEntity* hero = self.GetInstance();
+    const bTObjArray<Entity> all = Entity::GetEntities();
+    for (int i = 0; i < all.GetCount(); ++i) {
+        Entity e = all.GetAt(i);
+        eCEntity* o = e.GetInstance();
+        if (!o || o == hero || !o->HasCollision() || (e.GetPosition() - self.GetPosition()).GetMagnitude() > 250.0f) continue;
+        if (!PartOf(o, hero)) continue;
+        o->EnableCollision(GEFalse);
+        partsOff.push_back(o);
+        strncat_s(names, size, e.GetName().GetText(), _TRUNCATE);
+        strncat_s(names, size, ",", _TRUNCATE);
+    }
+    partsOnAt = GetTickCount() + 400;
+    return static_cast<int>(partsOff.size());
+}
+
+void BodyPartsOn()
+{
+    if (partsOff.empty() || static_cast<int32_t>(GetTickCount() - partsOnAt) < 0) return;
+    const bTObjArray<Entity> all = Entity::GetEntities();  // only parts that still exist
+    for (int i = 0; i < all.GetCount(); ++i)
+        if (std::find(partsOff.begin(), partsOff.end(), all.GetAt(i).GetInstance()) != partsOff.end())
+            all.GetAt(i).GetInstance()->EnableCollision(GETrue);
+    partsOff.clear();
+}
+
+bool AimHooked()
+{
+    static bool tried = false;
+    if (!tried) {
+        tried = true;
+        if (HMODULE game = GetModuleHandleA("Script_Game.dll"))
+            realPick = reinterpret_cast<PickFn>(
+                PatchImport(game, "Script.dll", "?GetScreenCenterPickPoint@PSCamera@@QBE?AVbCVector@@XZ", reinterpret_cast<void*>(&FakePick)));
+        Log(realPick ? "ranged: QA aim hook on GetScreenCenterPickPoint" : "ranged: QA aim hook not installed");
+    }
+    return realPick != nullptr;
+}
 }
 
 void ShootAt(char const* argument, LogFn log)
 {
-    // "GUID" or "GUID-mode" (QA, while comparing): 0 re-aim the script's arrow, 1 leave it (camera aim), 2 replace it
-    // by a fresh arrow sent as the NPC branch does.
+    // "GUID", "GUID-mode" or "GUID-mode-draw" (QA, while comparing): mode 0 re-aim the script's arrow in a line, 1 leave
+    // it (camera aim), 2 replace it by a fresh arrow sent as the NPC branch does, 3 turn its physics path to the target,
+    // 4 as 3 with the target set, 5 the script aims at the target itself (see FakePick), with the hero's body parts out
+    // of the way (see BodyPartsOff), 6 as 5 with the body parts left alone, 7 as 5 but three times as far and 6 m
+    // higher (over what stands about in the village: an arrow that flies, for P2). For the player the script
+    // shoots with ShootVelocity = the held arrow's DamageHitMultiplier x 200, which aiming raises while the bow is
+    // drawn; "draw" (in percent, > 0; commands take no '.') sets that multiplier first.
     char guid[64] = {};
     strncpy_s(guid, argument, _TRUNCATE);
     int mode = homing ? 0 : 1;
-    if (std::strlen(guid) > 36 && guid[36] == '-') { mode = std::atoi(guid + 37); guid[36] = 0; }
+    float draw = 0.0f;
+    if (std::strlen(guid) > 36 && guid[36] == '-') {
+        mode = std::atoi(guid + 37);
+        if (char const* dash = std::strchr(guid + 37, '-')) draw = static_cast<float>(std::atoi(dash + 1)) / 100.0f;
+        guid[36] = 0;
+    }
     Entity self = Player();
     Entity target = EntityAt(guid);
     if (!self.GetInstance() || !target.GetInstance()) { log("SHOOTAT refused bad GUID, no such entity or no player"); return; }
     if (!self.Inventory.GetItemFromSlot(gESlot_RightHand).GetInstance()) { log("SHOOTAT refused nothing in the right hand"); return; }
     if (pending.shooter) { log("SHOOTAT refused the previous shot is still pending"); return; }
+    Entity held = self.Inventory.GetItemFromSlot(gESlot_RightHand);
+    if (draw > 0.0f) held.Damage.DamageHitMultiplier = draw;
+    pending.heldMultiplier = static_cast<GEFloat>(held.Damage.DamageHitMultiplier);
+    pending.heldOffset = (held.GetPosition() - self.GetPosition()).GetMagnitude();  // Shoot spawns the arrow there
     pending.before.clear();
     const bTObjArray<Entity> old = Entity::GetEntities();
     for (int i = 0; i < old.GetCount(); ++i)
         if (IsProjectile(old.GetAt(i).GetInstance())) pending.before.push_back(old.GetAt(i).GetInstance());
+    pending.partsOff[0] = 0;
+    if ((mode == 5 || mode == 6 || mode == 7) && AimHooked()) {
+        aimPoint = target.GetPosition() + bCVector(0.0f, 100.0f, 0.0f);
+        if (mode == 7) aimPoint = self.GetPosition() + (target.GetPosition() - self.GetPosition()) * 3.0f + bCVector(0.0f, 600.0f, 0.0f);
+        aimActive = true;
+        if (mode != 6) BodyPartsOff(self, pending.partsOff, sizeof(pending.partsOff));
+    }
     pending.result = GetScriptAdminExt().CallScript(bCString("Shoot"), self.GetInstance(), target.GetInstance(), 0);
+    aimActive = false;
     pending.shooter = self.GetInstance();
     pending.target = target.GetInstance();
     pending.since = GetTickCount();
     pending.log = log;
     pending.mode = mode;
+    summon::WatchHits();
 }
 
 void Tick()
 {
+    TraceTick();
+    BodyPartsOn();
     if (!pending.shooter) return;
-    char line[400], right[64];
+    char line[900], right[64];  // around and parts_off included; Log takes 1024
     Entity self(pending.shooter), target(pending.target);
-    int spawned = 0, flying = 0;
-    float distance = 0.0f;
+    int spawned = 0, flying = 0, path = -1, group = -1;
+    char around[160] = "", others[120] = "";  // with parts_off the SHOOTAT line stays under 900
+    float distance = 0.0f, velocity = -1.0f;
     const bTObjArray<Entity> now = Entity::GetEntities();
     for (int i = 0; i < now.GetCount(); ++i) {
         Entity arrow = now.GetAt(i);
         eCEntity* e = arrow.GetInstance();
         if (!IsProjectile(e) || std::find(pending.before.begin(), pending.before.end(), e) != pending.before.end()) continue;
-        if (arrow.Interaction.GetOwner().GetInstance() != pending.shooter) continue;
+        if (arrow.Interaction.GetOwner().GetInstance() != pending.shooter) {
+            if (std::strlen(others) < sizeof(others) - 40) {  // new, but someone else's (or nobody's)
+                strncat_s(others, arrow.Interaction.GetOwner().GetInstance() ? arrow.Interaction.GetOwner().GetName().GetText() : "none", _TRUNCATE);
+                strncat_s(others, ",", _TRUNCATE);
+            }
+            continue;
+        }
         ++spawned;
         lastTarget = pending.target;
-        lastArrow = e;
+        SetLastArrow(e);
+        path = static_cast<int>(static_cast<gEProjectilePath>(arrow.Projectile.PathStyle));
+        // What the new arrow could have touched at once: entities with collision within 150 cm (QA, while comparing).
+        for (int j = 0; j < now.GetCount(); ++j) {
+            Entity other = now.GetAt(j);
+            eCEntity* o = other.GetInstance();
+            if (!o || o == e || o == pending.shooter || !o->HasCollision()) continue;
+            if ((other.GetPosition() - arrow.GetPosition()).GetMagnitude() > 150.0f) continue;
+            if (std::strlen(around) < sizeof(around) - 40) {
+                strncat_s(around, other.GetName().GetText(), _TRUNCATE);
+                strncat_s(around, ",", _TRUNCATE);
+            }
+        }
+        group = static_cast<int>(e->GetCollisionGroup());  // 6 once gCProjectile_PS::OnTouch has handled a touch
+        velocity = static_cast<float>(arrow.Projectile.ShootVelocity);
         const bCVector chest = target.GetPosition() + bCVector(0.0f, 100.0f, 0.0f);
         if (pending.mode == 0) {
             distance = (chest - arrow.GetPosition()).GetMagnitude();
             arrow.Projectile.PathStyle = gEProjectilePath_Line;
             arrow.Projectile.TargetDirection = (chest - arrow.GetPosition()).GetNormalized();
             arrow.Projectile.SetTarget(target);
+            if (pending.heldMultiplier > 0.0f) arrow.Projectile.ShootVelocity = pending.heldMultiplier * 200.0f;
+            arrow.Projectile.Shoot();
+        } else if (pending.mode == 3 || pending.mode == 4) {
+            // The script's own physics path, only turned from the camera's aim to the target's chest (4: with the
+            // target set, as the NPC branch does).
+            distance = (chest - arrow.GetPosition()).GetMagnitude();
+            arrow.Projectile.TargetDirection = (chest - arrow.GetPosition()).GetNormalized();
+            if (pending.mode == 4) arrow.Projectile.SetTarget(target);
             arrow.Projectile.Shoot();
         } else if (pending.mode == 2) {
             // The script's NPC branch, on a fresh arrow from the same template with the player's damage.
@@ -259,7 +453,7 @@ void Tick()
             shot.Projectile.SetTarget(target);
             shot.Projectile.Shoot();
             arrow.Kill();
-            lastArrow = shot.GetInstance();
+            SetLastArrow(shot.GetInstance());
             if (shot.Projectile.IsFlying()) ++flying;
             continue;
         }
@@ -267,30 +461,38 @@ void Tick()
     }
     const DWORD waited = GetTickCount() - pending.since;
     if (!spawned && waited < 2000) return;
-    sprintf_s(line, "SHOOTAT result=%d spawned=%d flying=%d mode=%d waited_ms=%lu target=%s distance_cm=%.0f right=%s", pending.result,
-              spawned, flying, pending.mode, waited, target.GetName().GetText(), distance,
-              HeldName(self, gESlot_RightHand, right, sizeof(right)));
+    sprintf_s(line,
+              "SHOOTAT result=%d spawned=%d flying=%d mode=%d waited_ms=%lu target=%s distance_cm=%.0f right=%s held_multiplier=%.2f "
+              "script_path=%d script_velocity=%.0f script_group=%d around=%s parts_off=%s others=%s held_cm=%.0f",
+              pending.result, spawned, flying, pending.mode, waited, target.GetName().GetText(), distance,
+              HeldName(self, gESlot_RightHand, right, sizeof(right)), pending.heldMultiplier, path, velocity, group, around, *pending.partsOff ? pending.partsOff : "-", *others ? others : "-", pending.heldOffset);
     pending.log(line);
     pending.shooter = nullptr;
+    trace.points.clear();
+    trace.origin = self.GetPosition();
+    trace.start = spawned ? GetTickCount() : 0;
 }
 
 // Where the latest shootat arrow is. Only for an arrow found among the world's entities (it may have been removed).
 void LastArrow(LogFn log)
 {
-    char line[300];
-    const bTObjArray<Entity> all = Entity::GetEntities();
-    for (int i = 0; lastArrow && i < all.GetCount(); ++i) {
-        if (all.GetAt(i).GetInstance() != lastArrow) continue;
-        Entity arrow = all.GetAt(i);
+    char line[900], path[560] = "";  // at most 16 samples of 33 chars; Log takes 1024
+    for (auto const& [t, at] : trace.points) {
+        char point[48];
+        sprintf_s(point, at.GetY() < -99998.0f ? "%lu:gone," : "%lu:%.0f_%.0f_%.0f,", t, at.GetX(), at.GetY(), at.GetZ());
+        strncat_s(path, point, _TRUNCATE);
+    }
+    if (Entity arrow = LastArrowEntity(); arrow.GetInstance()) {
         const bCVector at = arrow.GetPosition();
         const float toTarget = lastTarget ? (Entity(lastTarget).GetPosition() - at).GetMagnitude() : -1.0f;
-        sprintf_s(line, "LASTARROW at=%.0f_%.0f_%.0f flying=%d path=%d velocity=%.0f to_target_cm=%.0f", at.GetX(), at.GetY(), at.GetZ(),
-                  arrow.Projectile.IsFlying() ? 1 : 0, static_cast<int>(static_cast<gEProjectilePath>(arrow.Projectile.PathStyle)),
-                  static_cast<float>(arrow.Projectile.ShootVelocity), toTarget);
+        sprintf_s(line, "LASTARROW at=%.0f_%.0f_%.0f flying=%d path=%d velocity=%.0f to_target_cm=%.0f group=%d trace=%s", at.GetX(), at.GetY(),
+                  at.GetZ(), arrow.Projectile.IsFlying() ? 1 : 0, static_cast<int>(static_cast<gEProjectilePath>(arrow.Projectile.PathStyle)),
+                  static_cast<float>(arrow.Projectile.ShootVelocity), toTarget, static_cast<int>(arrow.GetInstance()->GetCollisionGroup()), path);
         log(line);
         return;
     }
-    log("LASTARROW gone");
+    sprintf_s(line, "LASTARROW gone trace=%s", path);
+    log(line);
 }
 
 // The way _AI_StartCastPhase casts (re/findings/ranged-ai-paths-b.md): phase 1 and 2 put the spell and the target on

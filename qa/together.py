@@ -231,12 +231,15 @@ def stage2(copies, report, negative=False):
         start = client.bot.send(f'step {index}')
         line = client.bot.line('STEP ', 10, 'step', start)
         actual = tuple(map(float, re.search(r' pos=([-\d.,]+)', line)[1].split(',')))
-        expected = tuple(a+(1000.0 if negative else 0.0) for a in actual)
+        # Compared with where the client's hero is now, not where the step put it: raiders' hits push it on (20.10.: the
+        # puppet followed the hero exactly, 1.3 m from the step's position, and the test timed out).
         def follows():
+            now = tuple(map(float, re.search(r' pos=([-\d.,]+)', report_line(client.bot, 'heropos', 'HEROPOS '))[1].split(',')))
+            expected = tuple(a+(1000.0 if negative else 0.0) for a in now)
             seen = remotes(host.bot).get(2, {})
-            return seen.get('puppet') and distance(seen['puppet_pos'], expected) <= tolerance and seen
+            return seen.get('puppet') and distance(seen['puppet_pos'], expected) <= tolerance and dict(seen, now=now)
         seen = wait_for(follows, 10, f'host puppet reaches step {index} within {tolerance} units')
-        errors.append(round(distance(seen['puppet_pos'], actual), 1))
+        errors.append(round(distance(seen['puppet_pos'], seen['now']), 1))
     report['circle_errors'] = errors
     # 3. The client really walks (game AI goto, 15 m legs); the puppet must walk too, never run its own
     #    AI, and stand within 60 cm of the player once the player stops.
@@ -258,6 +261,7 @@ def stage2(copies, report, negative=False):
     tasks = {re.search(r' task=(\S*)', l)[1] for l in trace}
     report['puppet_walk_samples'] = len(walking)
     report['puppet_tasks'] = sorted(tasks)
+    report['continue_routine'] = report_line(host.bot, 'continueroutine', 'CONTINUEROUTINE ')  # the fix at work (20.10.)
     assert len(walking) >= 10, f'Puppet showed a walk/run motion in only {len(walking)} of {len(trace)} samples'
     assert tasks <= {'ZS_HangAround_DoNothing', ''}, f'Puppet ran its own AI: {sorted(tasks)}'
     spawns = host.mod_log().count('remote: puppet 2 spawned')
@@ -378,6 +382,16 @@ def scriptdiag(copies, report, negative=False):
         start = host.bot.send(f'scriptinfo {name}')
         lines.append(host.bot.line('SCRIPTINFO ', 10, 'scriptinfo', start))
     report['scriptinfo'] = lines
+
+
+def scriptdumpdiag(copies, report, negative=False):
+    """Inventory (owner, 20.10.), host only: every script, AI callback, state, function and routine the game registered,
+    with module, RVA and source file, copied into the run folder as scripts.tsv."""
+    host = copies['host'].launch()
+    enter_world(host)
+    start = host.bot.send('scriptdump', 30)
+    report['scriptdump'] = host.bot.line('SCRIPTDUMP ', 30, 'scriptdump', start)
+    shutil.move(host.root/'scripts.tsv', host.run/'scripts.tsv')  # the install must hold only its own files (isolation check)
 
 
 def combat_state(bot):
@@ -3279,9 +3293,10 @@ def ranged_bot_phase(shooter, watcher, shooter_id, host, report, tag, spell='It_
         for _ in range(6):
             track.append(report_line(shooter.bot, 'lastarrow', 'LASTARROW ')[10:])
             time.sleep(0.15)
+        shot_hits = {c.tag: summon_state(c.bot)[1][-4:] for c in (shooter, watcher)}
         if i == 0:
             snap(shooter, tag+'-shot-self', report)
-        shots.append({'ready': ready[6:], 'shoot': line[8:360], 'track': track, **shot_watch(shooter, watcher, shooter_id, 1.0),
+        shots.append({'ready': ready[6:], 'shoot': line[8:360], 'track': track, 'hits': shot_hits, **shot_watch(shooter, watcher, shooter_id, 1.0),
                       'hp': npc_hp(host.bot, target), 'target_at': npcs(host.bot)[target]['pos']})
     report[tag+'_shots'] = shots
     time.sleep(1)
@@ -3344,7 +3359,9 @@ def meteor_phase(caster, watcher, caster_id, host, report, tag):
     report[tag+'_own_seen'] = sorted(set(own_seen))[:4]
     report[tag+'_copies_seen'] = sorted(set(copies_seen))[:4]
     report[tag+'_state'] = {t: {k: v - before[t].get(k, 0) for k, v in s[0].items()} for t, s in after.items()}
-    copy_hits = [h for h in after[watcher.tag][1] if ' applied=1' in h and 'source=Smn_' in h]
+    # The copy's hits name the caster's puppet as owner; the watcher's own meteor of the other phase (owner_puppet_of=0)
+    # may have hit one of the watcher's own NPCs, rightly applied (20.10., agent A).
+    copy_hits = [h for h in after[watcher.tag][1] if ' applied=1' in h and 'source=Smn_' in h and 'owner_puppet_of=0 ' not in h]
     report[tag+'_watcher_hits'] = after[watcher.tag][1][-8:]
     report[tag+'_caster_hits'] = after[caster.tag][1][-8:]
     report[tag+'_result'] = {'host': npc_hp(host.bot, target), 'xp': (xp0, xp_of(caster.bot))}
@@ -3382,6 +3399,389 @@ def stageP1(copies, report, negative=False):
             report_line(c.bot, 'summoncopyhero', 'COPYHEROOFF')
     meteor_phase(client, host, 2, host, report, 'client')
     meteor_phase(host, client, 1, host, report, 'host')
+    problems = report['client_problems'] + report['host_problems']
+    assert not problems, '; '.join(problems)
+
+
+def shot_state(bot):
+    start = bot.send('shotstate', 20)
+    bot.line('SHOTSTATE end', 10, 'shotstate', start)
+    lines = bot.log()[start:].splitlines()
+    head = next(l for l in lines if l.startswith('SHOTSTATE ') and not l.startswith('SHOTSTATE end'))
+    return {k: int(v) for k, v in re.findall(r'(\w+)=(\d+)', head)}, [l[9:] for l in lines if l.startswith('SHOTCOPY ')]
+
+
+def trace_points(text):
+    """'t:x_y_z,...' (LASTARROW trace=, SHOTCOPY path=) as (t, x, y, z), without 'gone'."""
+    points = []
+    for part in (text or '').strip(',').split(','):
+        if ':' in part and 'gone' not in part:
+            t, xyz = part.split(':')
+            points.append((int(t), *map(float, xyz.split('_'))))
+    return points
+
+
+def flight(points, until=None):
+    """Distance and unit direction from the first to the last sample (up to `until` ms)."""
+    if until is not None:
+        points = [p for p in points if p[0] <= until]
+    if len(points) < 2:
+        return 0.0, None
+    d = [points[-1][i] - points[0][i] for i in (1, 2, 3)]
+    length = math.sqrt(sum(v * v for v in d))
+    return length, ([v / length for v in d] if length > 1 else None)
+
+
+def arrow_phase(shooter, watcher, shooter_id, host, report, tag, shots=3):
+    """Arrows of `shooter` at a villager the host simulates, with `watcher` looking on (P2)."""
+    start = shooter.bot.send('inventory', 20)
+    shooter.bot.line('INV end', 10, 'inventory', start)
+    lines = [l for l in shooter.bot.log()[start:].splitlines() if l.startswith('INV name=')]
+    bow = next((re.search(r'name=(\S+)', l)[1] for l in lines if ' use=5 ' in l), None)
+    assert bow, f'{tag} carries no bow'
+    target = calm_target(host)
+    report[tag+'_target'] = npcs(host.bot)[target]['name']
+    clear_spot(shooter, host, target, report, tag, 600)
+    # The watcher 6 m behind the shooter: its puppet stood at the shooter's elbow and stopped the arrows.
+    at, goal = remotes(watcher.bot)[shooter_id]['pos'], npcs(host.bot)[target]['pos']
+    away = [at[i] - goal[i] for i in (0, 2)]
+    scale = 600 / max(1.0, math.hypot(*away))
+    report[tag+'_watcher_moved'] = move_hero(watcher.bot, (at[0] + away[0] * scale, at[1], at[2] + away[1] * scale))
+    time.sleep(2)
+    before = {c.tag: shot_state(c.bot)[0] for c in (shooter, watcher)}
+    hp0 = npc_hp(host.bot, target)
+    results, good, tries = [], 0, 0
+    mode = os.environ.get('G3_SHOOT_MODE', '7')
+    # Up to 8 tries for `shots` arrows that fly free. In the cluttered start village an arrow often stops at the hand (a
+    # stool, a palisade: seen around 91000,-8400) or, at some spots, vanishes the moment it is spawned; after such a try
+    # the shooter moves 2 m (back, left or right of the line, in turn) before the next.
+    while good < shots and tries < 8:
+        tries += 1
+        report_line(shooter.bot, 'ready '+bow, 'READY ')
+        report_line(shooter.bot, 'aimat '+target, 'TARGET ')
+        # From the idle stance the new arrow starts inside the hero's own body parts (Body_Player, Head_Player), which
+        # Shoot does not exclude; modes 5 and 7 switch their collision off for the shot. Drawing first (G3_AIM_FIRST)
+        # also avoids them, but the aiming state then shoots and reloads by itself now and then, and the hand is empty.
+        aim = ''
+        if os.environ.get('G3_AIM_FIRST'):
+            aim = report_line(shooter.bot, 'act PS_Ranged-PS_Ranged_Aim', 'ACT ')
+            time.sleep(2.0)
+        # Mode 7: the script's own shot, aimed (instead of at the camera's screen centre: a bot steers no camera) over the
+        # target and on; no arrow has hurt an NPC yet (see NOTES), so hitting is not the point.
+        shot = report_line(shooter.bot, f"shootat {target}-{mode}-{os.environ.get('G3_DRAW', '0')}", 'SHOOTAT ')
+        time.sleep(1.8)
+        own = report_line(shooter.bot, 'lastarrow', 'LASTARROW ')
+        copies = shot_state(watcher.bot)[1]
+        free = ' spawned=1 ' in shot and flight(trace_points((re.search(r'trace=(\S*)', own) or [None, ''])[1]), 250)[0] >= 300
+        results.append({'aim': aim[4:200], 'shoot': shot[8:420], 'own': own[10:], 'copy': copies[-1] if copies else None, 'free': free})
+        if free:
+            good += 1
+            if good == 1:
+                snap(watcher, tag+'-arrow-seen', report)
+            continue
+        at = remotes(watcher.bot)[shooter_id]['pos']
+        back = [at[i] - goal[i] for i in (0, 2)]
+        length = max(1.0, math.hypot(*back))
+        back = [v / length for v in back]
+        step = [(back[0], back[1]), (-back[1], back[0]), (back[1], -back[0])][tries % 3]
+        report.setdefault(tag+'_moved_for_shot', []).append(move_hero(shooter.bot, (at[0] + step[0] * 200, at[1], at[2] + step[1] * 200)))
+        time.sleep(1)
+    time.sleep(1)
+    after = {c.tag: shot_state(c.bot)[0] for c in (shooter, watcher)}
+    report[tag+'_shots'] = results
+    report[tag+'_state'] = {t: {k: v - before[t].get(k, 0) for k, v in s.items()} for t, s in after.items()}
+    hits = summon_state(watcher.bot)[1]
+    copy_hits = [h for h in hits if f'owner_puppet_of={shooter_id} ' in h and ' applied=1' in h and 'Smn_' not in h]
+    report[tag+'_watcher_hits'] = hits[-8:]
+    report[tag+'_shooter_hits'] = summon_state(shooter.bot)[1][-8:]
+    report[tag+'_target_hp'] = {'before': hp0, 'after': npc_hp(host.bot, target)}
+    problems = []
+    own_state, watch_state = report[tag+'_state'][shooter.tag], report[tag+'_state'][watcher.tag]
+    spawned = sum(' spawned=1 ' in r['shoot'] for r in results)
+    # Every shot the hook saw is announced or given up (its arrow never showed: it vanished or stuck in its first frame),
+    # every announcement reaches the watcher and is flown there.
+    if own_state.get('shots', 0) != own_state.get('announced', 0) + own_state.get('unresolved', 0):
+        problems.append(f'{tag}: shots not accounted for: {own_state}')
+    if own_state.get('announced', 0) < spawned - own_state.get('unresolved', 0) or own_state.get('announced', 0) < good:
+        problems.append(f"{tag}: {own_state.get('announced', 0)} announced of {spawned} arrows spawned")
+    if watch_state.get('copies', 0) < own_state.get('announced', 0) or not watch_state.get('copies', 0):
+        problems.append(f"{tag}: the watcher flew {watch_state.get('copies', 0)} copies of {own_state.get('announced', 0)} announced")
+    compared = []
+    for r in results:
+        if not r['copy'] or not r['free']:
+            continue
+        if ' alive=1 ' in r['copy'] and f' owner_puppet_of={shooter_id} ' not in r['copy']:
+            problems.append(f"{tag}: a copy did not belong to the shooter's puppet")
+        # The free flight only: after the first touch the arrow and the copy bounce off slightly different spots.
+        own_len, own_dir = flight(trace_points((re.search(r'trace=(\S*)', r['own']) or [None, ''])[1]), 250)
+        copy_len, copy_dir = flight(trace_points((re.search(r'path=(\S*)', r['copy']) or [None, ''])[1]), 250)
+        angle = None
+        if own_dir and copy_dir:
+            angle = math.degrees(math.acos(max(-1.0, min(1.0, sum(a * b for a, b in zip(own_dir, copy_dir))))))
+        compared.append({'own_cm': round(own_len), 'copy_cm': round(copy_len), 'angle': None if angle is None else round(angle, 1)})
+        if copy_len < own_len / 2 or angle is None or angle > 20:
+            problems.append(f"{tag}: the copy did not fly like the arrow (own {own_len:.0f} cm, copy {copy_len:.0f} cm, angle {angle})")
+    report[tag+'_compared'] = compared
+    report[tag+'_tries'] = tries
+    if good < shots:
+        problems.append(f'{tag}: {good} of {shots} arrows flew free in {tries} tries (nothing more to compare)')
+    if copy_hits:
+        problems.append(f'{tag}: {len(copy_hits)} hits of the copies were applied on the watcher')
+    report[tag+'_problems'] = problems
+
+
+def touch_lines(bot):
+    start = bot.send('touchlog', 20)
+    bot.line('TOUCHLOG end', 10, 'touchlog', start)
+    return [l[6:] for l in bot.log()[start:].splitlines() if l.startswith('TOUCH ')]
+
+
+def arrowtouchdiag(copies, report, negative=False):
+    """Experiment 0 (fable/20261020-112808-q-arrow-hits-question): which entities do arrows touch? Host, then client, shoot
+    at a villager's chest (shootat mode 5) with the other player 6 m behind; after each shot, the gCProjectile_PS::OnTouch
+    calls on both machines. A shot whose first touch is not the target (a chest, a house) is shot again from a spot 2 m
+    aside or back, up to 6 times, until 3 arrows reached the target."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    time.sleep(3)
+    for c in (host, client):
+        report[c.tag+'_touchlog'] = report_line(c.bot, 'touchlog', 'TOUCHLOG ')
+    for shooter, watcher, shooter_id in ((host, client, 1), (client, host, 2)):
+        tag = shooter.tag
+        start = shooter.bot.send('inventory', 20)
+        shooter.bot.line('INV end', 10, 'inventory', start)
+        lines = [l for l in shooter.bot.log()[start:].splitlines() if l.startswith('INV name=')]
+        bow = next((re.search(r'name=(\S+)', l)[1] for l in lines if ' use=5 ' in l), None)
+        target = calm_target(host)
+        name = npcs(host.bot)[target]['name']
+        report[tag+'_target'] = name
+        clear_spot(shooter, host, target, report, tag, 500)
+        goal = npcs(host.bot)[target]['pos']
+
+        def step(distance, sideways):
+            at = remotes(watcher.bot)[shooter_id]['pos']
+            back = [at[0] - goal[0], at[2] - goal[2]]
+            length = max(1.0, math.hypot(*back))
+            back = [v / length for v in back]
+            d = (-back[1], back[0]) if sideways else back
+            return (at[0] + d[0] * distance, at[1], at[2] + d[1] * distance)
+
+        report[tag+'_watcher_moved'] = move_hero(watcher.bot, step(600, False))
+        time.sleep(2)
+        shots, reached, tries = [], 0, 0
+        while reached < 3 and tries < 6:
+            tries += 1
+            since = max([int(re.search(r't=(\d+)', l)[1]) for l in touch_lines(shooter.bot)] or [0])
+            report_line(shooter.bot, 'ready '+bow, 'READY ')
+            report_line(shooter.bot, 'aimat '+target, 'TARGET ')
+            shot = report_line(shooter.bot, f'shootat {target}-5', 'SHOOTAT ')
+            time.sleep(2)
+            touches = [l for l in touch_lines(shooter.bot) if int(re.search(r't=(\d+)', l)[1]) > since]
+            first = next((l for l in touches if ' armed=1 ' in l), '')
+            hit = f' touched={name} ' in first
+            reached += hit
+            shots.append({'shoot': shot[8:120], 'hp': npc_hp(host.bot, target), 'first': first[first.find('arrow='):], 'reached': hit,
+                          'touches': [l[l.find('arrow='):] for l in touches[:6]],
+                          'watcher_touches': [l[l.find('arrow='):] for l in touch_lines(watcher.bot)[-4:]]})
+            if not hit:
+                report.setdefault(tag+'_stepped', []).append(move_hero(shooter.bot, step(200, tries % 2 == 1)))
+                time.sleep(1)
+        report[tag+'_shots'] = shots
+        report[tag+'_reached'] = (reached, tries)
+        report[tag+'_hits'] = {c.tag: [h for h in summon_state(c.bot)[1] if 'Smn_' not in h][-6:] for c in (shooter, watcher)}
+    report['status_note'] = 'diagnostic only'
+
+
+def arrow_hit_phase(shooter, watcher, shooter_id, host, report, tag, wanted=1, spell=None):
+    """Arrows (or, with `spell`, spell projectiles cast with castat) of `shooter` at a sturdy NPC the host simulates
+    until `wanted` of them touched it (QA touchlog), the other player 6 m behind. Each projectile that reached the
+    target must be applied exactly once on the host."""
+    weapon = spell or os.environ.get('G3_BOW')  # G3_BOW: another ranged weapon (It_Crossbow_01), created by ready
+    if not weapon:
+        start = shooter.bot.send('inventory', 20)
+        shooter.bot.line('INV end', 10, 'inventory', start)
+        lines = [l for l in shooter.bot.log()[start:].splitlines() if l.startswith('INV name=')]
+        weapon = next((re.search(r'name=(\S+)', l)[1] for l in lines if ' use=5 ' in l), None)
+        assert weapon, f'{tag} carries no bow'
+    keep = ('Diego', 'Gorn', 'Milten', 'Lester')
+    sturdy = {g: v for g, v in npcs(host.bot).items() if not v['dead'] and not v['mirrored'] and v['hp'] >= 300
+              and 'Orc' not in v['name'] and v['name'] not in keep}
+    assert sturdy, 'no villager with 300 hit points near the host'
+    target = next(iter(sturdy))
+    name = npcs(host.bot)[target]['name']
+    report[tag+'_target'] = (name, npcs(host.bot)[target]['hp'])
+    clear_spot(shooter, host, target, report, tag, 250)
+    goal = npcs(host.bot)[target]['pos']
+    at = remotes(watcher.bot)[shooter_id]['pos']
+    bearing = math.atan2(at[2] - goal[2], at[0] - goal[0])
+
+    def around(angle, distance):
+        return (goal[0] + math.cos(angle) * distance, at[1], goal[2] + math.sin(angle) * distance)
+
+    # The other player 6 m behind the shooter (its puppet would stop the arrows); after a blocked shot the shooter
+    # goes 45 degrees further round the target at 2.5 m (stepping back left it between Hamlar's houses).
+    report[tag+'_watcher_moved'] = move_hero(watcher.bot, around(bearing, 850))
+    time.sleep(2)
+    # Any source: a client's arrow reaches the host as a claim, applied there by the combat filter.
+    applied_before = [h for h in summon_state(host.bot)[1] if f'victim={name} ' in h and ' applied=1' in h]
+    shots, reached, tries = [], 0, 0
+    while reached < wanted and tries < 8:
+        tries += 1
+        since = max([int(re.search(r't=(\d+)', l)[1]) for l in touch_lines(shooter.bot)] or [0])
+        report_line(shooter.bot, 'ready '+weapon, 'READY ')
+        report_line(shooter.bot, 'aimat '+target, 'TARGET ')
+        if spell:
+            shot = report_line(shooter.bot, 'castat '+target, 'CASTAT ')
+        else:
+            shot = report_line(shooter.bot, f'shootat {target}-5', 'SHOOTAT ')
+        time.sleep(2.5)
+        touches = [l for l in touch_lines(shooter.bot) if int(re.search(r't=(\d+)', l)[1]) > since]
+        # Reached: an armed touch of the target, also after a bounce (the first touch can be the ground, the arrow armed on).
+        first = next((l for l in touches if ' armed=1 ' in l and f' touched={name} ' in l), next((l for l in touches if ' armed=1 ' in l), ''))
+        hit = f' touched={name} ' in first
+        reached += hit
+        shots.append({'shoot': shot[8:120], 'first': first[first.find('arrow='):], 'reached': hit,
+                      'watcher_touches': [l[l.find('arrow='):] for l in touch_lines(watcher.bot)[-2:]]})
+        if not hit:
+            report.setdefault(tag+'_stepped', []).append(move_hero(shooter.bot, around(bearing + tries * math.pi / 4, 250)))
+            move_hero(watcher.bot, around(bearing + tries * math.pi / 4, 850))
+            time.sleep(1.5)
+    time.sleep(2)
+    host_hits = [h for h in summon_state(host.bot)[1] if f'victim={name} ' in h and ' applied=1' in h]
+    new_hits = [h for h in host_hits if h not in applied_before]
+    report[tag+'_shots'] = shots
+    report[tag+'_reached'] = (reached, tries)
+    report[tag+'_host_hits'] = new_hits
+    report[tag+'_watcher_hits'] = [h for h in summon_state(watcher.bot)[1] if 'source=Arrow' in h][-4:]
+    report[tag+'_target_after'] = npc_hp(host.bot, target)
+    problems = []
+    if reached < wanted:
+        problems.append(f'{tag}: only {reached} of {wanted} arrows reached {name} in {tries} tries')
+    if len(new_hits) != reached:
+        problems.append(f'{tag}: {len(new_hits)} arrow hits applied on the host for {reached} arrows that reached {name}')
+    report[tag+'_problems'] = problems
+
+
+def stageP2fire(copies, report, negative=False):
+    """P2, spell projectiles (agent B), the fireball first: MagicProjectile is wrapped in the script table, the projectile
+    announced like an arrow with the item cast from; the copy on the other machine belongs to the caster's puppet and
+    carries the spell. Each fireball that reaches a sturdy NPC is applied once on the host. Host casts, then client.
+    Negative control: shotcopyhero. G3_SPELL picks the spell (default It_Spell_Fireball)."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    time.sleep(3)
+    for copy, helper in ((client, host), (host, client)):
+        if ' down=1 ' in herostate(copy.bot):
+            help_up(helper, copy, report, copy.tag+'_raid')
+            wait_for(lambda: ' down=0 ' in herostate(copy.bot) and ['up'], 30, copy.tag+' helped up after the raid')
+    for c in (host, client):
+        report[c.tag+'_touchlog'] = report_line(c.bot, 'touchlog', 'TOUCHLOG ')
+        if negative:
+            report_line(c.bot, 'shotcopyhero', 'SHOTCOPYHERO')
+    report['negative'] = negative
+    spell = os.environ.get('G3_SPELL', 'It_Spell_Fireball')
+    before = {c.tag: shot_state(c.bot)[0] for c in (host, client)}
+    arrow_hit_phase(host, client, 1, host, report, 'host', spell=spell)
+    arrow_hit_phase(client, host, 2, host, report, 'client', spell=spell)
+    after = {c.tag: shot_state(c.bot) for c in (host, client)}
+    report['shotstate'] = {t: {k: v - before[t].get(k, 0) for k, v in s[0].items()} for t, s in after.items()}
+    report['copies'] = {t: s[1][-2:] for t, s in after.items()}
+    problems = report['host_problems'] + report['client_problems']
+    for t in ('host', 'client'):
+        if report['shotstate'][t].get('no_spell', 0):
+            problems.append(f'{t}: a copy got no spell')
+        if not report['shotstate'][t].get('copies', 0):
+            problems.append(f'{t}: no copy flew on this machine')
+    assert not problems, '; '.join(problems)
+
+
+def raiddiag(copies, report, negative=False):
+    """The Entity::AttachTo crash (Script.dll+0x13ea3) seen while killraiders ended the raid (17.10., 18.10., 20.10.):
+    join, end the raid, nothing else; with QA crashlog any access violation is in g3together.log (CRASH lines)."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    time.sleep(3)
+    report['crash_lines'] = {c.tag: [l for l in c.mod_log().splitlines() if ' CRASH ' in l][:6] for c in (host, client)}
+    report['status_note'] = 'diagnostic only'
+
+
+def stageHealOther(copies, report, negative=False):
+    """Heal other (agent B, inventory list): on the caster's machine the target is the other player's puppet, and
+    MagicHealOther sets only the puppet's hit points (re/findings/spells-b.md). spells.cpp sends the cast to the puppet's
+    player, whose machine replays the script on its own hero: that hero is fully healed. Client heals the host, then the
+    host heals the client. Negative control: spellmirroroff (the cast is not sent, the hero stays hurt)."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    time.sleep(3)
+    for copy, helper in ((client, host), (host, client)):
+        if ' down=1 ' in herostate(copy.bot):
+            help_up(helper, copy, report, copy.tag+'_raid')
+            wait_for(lambda: ' down=0 ' in herostate(copy.bot) and ['up'], 30, copy.tag+' helped up after the raid')
+    if negative:
+        report['negative'] = True
+        for c in (host, client):
+            report_line(c.bot, 'spellmirroroff', 'SPELLMIRROROFF')
+    problems = []
+    for caster, target, target_id in ((client, host, 1), (host, client, 2)):
+        tag = caster.tag
+        report[tag+'_hurt'] = report_line(target.bot, 'sethp 40', 'SETHP ')
+        guid = report_line(caster.bot, f'puppetguid {target_id}', 'PUPPET ')
+        report[tag+'_puppet'] = guid
+        guid = re.search(r'guid=(\S+)', guid)[1]
+        report[tag+'_ready'] = report_line(caster.bot, 'ready It_Spell_HealOther', 'READY ')
+        report_line(caster.bot, 'aimat '+guid, 'TARGET ')
+        report[tag+'_cast'] = report_line(caster.bot, 'castat '+guid, 'CASTAT ')[7:300]
+        time.sleep(2)
+        hp = combat_state(target.bot)
+        report[tag+'_target_hp'] = (hp.get('hero'), hp.get('max'))
+        report[tag+'_spellstate'] = {c.tag: report_line(c.bot, 'spellstate', 'SPELLSTATE ') for c in (caster, target)}
+        if hp.get('hero') != hp.get('max'):
+            problems.append(f"{tag} healed the other player: hero at {hp.get('hero')} of {hp.get('max')}")
+    assert not problems, '; '.join(problems)
+
+
+def stageP2hit(copies, report, negative=False):
+    """P2, arrows act once (agent B): the shooter's arrows that reach a sturdy NPC (first touch logged by QA touchlog)
+    are applied exactly once on the host, the NPC's owner; the copies on the other machine touch it too but belong to
+    the shooter's puppet, so the combat filter drops their hits. Host shoots, then client. Negative control:
+    shotcopyhero (the copies belong to the watcher's own hero and hit a second time)."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    time.sleep(3)
+    for copy, helper in ((client, host), (host, client)):
+        if ' down=1 ' in herostate(copy.bot):
+            help_up(helper, copy, report, copy.tag+'_raid')
+            wait_for(lambda: ' down=0 ' in herostate(copy.bot) and ['up'], 30, copy.tag+' helped up after the raid')
+    for c in (host, client):
+        report[c.tag+'_touchlog'] = report_line(c.bot, 'touchlog', 'TOUCHLOG ')
+        if negative:
+            report_line(c.bot, 'shotcopyhero', 'SHOTCOPYHERO')
+    report['negative'] = negative
+    arrow_hit_phase(host, client, 1, host, report, 'host')
+    arrow_hit_phase(client, host, 2, host, report, 'client')
+    problems = report['host_problems'] + report['client_problems']
+    assert not problems, '; '.join(problems)
+
+
+def stageP2(copies, report, negative=False):
+    """P2, arrows (agent B): a player's arrow is announced as it leaves the bow (template, pose, direction, speed,
+    path); the other machine flies a copy that belongs to that player's puppet, so its hits count nowhere. Checked: every
+    shot announced and copied, the copy owned by the puppet and flying like the arrow (distance, direction), none of its
+    hits applied on the watcher. Client shoots, then host. Negative control: shotmirroroff (shots are not announced, the
+    watcher sees nothing)."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    time.sleep(3)
+    for copy, helper in ((client, host), (host, client)):
+        if ' down=1 ' in herostate(copy.bot):
+            help_up(helper, copy, report, copy.tag+'_raid')
+            wait_for(lambda: ' down=0 ' in herostate(copy.bot) and ['up'], 30, copy.tag+' helped up after the raid')
+    if negative:
+        report['negative'] = True
+        for c in (host, client):
+            report_line(c.bot, 'shotmirroroff', 'SHOTMIRROROFF')
+    arrow_phase(client, host, 2, host, report, 'client')
+    arrow_phase(host, client, 1, host, report, 'host')
     problems = report['client_problems'] + report['host_problems']
     assert not problems, '; '.join(problems)
 
@@ -3663,6 +4063,19 @@ def deaddiag(copies, report, negative=False):
             {e['name']: e.get('client_shows') for e in report['victims'] if e['name'] not in lying})
 
 
+def scriptfinddiag(copies, report, negative=False):
+    """Which registered script, AI callback, routine, state or function of Script_Game.dll sits at the RVAs in G3_RVAS
+    (default: 0x100a5ea0, the fight-end script that sent puppets to their routine, and 0x100a9440, the routine
+    starter)."""
+    host = copies['host'].launch()
+    enter_world(host)
+    for rva in [r for r in os.environ.get('G3_RVAS', 'a5ea0,a9440').split(',') if r]:
+        start = host.bot.send('scriptfind '+rva, 20)
+        host.bot.line('SCRIPTFIND end', 10, 'scriptfind', start)
+        report[rva] = [l for l in host.bot.log()[start:].splitlines() if l.startswith('SCRIPTFIND')]
+    report['status_note'] = 'diagnostic only'
+
+
 def infodescdiag(copies, report, negative=False):
     """Why can a dialog option not run? Conditions and script lines of the options named in G3_INFOS."""
     host = copies['host'].launch()
@@ -3726,7 +4139,7 @@ def parity(copies, report, negative=False):
     report['client_connect_attempts'] = client.mod_log().count('net: connecting to')
 
 
-SUITES = {'parity': parity, 'tracediag': tracediag, 'deaddiag': deaddiag, 'stageL': stageL, 'stageP3a': stageP3a, 'invariantself': invariantself, 'puppetposediag': puppetposediag, 'syncdiag': syncdiag, 'ownerdiag': ownerdiag, 'potiondiag': potiondiag, 'transformdiag': transformdiag, 'rangeddiag': rangeddiag, 'rangedbot': rangedbot, 'stageP1': stageP1, 'stageT': stageT, 'stageV5': stageV5, 'stageV4': stageV4, 'posediag': posediag, 'stageV3': stageV3, 'stageV1': stageV1, 'stageV2': stageV2, 'viewdiag': viewdiag, 'stageE5': stageE5, 'stageQ': stageQ, 'questdiag': questdiag, 'stageE4': stageE4, 'infodescdiag': infodescdiag, 'stageE3': stageE3, 'stageE2': stageE2, 'stageE1': stageE1, 'aggrodiag': aggrodiag, 'stageH3b': stageH3b, 'infoscandiag': infoscandiag, 'gotodiag2': gotodiag2, 'walkdiag': walkdiag, 'gotodiag': gotodiag, 'navdiag': navdiag, 'soak': soak, 'stageH2': stageH2, 'stageH1': stageH1, 'infodiag': infodiag, 'stageG2': stageG2, 'stageG': stageG, 'stageD3b': stageD3b, 'stageD3a': stageD3a, 'stageD2': stageD2, 'stageD1': stageD1, 'stageC': stageC, 'stageB': stageB, 'stageA2': stageA2, 'stageA': stageA, 'herodeathdiag': herodeathdiag, 'herodiag': herodiag, 'givexpdiag': givexpdiag, 'stage3c': stage3c, 'farwritediag': farwritediag, 'stage1': stage1, 'stage2': stage2, 'animdiag': animdiag, 'stage3a': stage3a, 'scriptdiag': scriptdiag,
+SUITES = {'parity': parity, 'scriptfinddiag': scriptfinddiag, 'tracediag': tracediag, 'deaddiag': deaddiag, 'stageL': stageL, 'stageP3a': stageP3a, 'invariantself': invariantself, 'puppetposediag': puppetposediag, 'syncdiag': syncdiag, 'ownerdiag': ownerdiag, 'potiondiag': potiondiag, 'transformdiag': transformdiag, 'rangeddiag': rangeddiag, 'rangedbot': rangedbot, 'stageP1': stageP1, 'stageP2': stageP2, 'stageP2hit': stageP2hit, 'stageP2fire': stageP2fire, 'stageHealOther': stageHealOther, 'raiddiag': raiddiag, 'arrowtouchdiag': arrowtouchdiag, 'scriptdumpdiag': scriptdumpdiag, 'stageT': stageT, 'stageV5': stageV5, 'stageV4': stageV4, 'posediag': posediag, 'stageV3': stageV3, 'stageV1': stageV1, 'stageV2': stageV2, 'viewdiag': viewdiag, 'stageE5': stageE5, 'stageQ': stageQ, 'questdiag': questdiag, 'stageE4': stageE4, 'infodescdiag': infodescdiag, 'stageE3': stageE3, 'stageE2': stageE2, 'stageE1': stageE1, 'aggrodiag': aggrodiag, 'stageH3b': stageH3b, 'infoscandiag': infoscandiag, 'gotodiag2': gotodiag2, 'walkdiag': walkdiag, 'gotodiag': gotodiag, 'navdiag': navdiag, 'soak': soak, 'stageH2': stageH2, 'stageH1': stageH1, 'infodiag': infodiag, 'stageG2': stageG2, 'stageG': stageG, 'stageD3b': stageD3b, 'stageD3a': stageD3a, 'stageD2': stageD2, 'stageD1': stageD1, 'stageC': stageC, 'stageB': stageB, 'stageA2': stageA2, 'stageA': stageA, 'herodeathdiag': herodeathdiag, 'herodiag': herodiag, 'givexpdiag': givexpdiag, 'stage3c': stage3c, 'farwritediag': farwritediag, 'stage1': stage1, 'stage2': stage2, 'animdiag': animdiag, 'stage3a': stage3a, 'scriptdiag': scriptdiag,
           'stage3b': stage3b, 'combatdiag': combatdiag, 'stackdiag': stackdiag, 'stage4': stage4, 'stage4b': stage4b, 'talkdiag': talkdiag, 'namesdiag': namesdiag, 'talkdiag2': talkdiag2, 'stage4c': stage4c, 'itemdiag': itemdiag, 'stage5': stage5, 'lootdiag': lootdiag, 'stage5b': stage5b, 'stage5c': stage5c, 'radiusdiag': radiusdiag, 'pausediag': pausediag, 'savediag': savediag}
 
 

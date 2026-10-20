@@ -23,6 +23,9 @@
 #include "npcs.h"
 #include "qa.h"
 #include "remote.h"
+#include "crashlog.h"
+#include "shot.h"
+#include "spells.h"
 #include "summon.h"
 
 #include <Game.h>
@@ -127,6 +130,7 @@ class Module : public eCEngineComponentBase
     void Process() override
     {
         Frame();
+        g3t::crashlog::Tick();
         g3t::remote::Tick();
         g3t::npcs::Tick();
         g3t::ai::Tick();
@@ -144,6 +148,8 @@ class Module : public eCEngineComponentBase
         g3t::infocmd::Tick();
         g3t::containers::Tick();
         g3t::qa::Tick();
+        g3t::shot::Tick();  // after QA: a QA shot is re-aimed there before it is announced
+        g3t::spells::Tick();
     }
     void PostProcess() override {}
     void OnBeginRenderSolid() override {}
@@ -169,6 +175,8 @@ extern "C" __declspec(dllexport) gSScriptInit const* GE_STDCALL ScriptInit()
     g3t::npcs::Start();
     g3t::combat::Start();
     g3t::summon::Start();
+    g3t::shot::Start();
+    g3t::spells::Start();
     g3t::story::Start();
     g3t::talk::Start();
     g3t::items::Start();

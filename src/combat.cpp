@@ -337,6 +337,24 @@ void HitNpc(char const* guid, LogFn log)
     log(line);
 }
 
+// QA: the local hero hits another player's puppet through the game's hit path (judgement and stumble included).
+void HitPuppet(char const* id, LogFn log)
+{
+    char line[200];
+    eCDynamicEntity* hero = gCSession::GetInstance().GetHero();
+    eCEntity* puppet = remote::PuppetOf(static_cast<uint8_t>(std::atoi(id)));
+    if (!hero || !puppet) { log("REFUSED hitpuppet: no hero or no such puppet"); return; }
+    Entity target(puppet);
+    char const* kind = "";
+    eCEntity* source = DamageSource(hero, &kind);
+    int pending = 0;
+    const unsigned sentBefore = playerHitsSent;
+    const GEInt result = GameHit(target, source, &pending);
+    sprintf_s(line, "HITPUPPET id=%s result=%#x task=%s sent=%d", id, result, target.Routine.GetCurrentTask().GetText(),
+              playerHitsSent != sentBefore);
+    log(line);
+}
+
 // QA: read the bCString global at this RVA of Game.dll (the script names gCEntity::DoDamage calls).
 void GameString(char const* rvaText, LogFn log)
 {

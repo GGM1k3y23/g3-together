@@ -12,6 +12,7 @@ namespace g3t::combat {
 void Start();
 void Tick();  // installs the filter once the game's scripts are registered
 using LogFn = void (*)(char const*);
+void HitPuppet(char const* id, LogFn log);  // QA: hit player <id>'s puppet the same way (its stumble, stumblediag)
 void HitNpc(char const* guid, LogFn log);  // QA: hit the NPC (GUID as the npcs report prints it) the way gCEntity::DoDamage does
 void GameString(char const* rva, LogFn log);  // QA: text of a bCString global in Game.dll
 void HitPuppet(int playerId, LogFn log);  // QA: host hits a player's puppet the same way

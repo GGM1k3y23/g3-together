@@ -205,6 +205,32 @@ struct SummonNote {
 void SendSummon(SummonNote const& note);
 using SummonHandler = void (*)(uint8_t from, SummonNote const& note);
 void SetSummonHandler(SummonHandler handler);
+// Shots (shot.cpp, P2), reliable: a player's own arrow or spell projectile as it set off; the others fly a copy that belongs to that
+// player's puppet. Client -> host; host -> every other client (relayed, `from` = the shooter).
+#pragma pack(push, 1)
+struct ShotNote {
+    uint32_t netId = 0;
+    uint8_t target[16] = {};  // GUID of the shooter's target (zeros: none)
+    float position[3] = {};
+    float rotation[4] = {};
+    float direction[3] = {};  // PSProjectile.TargetDirection
+    float velocity = 0.0f;    // PSProjectile.ShootVelocity
+    uint8_t path = 0;         // gEProjectilePath
+    uint8_t touch = 0;        // gEProjectileTouchBehavior
+    int32_t damage = 0;       // PSDamage.DamageAmount (arrow plus bow)
+    float multiplier = 0.0f;  // PSDamage.DamageHitMultiplier
+    char arrow[40] = {};      // the arrow's template (or a spell's projectile: Mis_Fireball ...)
+    char spellItem[40] = {};  // a spell's projectile: the item cast from (empty for arrows)
+};
+#pragma pack(pop)
+void SendShot(ShotNote const& note);
+using ShotHandler = void (*)(uint8_t from, ShotNote const& note);
+void SetShotHandler(ShotHandler handler);
+// A spell a player cast on another player's puppet (spells.cpp): the target player replays the script on its own hero.
+// Any machine -> player `to` (through the host). script: the script's name (only a fixed list is replayed).
+void SendPlayerSpell(uint8_t to, char const* script);
+using PlayerSpellHandler = void (*)(uint8_t from, char const* script);
+void SetPlayerSpellHandler(PlayerSpellHandler handler);
 // The clock that stamps received states (ENet's). Compare stamps only against this clock.
 uint32_t Now();
 }

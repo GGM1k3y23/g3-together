@@ -18,6 +18,8 @@
 #include "downed.h"
 #include "transform.h"
 #include "ranged.h"
+#include "shot.h"
+#include "spells.h"
 #include "summon.h"
 #include "hud.h"
 #include "range.h"
@@ -224,7 +226,17 @@ void Quest(gCSession& session, const char* action)
 // Commands added after the chain below reached MSVC's limit of nested blocks (C1061).
 bool RunLaterAction(const char* action)
 {
-    if (!std::strcmp(action, "lookat")) {
+    if (!std::strcmp(action, "continueroutine")) {
+        g3t::ai::ContinueRoutineReport(&Log);
+    } else if (!std::strcmp(action, "continueroutineon")) {
+        g3t::ai::ContinueRoutineOn(&Log);
+    } else if (!std::strcmp(action, "scriptfind")) {
+        g3t::ai::FindByRva(argument, &Log);
+    } else if (!std::strcmp(action, "heropos")) {
+        g3t::explore::HeroPos(&Log);
+    } else if (!std::strcmp(action, "hitpuppet")) {
+        g3t::combat::HitPuppet(argument, &Log);
+    } else if (!std::strcmp(action, "lookat")) {
         g3t::explore::LookAt(argument, &Log);
     } else if (!std::strcmp(action, "deadposeoff")) {
         g3t::npcs::DeadPoseOff(&Log);
@@ -276,6 +288,22 @@ bool RunLaterAction(const char* action)
         g3t::summon::CopyHeroOff(&Log);
     } else if (!std::strcmp(action, "summonmirroroff")) {
         g3t::summon::MirrorOff(&Log);
+    } else if (!std::strcmp(action, "shotstate")) {
+        g3t::shot::Report(&Log);
+    } else if (!std::strcmp(action, "shotcopyhero")) {
+        g3t::shot::CopyHeroOff(&Log);
+    } else if (!std::strcmp(action, "spellstate")) {
+        g3t::spells::Report(&Log);
+    } else if (!std::strcmp(action, "spellmirroroff")) {
+        g3t::spells::MirrorOff(&Log);
+    } else if (!std::strcmp(action, "puppetguid")) {
+        g3t::spells::PuppetGuid(argument, &Log);
+    } else if (!std::strcmp(action, "sethp")) {
+        g3t::spells::SetHp(argument, &Log);
+    } else if (!std::strcmp(action, "touchlog")) {
+        g3t::shot::TouchLog(&Log);
+    } else if (!std::strcmp(action, "shotmirroroff")) {
+        g3t::shot::MirrorOff(&Log);
     } else if (!std::strcmp(action, "summons")) {
         g3t::ranged::Summons(&Log);
     } else if (!std::strcmp(action, "lastarrow")) {
@@ -552,6 +580,9 @@ void RunAction(const char* action)
         g3t::combat::Report(&Log);
     } else if (!std::strcmp(action, "names")) {
         g3t::ai::ListNames(argument, &Log);
+    } else if (!std::strcmp(action, "scriptdump")) {
+        char path[MAX_PATH] = {};
+        if (Path(path, "scripts.tsv")) g3t::ai::DumpNames(path, &Log);
     } else if (!std::strcmp(action, "scriptinfo")) {
         g3t::ai::Describe(argument, &Log);
     } else if (!std::strcmp(action, "npcs")) {

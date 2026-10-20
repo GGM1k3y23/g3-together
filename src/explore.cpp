@@ -83,6 +83,17 @@ void Teleport(char const* xyz, LogFn log)
     log(line);
 }
 
+void HeroPos(LogFn log)
+{
+    char line[120];
+    eCEntity* body = remote::ControlledBody();
+    if (!body) { log("REFUSED heropos: no hero"); return; }
+    float at[3];
+    PositionOf(body, at);
+    sprintf_s(line, "HEROPOS pos=%.1f,%.1f,%.1f", at[0], at[1], at[2]);
+    log(line);
+}
+
 // QA: look at a named entity: the hero 4 m away from it on the line from where it stands, facing it; the camera behind
 // the hero then shows the entity (the engine animates bodies on screen; deaddiag measures corpses this way).
 void LookAt(char const* name, LogFn log)

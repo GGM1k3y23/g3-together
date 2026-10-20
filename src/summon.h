@@ -13,4 +13,5 @@ using LogFn = void (*)(char const*);
 void Report(LogFn log);      // QA: SUMMONSTATE line (counters) and SMNHIT lines (hits seen while a summon acts)
 void CopyHeroOff(LogFn log);  // QA negative control: copies belong to our own hero, so their hits count again
 void MirrorOff(LogFn log);    // QA negative control: summons are not announced
+void WatchHits();             // QA: log the hits of the next 4 s as SMNHIT lines too (after a shot)
 }
