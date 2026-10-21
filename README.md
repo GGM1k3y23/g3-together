@@ -1,8 +1,19 @@
 # G3 Together
 
-Co-op for Gothic 3 (Steam, Community Patch 1.75.14), built on the unofficial
+Co-op for Gothic 3, tested with Steam, Community Patch 1.75.14 and Parallel Universe Patch 1.1.1, built on the unofficial
 [Gothic 3 SDK](https://github.com/georgeto/gothic3sdk). GPL-3.0-or-later (see COPYING).
 Bundles [ENet](https://github.com/lsalzman/enet) 1.3.18 (MIT, thirdparty/enet/LICENSE).
+
+## Player guides
+
+- **English:** [Install and play](docs/PLAYING.md) · [Join a host](docs/JOINING.md) · [Playtest checklist](docs/PLAYTEST.md)
+- **Deutsch:** [Installieren und spielen](docs/SPIELEN.md) · [Beim Host beitreten](docs/MITSPIELER.md) · [Spieltest-Checkliste](docs/TESTPLAN.md)
+
+Use the same tested setup on both PCs: Gothic 3 from Steam, Community Patch **1.75.14**, then
+[Parallel Universe Patch **1.1.1**](https://www.worldofgothic.de/dl/download_678.htm), then the same G3 Together build.
+This is the tested baseline; compatibility without Parallel Universe Patch has not been established.
+Mod messages use English by default. Set `language = de` in `g3together.ini` for German, or `language = en`
+for English. Each player can choose independently; this does not change the game's own language.
 
 > **Work in progress, not reviewed by human players yet.** Every stage below is tested by
 > automated bot suites that drive two real game clients on one PC. Human playtesting has only

@@ -1,25 +1,32 @@
 # G3 Together: Kurzanleitung für den Mitspieler
 
+[English](JOINING.md) · **Deutsch**
+
 ## Vor dem Start
 
-- Beide benötigen Gothic 3 aus Steam mit **Community Patch 1.75.14** sowie dieselbe G3-Together-DLL und dieselben Spieldateien.
+- Die getestete Grundlage ist Gothic 3 aus Steam mit **Community Patch 1.75.14** und **Parallel Universe Patch 1.1.1** auf beiden Rechnern. Dazu dieselbe G3-Together-DLL und dieselben Spieldateien verwenden. Die Kompatibilität ohne PUP ist nicht belegt.
 - Schwierigkeit, alternatives Balancing, alternative KI, XP-Faktor, minimale Trefferdauer, Quick Loot und der Abschnitt `[Game]` in `Ini\ge3.ini` müssen mit dem Host übereinstimmen.
 - Im Ordner `scripts` darf keine andere Koop-Mod liegen.
 
 ## Installieren
 
-1. Kopiere `Script_G3Together.dll` nach `<Gothic-3-Ordner>\scripts\`.
-2. Lege `g3together.ini` in `<Gothic-3-Ordner>\` und trage deine Daten ein:
+1. Installiere Gothic 3 von Steam, danach **Community Patch 1.75.14**, danach den [Parallel Universe Patch **1.1.1**](https://www.worldofgothic.de/dl/download_678.htm) in dieselbe Spielinstallation.
+2. Kopiere `Script_G3Together.dll` aus demselben Paket wie beim Host nach `<Gothic-3-Ordner>\scripts\`.
+3. Kopiere `g3together.ini.client-example` aus dem Paket als `g3together.ini` nach `<Gothic-3-Ordner>\` und trage deine Daten ein:
 
 ```ini
 role = client
 address = <Adresse des Hosts>
 port = 34567
 name = <Dein Name>
+language = de
 ```
 
 Ersetze die beiden Platzhalter. Auf deinem Rechner muss unbedingt `role = client` stehen. Behalte deinen Namen bei:
 Gefolgsleute findet der Host nach dem Laden eines Spielstands über diesen Namen wieder.
+
+`language = de` schaltet die Mod-Meldungen auf Deutsch; Standard ist Englisch (`language = en`).
+Die Sprache kann jeder unabhängig wählen. Die Spielsprache von Gothic 3 bleibt unverändert.
 
 ## Beitreten
 
@@ -35,13 +42,14 @@ Wird der Beitritt abgelehnt, öffne im Gothic-3-Ordner `g3together.log` und such
 - **Bild ab** (Page Down) bringt dich direkt hinter deinen Mitspieler, auch zu ihm, wenn er am Boden liegt. Danach 5 Sekunden
   Pause. Andere Taste: in der INI `partner_key = F9` (F1–F24, PAGEUP, HOME, END, INSERT, DELETE oder ein Buchstabe).
 - Gespeichert wird beim Host.
+- Bekannte Grenzen stehen in der [Spielanleitung](SPIELEN.md).
 
 ## Bei einem Fehler
 
 Öffne PowerShell im entpackten Paketordner (dort, wo diese Datei liegt) und führe aus (braucht Python):
 
 ```powershell
-python "Werkzeuge\collect_logs.py" "<Gothic-3-Ordner>"
+python "tools\collect_logs.py" "<Gothic-3-Ordner>"
 ```
 
 Schicke die erzeugte Datei `g3together-logs-<Zeitstempel>.zip` an den Host. Sie liegt im Paketordner. Ohne Python: `g3together.log` aus dem Gothic-3-Ordner und die `.log`-Dateien aus

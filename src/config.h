@@ -8,6 +8,7 @@ struct Config
     char address[64] = "127.0.0.1"; // host address for clients
     unsigned short port = 34567;
     char name[24] = "Player";
+    char language[3] = "en";       // local HUD language: en | de (not a network setting)
     char puppetTemplate[64] = "PC_Hero";  // template used to show other players (the hero himself)
     char partnerKey[16] = "PAGEDOWN";     // key that jumps to the other player (partner.cpp)
     char trace[8] = "off";                // off | on | all: runtime trace to g3trace.log (trace.cpp)

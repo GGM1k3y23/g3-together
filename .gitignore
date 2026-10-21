@@ -7,3 +7,5 @@ __pycache__/
 /.vs/
 /out/
 *.py[cod]
+# Personal play-session notes belong in the private workspace.
+/docs/SPIELABEND.md

@@ -63,13 +63,20 @@ Config const& LoadConfig()
         else if (!_stricmp(key, "address")) strncpy_s(config.address, value, _TRUNCATE);
         else if (!_stricmp(key, "port")) config.port = static_cast<unsigned short>(std::atoi(value));
         else if (!_stricmp(key, "name")) strncpy_s(config.name, value, _TRUNCATE);
+        else if (!_stricmp(key, "language")) {
+            if (!_stricmp(value, "de")) strcpy_s(config.language, "de");
+            else {
+                strcpy_s(config.language, "en");
+                if (_stricmp(value, "en")) Logf("config: unknown language '%s', using en", value);
+            }
+        }
         else if (!_stricmp(key, "puppet_template")) strncpy_s(config.puppetTemplate, value, _TRUNCATE);
         else if (!_stricmp(key, "partner_key")) strncpy_s(config.partnerKey, value, _TRUNCATE);
         else if (!_stricmp(key, "trace")) strncpy_s(config.trace, value, _TRUNCATE);
     }
     fclose(file);
-    Logf("config: role=%s address=%s port=%u name=%s puppet_template=%s", config.host ? "host" : "client",
-         config.address, config.port, config.name, config.puppetTemplate);
+    Logf("config: role=%s address=%s port=%u name=%s puppet_template=%s language=%s", config.host ? "host" : "client",
+         config.address, config.port, config.name, config.puppetTemplate, config.language);
     return config;
 }
 }

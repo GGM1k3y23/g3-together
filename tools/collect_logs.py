@@ -1,20 +1,20 @@
 #!/usr/bin/env python3
 """Collect and redact G3 Together logs for a support report.
 
-Deutsche Kurz-Anleitung
-=======================
-1. Oeffne PowerShell in dem Ordner, in dem die ZIP-Datei entstehen soll.
-2. Starte das Skript mit seinem Pfad und dem Gothic-3-Ordner:
-       python "<Pfad>\\collect_logs.py" "C:\\Games\\Gothic 3"
-   Liegen die Windows-Dokumente an einem anderen Ort, gib den Dokumente-Ordner
-   als zweites Skriptargument an:
-       python "<Pfad>\\collect_logs.py" "C:\\Games\\Gothic 3" "D:\\Profile\\Documents"
-3. Haenge die erzeugte ZIP-Datei an deinen Fehlerbericht an. Das Skript greift
-   nicht auf das Netzwerk zu und loescht keine Dateien.
+Quick start
+===========
+1. Open PowerShell in the folder where you want to create the ZIP file.
+2. Run the script with the path to your Gothic 3 installation:
+       python "<path>\\collect_logs.py" "C:\\Games\\Gothic 3"
+   If your Windows Documents folder is elsewhere, pass it as the second argument:
+       python "<path>\\collect_logs.py" "C:\\Games\\Gothic 3" "D:\\Profile\\Documents"
+3. Attach the generated ZIP file to your bug report. The script does not access
+   the network or delete files.
 
-Die ZIP-Datei wird im aktuellen Ordner angelegt. Pfade unter C:\\Users\\...,
-IPv4-/IPv6-Adressen und die Konfigurationszeile "address" werden bereinigt.
-127.0.0.1 bleibt erhalten.
+The ZIP file is created in the current folder. Paths under C:\\Users\\...,
+IPv4/IPv6 addresses and the configuration line "address" are redacted.
+127.0.0.1 is preserved. German instructions are in docs/TESTPLAN.md in the
+source repository, or TESTPLAN.md in the player package.
 """
 
 from __future__ import annotations
@@ -122,27 +122,27 @@ def collect(game_dir: Path, documents_dir: Path, output_dir: Path) -> tuple[Path
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="G3-Together- und Gothic-3-Logs bereinigen und als ZIP sammeln."
+        description="Redact and collect G3 Together and Gothic 3 logs in a ZIP file."
     )
-    parser.add_argument("gothic3_dir", type=Path, help="Gothic-3-Installationsordner")
+    parser.add_argument("gothic3_dir", type=Path, help="Gothic 3 installation folder")
     parser.add_argument(
         "documents_dir",
         nargs="?",
         type=Path,
         default=Path.home() / "Documents",
-        help="optionaler Dokumente-Ordner (Standard: %%USERPROFILE%%\\Documents)",
+        help="optional Documents folder (default: %%USERPROFILE%%\\Documents)",
     )
     args = parser.parse_args(argv)
 
     if not args.gothic3_dir.is_dir():
-        parser.error(f"Gothic-3-Ordner nicht gefunden: {args.gothic3_dir}")
+        parser.error(f"Gothic 3 folder not found: {args.gothic3_dir}")
     if not args.documents_dir.is_dir():
-        parser.error(f"Dokumente-Ordner nicht gefunden: {args.documents_dir}")
+        parser.error(f"Documents folder not found: {args.documents_dir}")
 
     archive, count = collect(args.gothic3_dir, args.documents_dir, Path.cwd())
-    print(f"ZIP erstellt: {archive.name} ({count} Dateien)")
+    print(f"ZIP created: {archive.name} ({count} files)")
     if count == 0:
-        print("Keine passenden Logdateien gefunden.")
+        print("No matching log files found.")
     return 0
 
 

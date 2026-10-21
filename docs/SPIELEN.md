@@ -1,5 +1,7 @@
 # G3 Together spielen
 
+[English](PLAYING.md) · **Deutsch**
+
 G3 Together macht Gothic 3 zu einem Koop-Spiel für 2 Spieler (mehr sind vorgesehen, aber nicht getestet). Ein Spieler ist der **Host**: Seine Welt
 ist die gemeinsame Kampagne, sein Spielstand ist der Spielstand aller. Die anderen treten bei.
 
@@ -8,6 +10,7 @@ Stand: Testversion. Was geht und was nicht, steht unten unter „Bekannte Grenze
 ## Voraussetzungen (alle Spieler gleich)
 
 - Gothic 3 von Steam mit dem **Community Patch 1.75.14** (dieselbe Version bei allen).
+- **Parallel Universe Patch 1.1.1** auf beiden Rechnern. Steam, Community Patch 1.75.14 und PUP 1.1.1 bilden die getestete Grundlage; die Kompatibilität ohne PUP ist nicht belegt.
 - Dieselbe Version von G3 Together bei allen (dieselbe `Script_G3Together.dll`) und dieselben Spieldateien.
 - Dieselben Optionen bei allen: Schwierigkeit, alternatives Balancing, alternative KI, XP-Faktor, minimale
   Trefferdauer, Quick Loot und der ganze Abschnitt `[Game]` in `Ini\ge3.ini`. Die Mod prüft das beim Beitritt
@@ -18,8 +21,10 @@ Stand: Testversion. Was geht und was nicht, steht unten unter „Bekannte Grenze
 
 ## Installieren
 
-1. `Script_G3Together.dll` in den Ordner `<Gothic 3>\scripts\` kopieren.
-2. `g3together.ini` in den Ordner `<Gothic 3>\` kopieren und anpassen:
+1. Gothic 3 von Steam installieren, danach den **Community Patch 1.75.14**.
+2. Den [Parallel Universe Patch **1.1.1**](https://www.worldofgothic.de/dl/download_678.htm) in dieselbe Spielinstallation installieren. Beide Spieler verwenden denselben Patchstand.
+3. Aus demselben G3-Together-Paket `Script_G3Together.dll` in den Ordner `<Gothic 3>\scripts\` kopieren.
+4. Die passende Datei `g3together.ini.host-example` oder `g3together.ini.client-example` aus dem Paket als `g3together.ini` in den Ordner `<Gothic 3>\` kopieren und anpassen:
 
    Host:
 
@@ -41,11 +46,18 @@ Stand: Testversion. Was geht und was nicht, steht unten unter „Bekannte Grenze
    Wichtig: Bei jedem Mitspieler muss `role = client` stehen. Fehlt die Datei oder steht dort etwas anderes,
    startet das Spiel als Host.
 
+### Sprache der Mod-Meldungen
+
+Standard ist Englisch (`language = en`). Für deutsche Meldungen `language = de` in die eigene
+`g3together.ini` eintragen und das Spiel neu starten. Die Spieler können die Sprache unabhängig
+voneinander wählen. Die Sprache von Gothic 3 selbst wird dadurch nicht geändert. Die deutschen
+Meldungen in dieser Anleitung beziehen sich auf `language = de`.
+
 ## Verbinden über das Internet
 
 Die Mod verbindet sich direkt per UDP (Port 34567). Ohne Router-Einstellungen geht das am einfachsten über ein
-virtuelles privates Netz, das alle Spieler installieren, zum Beispiel **Tailscale** (für bis zu 6 Personen
-kostenlos) oder **ZeroTier**. Als `address` trägt man dann die Tailscale- bzw. ZeroTier-Adresse des Hosts ein.
+virtuelles privates Netz, das alle Spieler installieren, zum Beispiel **Tailscale** oder **ZeroTier**.
+Als `address` trägt man dann die Tailscale- bzw. ZeroTier-Adresse des Hosts ein.
 Alternativ leitet der Host UDP-Port 34567 in seinem Router auf seinen PC weiter.
 
 ## Spielen
@@ -92,7 +104,7 @@ Alternativ leitet der Host UDP-Port 34567 in seinem Router auf seinen PC weiter.
 ## Fehler melden
 
 - Fehler mit Uhrzeit aufschreiben (wer Host war, was ihr gemacht und gesehen habt).
-- Danach bei beiden `Werkzeuge\collect_logs.py` ausführen und die ZIP-Datei weitergeben.
+- Danach bei beiden `tools\collect_logs.py` aus dem entpackten Paketordner ausführen und die ZIP-Datei weitergeben; die Befehle stehen in der [Spieltest-Checkliste](TESTPLAN.md).
 - Für Fehler an NPCs und Gegnern, die ihr wiederholen könnt (z. B. ein toter Ork steht beim Mitspieler aufrecht):
   in die INI `trace = on` schreiben und neu starten. Dann schreibt das Spiel `g3trace.log` in den Spielordner: welche
   Animation und welche Aufgabe die NPCs bekommen, die die Mod steuert, und welcher Spielcode das auslöst. Die Datei ist

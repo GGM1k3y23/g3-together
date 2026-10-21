@@ -3,6 +3,7 @@
 
 #include "body.h"
 #include "hud.h"
+#include "i18n.h"
 #include "log.h"
 #include "net.h"
 #include "remote.h"
@@ -110,7 +111,7 @@ void Help(Entity& hero, net::Remote const* remotes, uint32_t now)
             if (!hinted[i]) {
                 hinted[i] = true;
                 ++refusedNoPotion;
-                swprintf_s(text, L"Du brauchst einen Heiltrank, um %s aufzuhelfen.", name);
+                swprintf_s(text, i18n::Text(i18n::NeedHealingPotion), name);
                 hud::Message(hud::Warning, text);
                 SendToPlayer(9, i);
                 Logf("downed: next to player %d without a healing potion", i);
@@ -124,7 +125,7 @@ void Help(Entity& hero, net::Remote const* remotes, uint32_t now)
         paidAt[i] = now;
         helpingSince[i] = 0;
         SendToPlayer(8, i);
-        swprintf_s(text, potionNeeded ? L"Du hast %s aufgeholfen (ein Heiltrank verbraucht)." : L"Du hast %s aufgeholfen.", name);
+        swprintf_s(text, potionNeeded ? i18n::Text(i18n::HelpedUpWithPotion) : i18n::Text(i18n::HelpedUp), name);
         hud::Message(hud::Good, text);
         Logf("downed: helped player %d up, paid %s", i, *potion ? potion : "nothing");
     }
@@ -138,7 +139,7 @@ void Die(Entity& hero)
     held = false;
     ++deaths;
     Logf("downed: nobody can help; the hero dies (hp=%d)", hero.PlayerMemory.GetHitPoints());
-    hud::Message(hud::Bad, L"Niemand kann dir mehr helfen.");
+    hud::Message(hud::Bad, i18n::Text(i18n::NobodyCanHelp));
     hero.PlayerMemory.SetHitPoints(0);
     hero.Routine.FullStop();
     hero.Routine.SetTask(bCString(DeathTask));
@@ -187,12 +188,12 @@ void Tick()
         const bool down = present && (remotes[i].latest.flags & 2) && !dead;
         Wide(remotes[i].latest.name, name, 32);
         if (down && !told[i]) {
-            swprintf_s(text, potionNeeded ? L"%s liegt am Boden. Stell dich mit einem Heiltrank daneben, um aufzuhelfen."
-                                          : L"%s liegt am Boden. Stell dich daneben, um aufzuhelfen.", name);
+            swprintf_s(text, potionNeeded ? i18n::Text(i18n::PartnerDownNeedsPotion)
+                                          : i18n::Text(i18n::PartnerDown), name);
             hud::Message(hud::Warning, text);
         }
         if (dead && !toldDead[i]) {
-            swprintf_s(text, L"%s ist gestorben.", name);
+            swprintf_s(text, i18n::Text(i18n::PartnerDied), name);
             hud::Message(hud::Bad, text);
         }
         told[i] = down;
@@ -228,8 +229,8 @@ void Tick()
         aloneSince = 0;
         revivedBy = 0;
         Logf("downed: hero knocked out, waiting for a partner (hp=%d)", hero.PlayerMemory.GetHitPoints());
-        hud::Message(hud::Bad, potionNeeded ? L"Du bist niedergeschlagen. Ein Mitspieler mit Heiltrank kann dir aufhelfen."
-                                            : L"Du bist niedergeschlagen. Warte, bis dein Mitspieler dir aufhilft.");
+        hud::Message(hud::Bad, potionNeeded ? i18n::Text(i18n::KnockedOutNeedsPotion)
+                                            : i18n::Text(i18n::KnockedOut));
     }
     hero.Routine.SetTaskTime(0.0f);
     if (hero.PlayerMemory.GetHitPoints() > 1) hero.PlayerMemory.SetHitPoints(1);
@@ -242,7 +243,7 @@ void Tick()
         ++revives;
         StandUp(hero);
         Wide(remotes[by].latest.name, name, 32);
-        swprintf_s(text, L"%s hat dir aufgeholfen.", name);
+        swprintf_s(text, i18n::Text(i18n::RevivedByPartner), name);
         hud::Message(hud::Good, text);
         Logf("downed: revived by player %d (hp=%d)", by, hero.PlayerMemory.GetHitPoints());
         return;
@@ -268,7 +269,7 @@ void HelperHasNoPotion(int byPlayer)
     if (byPlayer <= 0 || byPlayer >= net::MaxPlayers || !held) return;
     wchar_t name[32], text[160];
     Wide(net::Remotes()[byPlayer].latest.name, name, 32);
-    swprintf_s(text, L"%s hat keinen Heiltrank, um dir aufzuhelfen.", name);
+    swprintf_s(text, i18n::Text(i18n::HelperHasNoPotion), name);
     hud::Message(hud::Info, text);
 }
 

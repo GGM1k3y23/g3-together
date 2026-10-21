@@ -3,6 +3,7 @@
 
 #include "hero.h"
 #include "hud.h"
+#include "i18n.h"
 #include "journal.h"
 #include "net.h"
 #include "npcs.h"
@@ -190,7 +191,7 @@ void OnFileDone(char const* name, uint32_t const size[net::FileCount], uint32_t 
         if (session.GetHero() && session.IsGameRunning() && hero::SaveRecord(record.c_str())) {
             Logf("persist: first time in %s; the current hero is kept as this player's hero", local.c_str());
         } else {
-            hud::Message(hud::Warning, L"Kein eigener Held f\u00fcr diese Kampagne: du spielst mit einer Kopie des Host-Helden.");
+            hud::Message(hud::Warning, i18n::Text(i18n::NoCampaignHero));
             Logf("persist: first time in %s and no hero in play; the host's hero is copied", local.c_str());
         }
     }

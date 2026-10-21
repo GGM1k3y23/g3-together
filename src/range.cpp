@@ -3,6 +3,7 @@
 
 #include "body.h"
 #include "hud.h"
+#include "i18n.h"
 #include "log.h"
 #include "net.h"
 #include "remote.h"
@@ -58,20 +59,20 @@ void Tick()
             lastTold[i] = now;
             ++warnings;
             if (host) {
-                if (otherWorld) swprintf_s(text, L"%s ist in einer anderen Welt.", name);
-                else swprintf_s(text, L"%s ist weit entfernt (%d m).", name, static_cast<int>(distance[i] / 100.0f));
+                if (otherWorld) swprintf_s(text, i18n::Text(i18n::PartnerInOtherWorld), name);
+                else swprintf_s(text, i18n::Text(i18n::PartnerFarAway), name, static_cast<int>(distance[i] / 100.0f));
                 hud::Message(hud::Warning, text);
             } else {
-                hud::Message(hud::Warning, L"Weit weg vom Host: Diese Gegend läuft jetzt bei dir.");
+                hud::Message(hud::Warning, i18n::Text(i18n::FarFromHost));
             }
             Logf("range: player %d far away (%.0f m)", i, distance[i] / 100.0f);
         } else if (!isFar[i] && wasFar) {
             ++allClears;
             if (host) {
-                swprintf_s(text, L"%s ist wieder in der N\u00e4he.", name);
+                swprintf_s(text, i18n::Text(i18n::PartnerNearby), name);
                 hud::Message(hud::Good, text);
             } else {
-                hud::Message(hud::Good, L"Wieder beim Host.");
+                hud::Message(hud::Good, i18n::Text(i18n::NearHost));
             }
             Logf("range: player %d near again (%.0f m)", i, distance[i] / 100.0f);
         }

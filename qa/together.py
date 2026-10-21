@@ -1589,7 +1589,7 @@ def stageA2(copies, report, negative=False):
     report['client_down'] = herostate(client.bot)
     assert ' down=1 ' in report['client_down'], 'client not knocked out: '+report['client_down']
     report['host_told'] = report_line(host.bot, 'hud', 'HUD ')
-    assert 'liegt am Boden' in report['host_told'], 'host was not told: '+report['host_told']
+    assert any(text in report['host_told'] for text in ('is down', 'liegt am Boden')), 'host was not told: '+report['host_told']
     # 2. It stays down well past the game's own timer.
     time.sleep(20)
     report['client_after_20s'] = herostate(client.bot)
@@ -1606,7 +1606,7 @@ def stageA2(copies, report, negative=False):
     report['client_downed_revived'] = report_line(client.bot, 'downed', 'DOWNED ')
     assert 'revives=1' in report['client_downed_revived'], report['client_downed_revived']
     report['client_hud'] = report_line(client.bot, 'hud', 'HUD ')
-    assert 'aufgeholfen' in report['client_hud'], report['client_hud']
+    assert any(text in report['client_hud'] for text in ('helped you up', 'aufgeholfen')), report['client_hud']
     time.sleep(6)  # no second potion while the client's state still says "down"
     report['host_potions_after'] = after = potions(host.bot)
     report['host_hud'] = report_line(host.bot, 'hud', 'HUD ')
@@ -1625,8 +1625,8 @@ def stageA2(copies, report, negative=False):
     report['host_hud_no_potion'] = report_line(host.bot, 'hud', 'HUD ')
     report['client_hud_no_potion'] = report_line(client.bot, 'hud', 'HUD ')
     assert ' down=1 ' in report['client_without_potion'], 'helped up without a potion: ' + report['client_without_potion']
-    assert 'brauchst einen Heiltrank' in report['host_hud_no_potion'], report['host_hud_no_potion']
-    assert 'keinen Heiltrank' in report['client_hud_no_potion'], report['client_hud_no_potion']
+    assert any(text in report['host_hud_no_potion'] for text in ('need a healing potion', 'brauchst einen Heiltrank')), report['host_hud_no_potion']
+    assert any(text in report['client_hud_no_potion'] for text in ('has no healing potion', 'keinen Heiltrank')), report['client_hud_no_potion']
     report['host_one_potion'] = report_line(host.bot, 'givepotion It_Potion_Health-1', 'GIVEPOTION ')
     report['client_revived_2'] = wait_for(lambda: up(client.bot), 15, 'client stands up once the host has a potion')[0]
     # 5. Nobody can help: both down at once, both die as in the single-player game.
@@ -1664,16 +1664,16 @@ def stageB(copies, report, negative=False):
     report['client_hud_far'] = report_line(client.bot, 'hud', 'HUD ')
     report['host_hud_far'] = report_line(host.bot, 'hud', 'HUD ')
     assert ' far=1 ' in report['client_range_far'] and ' far=1 ' in report['host_range_far'], 'far away not noticed'
-    assert 'Weit weg vom Host' in report['client_hud_far'], report['client_hud_far']
-    assert 'weit entfernt' in report['host_hud_far'], report['host_hud_far']
+    assert any(text in report['client_hud_far'] for text in ('Far from host', 'Weit weg vom Host')), report['client_hud_far']
+    assert any(text in report['host_hud_far'] for text in ('is far away', 'weit entfernt')), report['host_hud_far']
     report['client_back'] = move_hero(client.bot, start_pos)
     time.sleep(4)
     report['client_range_near'] = report_line(client.bot, 'range', 'RANGE ')
     report['client_hud_near'] = report_line(client.bot, 'hud', 'HUD ')
     report['host_hud_near'] = report_line(host.bot, 'hud', 'HUD ')
     assert ' far=0 ' in report['client_range_near'] and 'all_clears=1' in report['client_range_near'], report['client_range_near']
-    assert 'Wieder beim Host' in report['client_hud_near'], report['client_hud_near']
-    assert 'wieder in der N' in report['host_hud_near'], report['host_hud_near']
+    assert any(text in report['client_hud_near'] for text in ('Back near the host', 'Wieder beim Host')), report['client_hud_near']
+    assert any(text in report['host_hud_near'] for text in ('is nearby again', 'wieder in der N')), report['host_hud_near']
 
 
 def far_rows(bot):
