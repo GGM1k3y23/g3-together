@@ -8,6 +8,7 @@
 namespace g3t::dialogaudio {
 void Start();
 void Tick();
+void OnWorldChange();  // stop every channel of ours (world change, shutdown)
 using LogFn = void (*)(char const*);
 void Report(LogFn log);   // QA: DIALOGAUDIO counters
 void Disable(LogFn log);  // QA negative control: lines are neither sent nor played

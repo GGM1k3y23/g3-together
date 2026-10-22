@@ -109,6 +109,7 @@ class Module : public eCEngineComponentBase
         g3t::infocmd::OnWorldChange();
         g3t::doors::OnWorldChange();
         g3t::enclaves::OnWorldChange();
+        g3t::dialogaudio::OnWorldChange();
     }
     bEResult WorldActivate() override
     {

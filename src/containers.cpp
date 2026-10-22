@@ -9,6 +9,7 @@
 #include <Game.h>
 #include <Script.h>
 #include <Windows.h>
+#include <algorithm>
 #include <array>
 #include <cstdarg>
 #include <cstdio>
@@ -27,7 +28,7 @@ constexpr float PreRollRadius = 1500.0f;  // a client this close to an unrolled 
 
 bool disabled = false;
 bool traderFillOff = false;  // QA negative control: the host does not fill traders before a dialog
-unsigned contentsSent = 0, contentsReceived = 0, rewrites = 0, txSent = 0, txApplied = 0, txRefused = 0, txDenied = 0,
+unsigned contentsSent = 0, contentsReceived = 0, rewrites = 0, txSent = 0, txApplied = 0, txRefused = 0, txMismatch = 0, txDenied = 0,
          reverted = 0;
 
 std::string Key(uint8_t const guid[16]) { return std::string(reinterpret_cast<char const*>(guid), 16); }
@@ -139,6 +140,25 @@ bool Counted(Entity& entity, int stack)
     // "Fist" is the bare-hand weapon an unarmed NPC dies holding (host only, never plunder): counted, a client
     // that cannot have it drifted every 2 s and a quick loot sent "Fist:-1" every poll (stageQuickLoot 22.10.).
     return item.GetInstance() && std::strcmp(item.GetName().GetText(), "Fist") != 0;
+}
+
+// Take `amount` of the item `key` out of the stacks that count as contents (the same ones Read counts), last stack
+// first; returns how many went. FindStackIndex(template) did not find a scroll that QA stocked into a corpse: nothing
+// was deleted, the host still reported the transaction as applied and the item existed twice (stageU1, 22.10.).
+int Remove(Entity& entity, std::string const& key, int amount, bool equippedToo = false)
+{
+    int removed = 0;
+    // A hero's undo may also take a stack the player equipped meanwhile (Codex review R3, 22.10.); unequipped ones go first.
+    for (int pass = 0; pass < (equippedToo ? 2 : 1); ++pass)
+    for (int i = entity.Inventory.GetStackCount() - 1; i >= 0 && removed < amount; --i) {
+        if ((pass == 0 ? !Counted(entity, i) : entity.Inventory.GetSlotFromStack(i) == gESlot_None) || TemplateKey(entity, i) != key) continue;
+        const int here = entity.Inventory.GetAmount(i);
+        const int take = std::min<int>(amount - removed, here);
+        if (take <= 0) continue;
+        // A whole stack goes with DeleteStack: DeleteItems left a stocked scroll where it was (stageU1, 22.10.).
+        if (take == here ? entity.Inventory.DeleteStack(i) : entity.Inventory.DeleteItems(i, take)) removed += take;
+    }
+    return removed;
 }
 
 Content Read(Entity& entity)
@@ -337,13 +357,21 @@ void OnTx(uint8_t from, uint8_t const guid[16], uint32_t seq, net::ContentEntry 
         for (int i = 0; i < count; ++i) {
             const Template item = TemplateOf(KeyOf(entries[i]));
             if (entries[i].amount < 0) {
-                const GEInt stack = container.Inventory.FindStackIndex(item);
-                if (stack >= 0) container.Inventory.DeleteItems(stack, -entries[i].amount);
+                Remove(container, KeyOf(entries[i]), -entries[i].amount);
             } else if (entries[i].amount > 0) {
                 container.Inventory.CreateItems(item, 0, entries[i].amount);
             }
         }
         ++txApplied;
+        // Applied means applied: the contents are now what the transaction says.
+        Content expected = have;
+        for (int i = 0; i < count; ++i) expected[KeyOf(entries[i])] += entries[i].amount;
+        for (auto it = expected.begin(); it != expected.end();) it = it->second == 0 ? expected.erase(it) : std::next(it);
+        if (Read(container) != expected) {
+            ++txMismatch;
+            Logf("containers: transaction %u at %s did not come out as checked: expected %s", seq, NameOf(container).c_str(),
+                 Describe(expected).c_str());
+        }
     } else {
         ++txRefused;
     }
@@ -458,8 +486,8 @@ void OnTxResult(uint8_t const guid[16], uint32_t seq, bool ok)
         for (auto const& [key, delta] : undo) {
             const Template item = TemplateOf(key);
             if (delta < 0) {
-                const GEInt stack = self.Inventory.FindStackIndex(item);
-                if (stack >= 0) self.Inventory.DeleteItems(stack, -delta);
+                if (Remove(self, key, -delta, true) < -delta)
+                    Logf("containers: undo at %s could not take back all of %s", done.key == active ? "the open container" : "a container", NameOf(key));
             } else if (delta > 0) {
                 self.Inventory.CreateItems(item, 0, delta);
             }
@@ -758,10 +786,10 @@ void Take(char const* argument, LogFn log)
 
 void Report(LogFn log)
 {
-    char line[400];
-    sprintf_s(line, "CONTAINERSYNC hooked=%d quick_hooked=%d quick_takes=%u quick_refused=%u active=%d known=%zu pending=%zu contents_sent=%u contents_received=%u rewrites=%u tx_sent=%u tx_applied=%u tx_refused=%u tx_denied=%u reverted=%u",
+    char line[700];
+    sprintf_s(line, "CONTAINERSYNC hooked=%d quick_hooked=%d quick_takes=%u quick_refused=%u active=%d known=%zu pending=%zu contents_sent=%u contents_received=%u rewrites=%u tx_sent=%u tx_applied=%u tx_refused=%u tx_mismatch=%u tx_denied=%u reverted=%u",
               hooked, quickHooked, quickTakes, quickRefused, !active.empty(), known.size(), pending.size(), contentsSent, contentsReceived, rewrites, txSent, txApplied,
-              txRefused, txDenied, reverted);
+              txRefused, txMismatch, txDenied, reverted);
     log(line);
 }
 

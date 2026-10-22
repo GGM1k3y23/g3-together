@@ -3889,6 +3889,69 @@ def stageS2(copies, report, negative=False):
     assert not report['client_item_exists'], "the item the host took before saving is still in the client's world: two worlds"
 
 
+def stageU1(copies, report, negative=False):
+    """A unique item across a rejoin and a load (owner 22.10., after re/findings/myrtana-accord-c.md): the host puts an
+    item nobody has into a corpse; the client takes it; the host saves; the client quits and joins again (it is loaded
+    into the host's save); then the host loads the save once more. After each step the item exists exactly once: in the
+    client hero's inventory, not in the corpse on either machine, not with the host. Negative control: containersyncoff
+    on the client before the take (the corpse keeps its copy on the host: two of them)."""
+    item, slot = 'It_Spell_TimeBubble', 'G3T_U1'
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    time.sleep(5)
+    clear_slot(copies, slot)
+    found = containers(host.bot)
+    corpse = next((g for g, c in found.items() if c['kind'] == 'corpse'), None)
+    assert corpse, 'no corpse near the host'
+    report['corpse'] = found[corpse]['name']
+
+    def where(client_copy):
+        return {'host_corpse': contents(host.bot, corpse).get(item, 0), 'host_hero': carried(host.bot, item),
+                'client_hero': carried(client_copy.bot, item), 'client_corpse': contents(client_copy.bot, corpse).get(item, 0)}
+
+    def exactly_once(client_copy, when):
+        """One more of the item than at the start, and that one with the client's hero."""
+        counts = where(client_copy)
+        added = {k: counts[k] - base[k] for k in counts}
+        report[when] = {'counts': counts, 'added': added}
+        assert added['host_corpse'] + added['host_hero'] + added['client_hero'] == 1 and added['client_hero'] == 1             and added['client_corpse'] == 0, f'{when}: {added}'
+
+    base = report['start'] = where(client)  # the host's hero may carry one from the start (seen with this spell)
+    report['stock'] = report_line(host.bot, f'stock {corpse}_{item}', 'STOCK ')
+    wait_for(lambda: contents(client.bot, corpse).get(item, 0) == 1, 20, 'the client sees the item in the corpse')
+    if negative:
+        report_line(client.bot, 'containersyncoff', 'CONTAINERSYNCOFF ')
+    report['open'] = report_line(client.bot, 'lootopen '+corpse, 'LOOTOPEN ')  # the player's way: open, then take
+    report['take'] = loottake(client.bot, corpse, item)
+    wait_for(lambda: carried(client.bot, item) == base['client_hero'] + 1, 10, 'the client carries the item')
+    time.sleep(5)  # the transaction reaches the host
+    exactly_once(client, 'after_take')
+
+    start = host.bot.send(f'nativesave {slot}', 60)
+    report['save'] = host.bot.line('NATIVESAVE ', 60, 'nativesave', start)
+    assert 'ok=1' in report['save'], report['save']
+    # The client quits and joins again: it waits in the main menu and is loaded into the host's save.
+    report['client_closed'] = close(client)
+    shutil.copy2(client.root/'g3together.log', client.run/'client-first-g3together.log')
+    time.sleep(5)
+    client = copies['client'].launch('client', 'Client')
+    report['rejoin_load'] = wait_mod_log(client, r'persist: loading G3T_host_'+slot+r'\b', 180, "the rejoining client loads the host's save")
+    wait_running(client, 180, 'client world running after the rejoin')
+    time.sleep(8)
+    exactly_once(client, 'after_rejoin')
+
+    since = len(client.mod_log())
+    start = host.bot.send(f'nativeload {slot}', 60)
+    report['load'] = host.bot.wait(lambda t: next((l for l in t.splitlines() if l.startswith('NATIVELOAD') and 'ok=' in l), ''), 120,
+                                   'nativeload', start)
+    assert 'ok=1' in report['load'], report['load']
+    wait_running(host, 180, 'host world running after the load')
+    wait_mod_log(client, r'persist: loading G3T_host_'+slot+r'\b', 120, "the client loads the host's save again", since)
+    wait_running(client, 180, 'client world running after the load')
+    time.sleep(8)
+    exactly_once(client, 'after_load')
+
+
 def world_line(bot):
     line = report_line(bot, 'world', 'WORLD ')
     return line, dict(re.findall(r'(\w+)=(\S+)', line))
@@ -6664,7 +6727,7 @@ def parity(copies, report, negative=False):
 
 
 SUITES = {'stageX1': stageX1, 'stageF1': stageF1, 'brentondiag': brentondiag, 'xpinfodiag': xpinfodiag, 'stageA4': stageA4, 'stageA3': stageA3, 'stageQ2': stageQ2, 'stageK1': stageK1, 'stageS1': stageS1, 'stageS2': stageS2, 'stageS3': stageS3, 'stageCallAnimals': stageCallAnimals, 'callanimals2diag': callanimals2diag, 'animalscandiag': animalscandiag, 'callanimalsdiag': callanimalsdiag, 'stageOpenLocks': stageOpenLocks, 'stageSelfSpell': stageSelfSpell, 'selfspelldiag': selfspelldiag, 'stageNetOutage': stageNetOutage, 'stageR2': stageR2, 'stageM2': stageM2, 'stageRaid': stageRaid, 'stageM1': stageM1, 'stageR1': stageR1, 'theftdiag': theftdiag, 'stageCreature': stageCreature, 'stageCreatureLife': stageCreatureLife, 'stageControl': stageControl, 'stageNpcSpell': stageNpcSpell, 'stagePoison': stagePoison, 'theftscan': theftscan, 'doorlatediag': doorlatediag, 'doordiag': doordiag, 'worldscan': worldscan, 'usediag': usediag, 'friendlydiag': friendlydiag, 'parity': parity, 'scriptfinddiag': scriptfinddiag, 'tracediag': tracediag, 'deaddiag': deaddiag, 'stageL': stageL, 'stageP3a': stageP3a, 'invariantself': invariantself, 'puppetposediag': puppetposediag, 'syncdiag': syncdiag, 'ownerdiag': ownerdiag, 'potiondiag': potiondiag, 'transformdiag': transformdiag, 'rangeddiag': rangeddiag, 'rangedbot': rangedbot, 'stageP1': stageP1, 'stageP2': stageP2, 'stageP2hit': stageP2hit, 'stageP2fire': stageP2fire, 'stageHealOther': stageHealOther, 'raiddiag': raiddiag, 'arrowtouchdiag': arrowtouchdiag, 'scriptdumpdiag': scriptdumpdiag, 'stageT': stageT, 'stageV5': stageV5, 'stageV4': stageV4, 'posediag': posediag, 'stageV3': stageV3, 'stageV1': stageV1, 'stageV2': stageV2, 'viewdiag': viewdiag, 'stageE5': stageE5, 'stageQ': stageQ, 'questdiag': questdiag, 'stageE4': stageE4, 'infodescdiag': infodescdiag, 'stageE3': stageE3, 'stageE2': stageE2, 'stageE1': stageE1, 'aggrodiag': aggrodiag, 'stageH3b': stageH3b, 'infoscandiag': infoscandiag, 'gotodiag2': gotodiag2, 'walkdiag': walkdiag, 'gotodiag': gotodiag, 'navdiag': navdiag, 'soak': soak, 'stageH2': stageH2, 'stageH1': stageH1, 'infodiag': infodiag, 'stageG2': stageG2, 'stageG': stageG, 'stageD3b': stageD3b, 'stageD3a': stageD3a, 'stageD2': stageD2, 'stageD1': stageD1, 'stageC': stageC, 'stageB': stageB, 'stageA2': stageA2, 'stageA': stageA, 'herodeathdiag': herodeathdiag, 'herodiag': herodiag, 'givexpdiag': givexpdiag, 'stage3c': stage3c, 'farwritediag': farwritediag, 'stage1': stage1, 'stage2': stage2, 'animdiag': animdiag, 'stage3a': stage3a, 'scriptdiag': scriptdiag,
-          'stage3b': stage3b, 'combatdiag': combatdiag, 'stackdiag': stackdiag, 'stage4': stage4, 'stage4b': stage4b, 'talkdiag': talkdiag, 'namesdiag': namesdiag, 'talkdiag2': talkdiag2, 'stage4c': stage4c, 'itemdiag': itemdiag, 'stage5': stage5, 'lootdiag': lootdiag, 'stage5b': stage5b, 'stage5c': stage5c, 'chestdiag': chestdiag, 'stageChest': stageChest, 'quicklootdiag': quicklootdiag, 'radiusdiag': radiusdiag, 'pausediag': pausediag, 'savediag': savediag, 'stageQuickLoot': stageQuickLoot, 'tradediag': tradediag, 'stageTrade': stageTrade, 'spellfuncdiag': spellfuncdiag, 'stageDialogAudio': stageDialogAudio, 'listendiag': listendiag}
+          'stage3b': stage3b, 'combatdiag': combatdiag, 'stackdiag': stackdiag, 'stage4': stage4, 'stage4b': stage4b, 'talkdiag': talkdiag, 'namesdiag': namesdiag, 'talkdiag2': talkdiag2, 'stage4c': stage4c, 'itemdiag': itemdiag, 'stage5': stage5, 'lootdiag': lootdiag, 'stage5b': stage5b, 'stage5c': stage5c, 'chestdiag': chestdiag, 'stageChest': stageChest, 'quicklootdiag': quicklootdiag, 'radiusdiag': radiusdiag, 'pausediag': pausediag, 'savediag': savediag, 'stageQuickLoot': stageQuickLoot, 'tradediag': tradediag, 'stageTrade': stageTrade, 'spellfuncdiag': spellfuncdiag, 'stageDialogAudio': stageDialogAudio, 'listendiag': listendiag, 'stageU1': stageU1}
 
 
 IDLE_TASKS = ('ZS_HangAround_DoNothing', '')

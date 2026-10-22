@@ -867,6 +867,9 @@ void Tick(PlayerState const& local, bool haveLocal)
             // World loads and the intro video stop the engine loop (and so this service call) for
             // many seconds; the default ENet timeouts dropped a loading player after about 9 s.
             enet_peer_timeout(event.peer, 0, 60000, 180000);
+            // A new connection has not said hello yet. ENet hands out the peer of a player who left before, and its old
+            // player id made the hello guard refuse every rejoin (stageU1, 22.10.).
+            event.peer->data = nullptr;
             if (!isHost) {
                 Hello hello{MsgHello, ProtocolVersion, {}, {}};
                 strncpy_s(hello.name, localName, _TRUNCATE);
@@ -884,6 +887,7 @@ void Tick(PlayerState const& local, bool haveLocal)
                 const uint8_t id = static_cast<uint8_t>(reinterpret_cast<uintptr_t>(event.peer->data));
                 Logf("net: player %u disconnected", id);
                 Drop(id);
+                event.peer->data = nullptr;
                 const Leave leave{MsgLeave, id};
                 for (uint8_t i = 2; i < MaxPlayers; ++i) if (peers[i]) Send(peers[i], &leave, sizeof(leave), ChannelReliable, true);
             } else {

@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <new>
 #include <vector>
 
 namespace g3t::dialogaudio {
@@ -39,14 +40,34 @@ struct Speaking {
 Speaking speaking;
 uint32_t nextLineId = 1;
 
+// Our own sound and channel. The SDK declares both 0xC bytes, the engine's constructors write 0x10 and 0x14: a plain new
+// was too small, the constructors wrote past it and the heap broke; the game crashed when it freed memory later, mostly
+// at exit (A's regression 22.10., C dialog-audio-impl-c.md section 3). So: storage of the engine's size, the engine's
+// constructors placed into it, stop, then sound and channel destroyed in that order, then the storage freed. Never moved.
+struct Audio {
+    static_assert(sizeof(eCAudioSound) <= 0x10 && sizeof(eCAudioChannel) <= 0x14, "SDK audio types grew: check the sizes again");
+    alignas(8) unsigned char soundStorage[0x10];
+    alignas(8) unsigned char channelStorage[0x14];
+    eCAudioSound* sound;
+    eCAudioChannel* channel;
+    Audio() : sound(::new (static_cast<void*>(soundStorage)) eCAudioSound()), channel(::new (static_cast<void*>(channelStorage)) eCAudioChannel()) {}
+    ~Audio()
+    {
+        channel->Stop();
+        sound->eCAudioSound::~eCAudioSound();
+        channel->eCAudioChannel::~eCAudioChannel();
+    }
+    Audio(Audio const&) = delete;
+    Audio& operator=(Audio const&) = delete;
+};
+
 // A line from another player, playing here.
 struct Playing {
     uint8_t from = 0;
     uint32_t lineId = 0;
     uint8_t speakerKind = 0;
     uint8_t speaker[16] = {};
-    std::unique_ptr<eCAudioSound> sound;
-    std::unique_ptr<eCAudioChannel> channel;
+    std::unique_ptr<Audio> audio;
 };
 std::vector<Playing> playing;
 
@@ -174,9 +195,7 @@ eCEntity* SpeakerOf(uint8_t from, uint8_t kind, uint8_t const guid[16])
 
 void Stop(Playing& line)
 {
-    if (line.channel) line.channel->Stop();
-    line.channel.reset();
-    line.sound.reset();
+    line.audio.reset();
 }
 
 void StopAll()
@@ -242,11 +261,10 @@ void OnLine(uint8_t from, net::DialogLineNote const& note)
     line.lineId = note.lineId;
     line.speakerKind = note.speakerKind;
     std::memcpy(line.speaker, note.speaker, 16);
-    line.sound = std::make_unique<eCAudioSound>();
-    line.channel = std::make_unique<eCAudioChannel>();
+    line.audio = std::make_unique<Audio>();
     const GEBool ok = eCAudioModule::GetInstance().PlayStream3D(eEAudioChannelGroup_Voice, bCString(note.sample), speaker->GetWorldPosition(),
-                                                                1.0f, MinDistance, MaxDistance, line.sound.get(), line.channel.get());
-    if (!ok || !line.channel->IsPlaying()) {
+                                                                1.0f, MinDistance, MaxDistance, line.audio->sound, line.audio->channel);
+    if (!ok || !line.audio->channel->IsPlaying()) {
         ++droppedFailed;
         Logf("dialogaudio: line %u from player %u not played (ok=%d): %s", note.lineId, from, ok ? 1 : 0, note.sample);
         Stop(line);
@@ -283,21 +301,28 @@ void TickPlaying()
     for (auto it = playing.begin(); it != playing.end();) {
         eCEntity* speaker = SpeakerOf(it->from, it->speakerKind, it->speaker);
         const float distance = speaker ? Distance(hero, speaker) : FadeRange + 1.0f;
-        if (!speaker || distance > FadeRange || !it->channel->IsPlaying()) {
+        if (!speaker || distance > FadeRange || !it->audio->channel->IsPlaying()) {
             if (speaker && distance > FadeRange) ++stoppedFar;
             else ++finished;
             Stop(*it);
             it = playing.erase(it);
             continue;
         }
-        it->channel->SetLocation(speaker->GetWorldPosition());
-        it->channel->SetVolume(distance <= StartRange ? 1.0f : (FadeRange - distance) / (FadeRange - StartRange));
+        it->audio->channel->SetLocation(speaker->GetWorldPosition());
+        it->audio->channel->SetVolume(distance <= StartRange ? 1.0f : (FadeRange - distance) / (FadeRange - StartRange));
         ++it;
     }
 }
 }
 
 void Start() { net::SetDialogLineHandler(&OnLine); }
+
+void OnWorldChange()
+{
+    // Before a load and before the game shuts down (the world goes first): no channel of ours outlives the audio system.
+    StopAll();
+    speaking = {};
+}
 
 void Tick()
 {
