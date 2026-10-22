@@ -1,0 +1,184 @@
+# Playing G3 Together
+
+**English** · [Deutsch](SPIELEN.md)
+
+G3 Together adds co-op to Gothic 3 for two players. More players are planned but have not been tested.
+One player is the **host**: their world is the shared campaign, and their save is everyone's campaign save.
+The other player joins them.
+
+This is a test version. See the known issues and limitations below.
+
+## Requirements (the same on both PCs)
+
+- Gothic 3 from Steam with **Community Patch 1.75.14**.
+- **Parallel Universe Patch 1.1.1**. Steam, CP 1.75.14 and PUP 1.1.1 are the tested baseline;
+  compatibility without PUP has not been established.
+- The same G3 Together version (the same `Script_G3Together.dll`) and the same game files.
+- Matching difficulty, alternative balancing, alternative AI, XP factor, minimum hit duration, Quick Loot,
+  and the entire `[Game]` section of `Ini\ge3.ini`. The mod checks these when a player joins and refuses
+  mismatched installations. The joining player's `<Gothic 3>\g3together.log` records the reason on a line
+  containing `REFUSED by host`. Loose files in Data subfolders are not checked.
+- No other co-op mods in `scripts`, such as Myrtana Accord's `Script_G3Coop.dll`.
+- Prefer a separate **copy** of the Gothic 3 installation for co-op.
+
+## Installation
+
+1. Install Gothic 3 from Steam, then **Community Patch 1.75.14**.
+2. Install [Parallel Universe Patch **1.1.1**](https://www.worldofgothic.de/dl/download_678.htm)
+   into the same game installation. Both players must use the same patch versions.
+3. Use the same G3 Together package on both PCs. Copy `Script_G3Together.dll` into `<Gothic 3>\scripts\`.
+4. Copy the appropriate `g3together.ini.host-example` or `g3together.ini.client-example` from the package
+   into `<Gothic 3>\`, rename it to `g3together.ini`, and edit it:
+
+   Host:
+
+   ```ini
+   role = host
+   port = 34567
+   name = YourName
+   ```
+
+   Joining player:
+
+   ```ini
+   role = client
+   address = <host IP address>
+   port = 34567
+   name = YourName
+   ```
+
+   The joining player must use `role = client`. If the INI is missing or the role has another value,
+   the game starts as a host.
+
+### Mod message language
+
+English is the default (`language = en`). To use German messages, add `language = de` to your own
+`g3together.ini` and restart the game. Each player may choose independently. This setting does not
+change Gothic 3's own language. The message examples in this guide assume English.
+
+## Connecting over the internet
+
+The mod connects directly over UDP port 34567. A private virtual network, such as **Tailscale** or
+**ZeroTier**, allows the players to connect without forwarding a router port. Install the chosen
+service on both PCs and use the host's virtual-network address as `address`.
+Alternatively, the host can forward UDP port 34567 on their router to their PC.
+
+### Using Hamachi
+
+1. Both players install Hamachi and join the **same** Hamachi network.
+2. Check the connection status shown for the other player. Prefer a direct connection; a relayed
+   connection adds latency and may cause stuttering. Resolve connection errors before starting.
+3. The host's Hamachi address appears at the top of their Hamachi window (`25.x.x.x`). The joining player
+   puts that address in their INI: `address = 25.x.x.x`, `port = 34567`.
+4. **Host firewall:** Windows often treats Hamachi as a public network. When Windows asks whether to
+   allow Gothic 3 through the firewall, allow it on the network profile used by Hamachi, including
+   **Public networks** if applicable.
+5. The joining player can run `ping 25.x.x.x` in a command prompt, using the host's address, to check
+   connectivity and latency. Lower latency is preferable; a ping reply alone does not verify that
+   the game's UDP connection is allowed.
+
+The host accepts connections through any network adapter, including Hamachi. Testing described by
+these guides used two game copies on one PC; play over the real internet remains unverified.
+
+## Starting and saving
+
+1. The host starts Gothic 3 and begins a new game or loads the co-op campaign.
+2. The other player starts Gothic 3.
+   - If the host has loaded or saved a campaign, stay in the main menu. The campaign is transferred
+     and loaded automatically when you join.
+   - If the host has started a new game, start a new game as well.
+3. The **host** saves the campaign. Each joining player automatically keeps their own hero record
+   for that save: level, experience, attributes, inventory and so on. It is restored when they rejoin.
+   On the very first join from the main menu, a player uses a copy of the host's hero. To keep your
+   own new hero, start a new game before joining.
+
+## What is shared
+
+- Players see each other, including movement, combat animations and falls.
+- Everyone sees the same NPCs, fights and deaths. Each region is simulated by one player: the host
+  near the host, or the first player to arrive in a distant region. Another player entering that
+  region sees the same simulation.
+- The PC simulating an NPC decides damage to it. The player who kills it earns the experience.
+  Kills by a player's companions or summons reward that player; kills by other NPCs reward nobody.
+- Companions follow the player who recruited them, even far from the host. Dismissing them returns
+  their ownership to the host.
+- Quest state and previously completed dialogs are shared. Quest rewards go to everyone. Kill
+  quests also count enemies killed in the joining player's region.
+- Items, chests, corpses and trading are shared: what one player takes is gone for everyone.
+- Everyone uses the same time of day. Sleeping advances time for all players.
+- Helping up a downed player costs one healing potion. A player who would die stays down while a
+  connected partner in the same world, who is not downed, can help. Stand within 2.5 m for three
+  seconds to help them up. The cheapest healing potion in the helper's inventory is consumed.
+  Without a potion, both players see a notice and the downed player waits for their partner to
+  return with one.
+- If nobody can help because everyone is down, or the partner is disconnected, in another world
+  or out of the game for more than five seconds, the hero dies as in single-player. The host loads a
+  save; the other player is loaded into it automatically.
+- Dead NPCs remain dead, including those killed far from the host.
+- Opening a door or picking a lock opens it for everyone, including players who join later.
+- NPCs respond to attacks from either player as in single-player: they fight, flee or call for help.
+- Players see each other's arrows, bolts and fireballs in flight; each hit counts once. Healing
+  spells also work on the other player.
+- NPC spells such as sleep, fear, charm, poison and disease apply on both PCs. Summoned creatures
+  are visible to the other player and join the fight.
+
+## Reporting a bug
+
+- Record the time, who was hosting, what you did and what each player saw.
+- Both players should run `tools\collect_logs.py` from the extracted package folder and send the
+  resulting ZIP. Commands are included in the [playtest checklist](PLAYTEST.md).
+- For reproducible NPC or enemy problems, such as a dead orc standing upright on the other PC,
+  add `trace = on` to the INI and restart. The game writes `g3trace.log` in its installation folder:
+  NPC animations, tasks and the game code that triggered them. The file is limited to about
+  50,000 lines and is recreated on each start. The log collector includes it. Remove the setting
+  after collecting the report.
+
+## Known issues (21 October 2026)
+
+| What can happen | What to do |
+|---|---|
+| The game may crash during combat or shortly after an enemy dies. The known orc-raid crash has a guard, but other crashes remain possible. | The host should save before difficult fights. Record the time and enemy, and preserve both players' logs before restarting. The host loads the last good save; the other player is loaded into it automatically (if their own game crashed, they restart it and wait in the main menu). |
+| The other player's character briefly lags behind while being hit, or shows a movement inaccurately. | Regroup and wait briefly; use **Page Down** if needed. If enemies, health or positions remain clearly different, stop the fight and record the problem. |
+| Enemies or companions behave differently on the two PCs after joining. | Check that both players see the same characters and movements near the host. If the difference persists, preserve the logs and restart together from the last good save. |
+| Using a campfire, seat or other fixed interaction point simultaneously can leave a player stuck. | Use these places one at a time. If someone gets stuck, stop interacting with that object, record the bug and reload together. |
+| Combat and saving while transformed into a creature have not been checked sufficiently. | Transform back before fighting or saving. |
+| A controlled or tamed NPC does not follow reliably or leaves the party. | Do not rely on these abilities yet. Record the NPC and time; casting the spell again is not a verified workaround. |
+| Stun and hypnosis cast by the joining player only take effect through the host. | Record failures; the host can cast the spell instead. |
+| A summoned creature stops moving on the other PC when players move far apart. | Use summons while together. Record the location and creature if this occurs. |
+| Poison or disease is not fully visible on the other PC, and a poison death may award no experience. | Record the discrepancy. |
+| Town counters are shared, but a guard may still accuse or pursue the wrong player. | Avoid theft and deliberate attacks on peaceful residents for now. Record who acted and whom the guard addressed or attacked. |
+
+## Known limitations
+
+- Beyond about 35 m from the host, the joining player sees "Far from host": that region is now
+  simulated on their PC. Below about 25 m, the message is "Back near the host."
+- **Jump to your partner:** **Page Down** puts you 1.5 m behind the other player in the same world,
+  including a downed partner you want to help. There is a five-second cooldown. Staying together
+  is preferable, but you can separate and regroup. To change the key, use `partner_key = F9` in
+  the INI (F1–F24, PAGEUP, HOME, END, INSERT, DELETE or a letter).
+- Dialog changes to NPCs, such as trader, teacher, guard and routine settings, apply to everyone,
+  as do dialog-triggered duels, attacks and companion recruitment. Dialog items go to the player
+  speaking.
+- The host's save records which player owns each companion. After loading, a companion returns to
+  its player when that player rejoins, identified by their INI name. Do not change that name.
+  After a disconnect without loading, companions initially belong to the host.
+- If the host loads a save during a session, the other players are loaded into it automatically. Until they
+  are done, you do not see each other.
+- Trading and looting have been tested with bots, not through the real trading interface.
+- Sleep advances the clock for everyone, but only heals the player who sleeps.
+- Transformations: the other player sees the creature moving, then sees the hero again after the
+  transformation ends. Wolf and Bloodfly were tested using the same setup as the game's spell.
+  Combat in creature form, including hits to and from it, and saving while transformed remain
+  untested and may have bugs.
+- Enemies attack both players. Their attitude toward a joining player comes from the hero on the
+  PC currently simulating the NPC. For example, the host's poor standing with orcs also applies
+  to the other player for NPCs simulated by the host.
+- Town and camp reputation: thefts and murders by either player contribute to shared town
+  counters (`reputation = shared` in the host's INI). Which guard sees what, and whom they pursue
+  or question, has not been adapted yet. The `together` and `personal` modes are prepared but
+  still behave like `shared` or like the previous independent counters, respectively.
+- Untested: monsters continuing to attack a downed hero, robbing a downed hero, real internet
+  play, and more than two players. The features above were checked with bots. A first short human
+  test with two windows on one PC found two bugs: enemies ignored the joining player, and combat
+  was not visible on that player's PC. Both were fixed and checked with bots, but have not yet
+  been checked again by human players.

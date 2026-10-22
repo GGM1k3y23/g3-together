@@ -1,15 +1,17 @@
 # Checkliste: erster Koop-Abend mit Menschen
 
+[English](PLAYTEST.md) · **Deutsch**
+
 ## Worum es geht
 
-Ein Ablauf für den ersten Abend zu zweit (ein Host, ein Mitspieler): Beitritt, gemeinsamer Kampf, Gefolgsmann, Bewusstlosigkeit, Dialog, Quest, Handel und Plündern, getrennte Gegenden, Speichern und Laden, Wiederbeitritt. Dazu, was bei einem Fehler zu notieren ist und wie man die Logs mit `Werkzeuge\collect_logs.py` einsammelt.
+Ein Ablauf für den ersten Abend zu zweit (ein Host, ein Mitspieler): Beitritt, gemeinsamer Kampf, Gefolgsmann, Bewusstlosigkeit, Dialog, Quest, Handel und Plündern, getrennte Gegenden, Speichern und Laden, Wiederbeitritt. Dazu, was bei einem Fehler zu notieren ist und wie man die Logs mit `tools\collect_logs.py` einsammelt.
 
 ## Vor dem Start
 
 ### Host, Mitspieler und Installationen
 
 - [ ] Genau zwei Personen festlegen: ein Host und ein Mitspieler. Der Host startet oder lädt die gemeinsame Kampagne und speichert.
-- [ ] Beide verwenden Gothic 3 Steam mit Community Patch 1.75.14 sowie dieselbe G3-Together-Build/Protokollversion (die Mod prüft die Version beim Beitritt). Keine andere Koop-Mod im `scripts`-Ordner; wenn möglich eine eigene Installationskopie für den Koop-Abend verwenden.
+- [ ] Beide verwenden die getestete Grundlage: Gothic 3 von Steam, danach Community Patch **1.75.14**, danach [Parallel Universe Patch **1.1.1**](https://www.worldofgothic.de/dl/download_678.htm), danach dieselbe G3-Together-Build/Protokollversion. Die Kompatibilität ohne PUP ist nicht belegt. Keine andere Koop-Mod im `scripts`-Ordner; wenn möglich eine eigene Installationskopie für den Koop-Abend verwenden. Die [Spielanleitung](SPIELEN.md) beschreibt die Installation.
 - [ ] Vorher den Gothic-3-Spielstandordner beider Personen sichern. Während des Abends einen klar benannten Test-Spielstand verwenden.
 - [ ] Verbindung wählen: gleiches LAN oder privates VPN. Host-IP/VPN-Adresse und Firewall-Regel nur dem Mitspieler geben. Der Host braucht eingehendes UDP auf Port 34567. Die Verbindung über echtes Internet gilt noch nicht als von Menschen getestet.
 - [ ] Beide notieren ihre Rolle und lokale Uhrzeit/Zeitzone für spätere Fehlerberichte.
@@ -24,6 +26,7 @@ Host:
 role = host
 port = 34567
 name = Host
+language = de
 ```
 
 Mitspieler:
@@ -33,9 +36,13 @@ role = client
 address = <LAN- oder VPN-Adresse des Hosts>
 port = 34567
 name = Spieler2
+language = de
 ```
 
 `puppet_template` ist optional; Standardwert ist `PC_Hero`. Fehlt die INI, startet der Code im Host-Modus. Deshalb vor dem Start auf dem Mitspieler-PC `role = client` kontrollieren.
+
+Die Beispiel-INIs verwenden `language = de`, passend zu den unten zitierten Meldungen. Standard ist
+`language = en`. Jeder Spieler kann die Sprache unabhängig wählen; sie ändert nur die Mod-Meldungen.
 
 - [ ] Beide verwenden dieselbe Mod-DLL und dieselben Installationsdateien. Der Host prüft Game.dll, Script.dll, Engine.dll, DLLs im `scripts`-Ordner, Regelarchive, Namen/Größen anderer Data-Archive sowie Optionen und den gesamten `[Game]`-Abschnitt aus `Ini\ge3.ini`. Lose Dateien in Data-Unterordnern und eigene Schwierigkeitsschieber deckt diese Prüfung laut README nicht ab.
 - [ ] Schwierigkeit, alternatives Balancing, alternative KI, minimale Trefferdauer, XP-Faktor und Quick Loot abgleichen. Bei Join-Ablehnung den Grund in `g3together.log` ansehen.
@@ -73,20 +80,20 @@ Danach kann jeder sein Logpaket mit dem mitgelieferten Sammler erstellen:
 2. Das Skript mit dem Gothic-3-Installationsordner aufrufen:
 
    ```powershell
-   python "Werkzeuge\collect_logs.py" "<Gothic-3-Installationsordner>"
+   python "tools\collect_logs.py" "<Gothic-3-Installationsordner>"
    ```
 
    Liegen die Windows-Dokumente an einem anderen Ort, diesen als zweites Argument angeben:
 
    ```powershell
-   python "Werkzeuge\collect_logs.py" "<Gothic-3-Installationsordner>" "<Dokumente-Ordner>"
+   python "tools\collect_logs.py" "<Gothic-3-Installationsordner>" "<Dokumente-Ordner>"
    ```
 
 3. Das Skript meldet den Namen der erzeugten ZIP. Sie entsteht im Paketordner, üblicherweise als `g3together-logs-<Zeitstempel>.zip`.
 
-Gesammelt werden `g3together.log` und `g3together.ini` aus dem Spielordner sowie, falls vorhanden, Engine-Logs aus `%USERPROFILE%\Documents\gothic3\`:
+Gesammelt werden `g3together.log`, `g3together.ini` und gegebenenfalls `g3trace.log` aus dem Spielordner sowie, falls vorhanden, Engine-Logs aus `%USERPROFILE%\Documents\gothic3\`:
 
-- `paru\g3debug.log` (nur falls die Datei existiert; ob der Ordner ausschließlich beim Community Patch entsteht ist **unknown**);
+- `paru\g3debug.log` (Parallel-Universe-Protokoll, sofern vorhanden);
 - `ge3log*.log`;
 - `Lastlog_GE3.log`.
 

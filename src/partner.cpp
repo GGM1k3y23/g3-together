@@ -4,6 +4,7 @@
 #include "body.h"
 #include "config.h"
 #include "hud.h"
+#include "i18n.h"
 #include "log.h"
 #include "net.h"
 #include "remote.h"
@@ -95,12 +96,12 @@ void Tick()
     if (down && !wasDown) {
         char const* reason = "";
         if (Jump(&reason)) {
-            hud::Message(hud::Good, L"Zum Mitspieler gesprungen.");
+            hud::Message(hud::Good, i18n::Text(i18n::JumpedToPartner));
         } else {
             ++refused;
-            if (!std::strcmp(reason, "no partner in this world")) hud::Message(hud::Warning, L"Kein Mitspieler in dieser Welt.");
-            else if (!std::strcmp(reason, "down")) hud::Message(hud::Warning, L"Nicht, solange du am Boden liegst.");
-            else if (!std::strcmp(reason, "too soon")) hud::Message(hud::Warning, L"Kurz warten, dann noch einmal.");
+            if (!std::strcmp(reason, "no partner in this world")) hud::Message(hud::Warning, i18n::Text(i18n::NoPartnerInWorld));
+            else if (!std::strcmp(reason, "down")) hud::Message(hud::Warning, i18n::Text(i18n::CannotJumpWhileDown));
+            else if (!std::strcmp(reason, "too soon")) hud::Message(hud::Warning, i18n::Text(i18n::JumpCooldown));
         }
     }
     wasDown = down;

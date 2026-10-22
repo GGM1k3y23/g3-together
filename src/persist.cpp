@@ -3,6 +3,7 @@
 
 #include "hero.h"
 #include "hud.h"
+#include "i18n.h"
 #include "journal.h"
 #include "net.h"
 #include "npcs.h"
@@ -269,7 +270,7 @@ void OnFileDone(char const* name, uint32_t const size[net::FileCount], uint32_t 
         if (session.GetHero() && session.IsGameRunning() && hero::SaveRecord(record.c_str())) {
             Logf("persist: first time in %s; the current hero is kept as this player's hero", local.c_str());
         } else {
-            hud::Message(hud::Warning, L"Kein eigener Held f\u00fcr diese Kampagne: du spielst mit einer Kopie des Host-Helden.");
+            hud::Message(hud::Warning, i18n::Text(i18n::NoCampaignHero));
             Logf("persist: first time in %s and no hero in play; the host's hero is copied", local.c_str());
         }
     }
@@ -320,10 +321,9 @@ void Hint()
 {
     if (hinted == hostWorld.epoch) return;
     hinted = hostWorld.epoch;
-    wchar_t const* text = hostWorld.kind == net::KindMenu ? L"Der Host ist im Hauptmen\u00fc. Es geht weiter, sobald er ein Spiel l\u00e4dt."
-        : hostWorld.kind == net::KindNew ? L"Der Host spielt ein neues Spiel ohne Spielstand. Starte auch ein neues Spiel oder warte, bis der Host speichert."
-        : everIn ? L"Der Host hat einen Spielstand geladen: du wirst in denselben Stand nachgeladen."
-        : L"Du wirst in den Spielstand des Hosts geladen.";
+    wchar_t const* text = i18n::Text(hostWorld.kind == net::KindMenu ? i18n::HostInMenu
+                                     : hostWorld.kind == net::KindNew ? i18n::HostNewGame
+                                     : everIn ? i18n::HostLoadedSave : i18n::LoadingHostSave);
     hud::Message(hud::Warning, text);
 }
 
@@ -443,7 +443,7 @@ void OnWorld(uint8_t from, net::WorldNote const& note)
             }
         } else if (localKind == net::KindNew && note.kind != net::KindMenu && c.hinted != epoch) {  // not one about to start a game
             c.hinted = epoch;
-            hud::Message(hud::Warning, L"Ein Mitspieler ist in einer anderen Welt. Speichere, dann wird er in deinen Stand geladen.");
+            hud::Message(hud::Warning, i18n::Text(i18n::PartnerOtherWorldSave));
         }
     }
 }

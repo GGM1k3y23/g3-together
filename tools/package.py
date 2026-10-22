@@ -17,9 +17,11 @@ HOST_INI = """# G3 Together: this player hosts the campaign.
 role = host
 port = 34567
 name = Host
+# Mod messages only: en (default) or de. Each player can choose independently.
+language = en
 # Key that jumps to the other player (default PAGEDOWN): F1-F24, PAGEUP, HOME, END, INSERT, DELETE or a letter
 partner_key = PAGEDOWN
-# For a bug report about NPCs: remove the # below, restart, reproduce (writes g3trace.log, see SPIELEN.md)
+# For a bug report about NPCs: remove the # below, restart, reproduce (writes g3trace.log, see PLAYING.md)
 # trace = on
 # Town reputation (thefts, murders): shared (one counter per town for both; default), together, personal
 # reputation = shared
@@ -29,8 +31,10 @@ role = client
 address = 127.0.0.1
 port = 34567
 name = Player
+# Mod messages only: en (default) or de. Each player can choose independently.
+language = en
 partner_key = PAGEDOWN
-# For a bug report about NPCs: remove the # below, restart, reproduce (writes g3trace.log, see SPIELEN.md)
+# For a bug report about NPCs: remove the # below, restart, reproduce (writes g3trace.log, see PLAYING.md)
 # trace = on
 """
 
@@ -44,13 +48,11 @@ def main():
         z.write(dll, 'scripts/Script_G3Together.dll')
         z.writestr('g3together.ini.host-example', HOST_INI)
         z.writestr('g3together.ini.client-example', CLIENT_INI)
-        z.write(ROOT / 'docs/SPIELEN.md', 'SPIELEN.md')
-        z.write(ROOT / 'docs/MITSPIELER.md', 'LIESMICH-MITSPIELER.md')
-        z.write(ROOT / 'docs/TESTPLAN.md', 'TESTPLAN.md')
-        spielabend = ROOT / 'docs/SPIELABEND.md'
-        if spielabend.exists():
-            z.write(spielabend, 'SPIELABEND.md')
-        z.write(ROOT / 'tools/collect_logs.py', 'Werkzeuge/collect_logs.py')
+        # Explicit public guides only. Keep their relative language links valid in the ZIP.
+        for guide in ('PLAYING.md', 'JOINING.md', 'PLAYTEST.md',
+                      'SPIELEN.md', 'MITSPIELER.md', 'TESTPLAN.md'):
+            z.write(ROOT / 'docs' / guide, guide)
+        z.write(ROOT / 'tools/collect_logs.py', 'tools/collect_logs.py')
         z.write(ROOT / 'COPYING', 'COPYING')
         enet = ROOT / 'thirdparty/enet/LICENSE'
         if enet.exists():
