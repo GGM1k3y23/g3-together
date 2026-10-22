@@ -25,9 +25,7 @@ exactly the same version.
 ## Known limitations
 
 - A guard of the host does not yet rob a knocked-out partner.
-- In dialogs only the hero and the dialog partner are heard, not other NPCs joining in.
 - Only two players have been tested; more may work but are untested.
-- Running two games on one PC can trip the graphics driver (seen with NVIDIA).
 
 Found a bug? Note the time and what happened, then send both players' logs (`tools/collect_logs.py` in the package).
 
