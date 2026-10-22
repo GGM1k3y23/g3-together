@@ -17,9 +17,11 @@
 #include "partner.h"
 #include "items.h"
 #include "containers.h"
+#include "dialogaudio.h"
 #include "config.h"
 #include "trace.h"
 #include "doors.h"
+#include "enclaves.h"
 #include "log.h"
 #include "npcs.h"
 #include "qa.h"
@@ -106,17 +108,20 @@ class Module : public eCEngineComponentBase
         g3t::journal::OnWorldChange();
         g3t::infocmd::OnWorldChange();
         g3t::doors::OnWorldChange();
+        g3t::enclaves::OnWorldChange();
     }
     bEResult WorldActivate() override
     {
         g3t::Log("world activated");
         ForgetWorld();
+        g3t::persist::OnWorldActivate();
         return bEResult_Ok;
     }
     bEResult WorldDeactivate() override
     {
         g3t::Log("world deactivated");
         ForgetWorld();
+        g3t::persist::OnWorldDeactivate();
         return bEResult_Ok;
     }
     bEResult PreShutdown() override
@@ -145,11 +150,13 @@ class Module : public eCEngineComponentBase
         g3t::range::Tick();
         g3t::partner::Tick();
         g3t::doors::Tick();
+        g3t::enclaves::Tick();
         g3t::journal::Tick();
         g3t::persist::Tick();
         g3t::clock::Tick();
         g3t::infocmd::Tick();
         g3t::containers::Tick();
+        g3t::dialogaudio::Tick();
         g3t::qa::Tick();
         g3t::shot::Tick();  // after QA: a QA shot is re-aimed there before it is announced
         g3t::spells::Tick();
@@ -183,7 +190,9 @@ extern "C" __declspec(dllexport) gSScriptInit const* GE_STDCALL ScriptInit()
     g3t::story::Start();
     g3t::talk::Start();
     g3t::items::Start();
+    g3t::enclaves::Start();
     g3t::containers::Start();
+    g3t::dialogaudio::Start();
     g3t::journal::Start();
     g3t::persist::Install();
     g3t::clock::Start();

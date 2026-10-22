@@ -34,6 +34,14 @@ gFScriptAICallback originalCallback = nullptr;
 gFScript originalContinue = nullptr;
 bool continueBlock = true;  // QA negative control: ContinueRoutineOn
 unsigned continueBlocked = 0, continueRun = 0;
+// The script GetCombatMoveLength (Script_Game.dll 0xaa270), called by name from sAICombatMoveStart with other unset,
+// binds the SPU's other (the fight's saved target) into a wrapper before answering from self's species and the action
+// alone. A stale target crashed AttachTo there (Script.dll 0x13ea3, ~1 s after an orc died in the raid; 20.10.
+// 22:56, re/findings/attachto-guard-c.md). Hand it an empty wrapper so it never touches that target.
+gFScript originalMoveLength = nullptr;
+bool moveLengthSearched = false;
+bool moveLengthGuard = true;  // QA negative control: movelengthoff
+unsigned moveLengthCalls = 0, moveLengthSanitized = 0, moveLengthUnknown = 0;
 bool statesWrapped = false;
 unsigned skipped = 0;
 unsigned unknown = 0;  // calls whose stack top named no wrapped state: must stay 0
@@ -186,6 +194,7 @@ GEInt GE_STDCALL FilterAttitude(gCScriptProcessingUnit* spu, GELPVoid self, GELP
     if (target && remote::IsPuppet(target)) {
         ++attitudeAsked;
         eCEntity* judge = Self(spu, self);
+        remote::NoteContact(judge, target);
         eCEntity* hero = gCSession::GetInstance().GetHero();
         if (attitudeOn && hero && judge && judge != hero && !Driven(judge)) {
             // GetAttitude answers Panic when self flees and its current target is other. With the hero in place of
@@ -209,6 +218,17 @@ GEInt GE_STDCALL FilterContinue(gCScriptProcessingUnit* spu, GELPVoid self, GELP
     if (continueBlock && remote::IsPuppet(Self(spu, self))) { ++continueBlocked; return 0; }
     ++continueRun;
     return originalContinue(spu, self, other, args);
+}
+
+GEInt GE_STDCALL SafeMoveLength(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid other, GEInt args)
+{
+    ++moveLengthCalls;
+    // Other feeds no branch of the original; a valid empty wrapper takes its copy branch instead of GetOtherEntity.
+    Entity noOther;
+    if (moveLengthGuard) ++moveLengthSanitized;
+    const GEInt length = originalMoveLength(spu, self, moveLengthGuard ? &noOther : other, args);
+    if (length < 0) ++moveLengthUnknown;  // the original answers -1 for actions it has no length for
+    return length;
 }
 
 GEBool GE_STDCALL FilterCallback(gCScriptProcessingUnit* spu)
@@ -249,6 +269,18 @@ void ContinueRoutineOn(void (*log)(char const*))
 {
     continueBlock = false;
     log("CONTINUEROUTINEON ok=1");
+}
+void MoveLengthReport(void (*log)(char const*))
+{
+    char line[160];
+    sprintf_s(line, "MOVELENGTH wrapped=%d guard=%d calls=%u sanitized=%u unknown=%u", originalMoveLength != nullptr,
+              moveLengthGuard ? 1 : 0, moveLengthCalls, moveLengthSanitized, moveLengthUnknown);
+    log(line);
+}
+void MoveLengthOff(void (*log)(char const*))
+{
+    moveLengthGuard = false;
+    log("MOVELENGTHOFF ok=1");
 }
 
 void FindByRva(char const* rvaHex, void (*log)(char const*))
@@ -331,7 +363,7 @@ void Tick()
             Logf("ai: GetAttitude wrapped (%s; puppets count as the local hero)", attitudeNative ? "native jump" : "script table only");
         }
     }
-    if ((installed || searched) && statesWrapped && originalContinue) return;
+    if ((installed || searched) && statesWrapped && originalContinue && moveLengthSearched) return;
     const DWORD now = GetTickCount();
     if (now - lastTry < 1000) return;
     lastTry = now;
@@ -344,6 +376,15 @@ void Tick()
             script->m_funcScript = &FilterContinue;
             Log("ai: ContinueRoutine wrapped (puppets keep no routine)");
         }
+    }
+    if (!moveLengthSearched && gCSession::GetInstance().IsGameRunning()) {
+        moveLengthSearched = true;
+        auto* script = Find(admin.GetScripts(), "GetCombatMoveLength");
+        if (script && script->m_funcScript && script->m_funcScript != &SafeMoveLength) {
+            originalMoveLength = script->m_funcScript;
+            script->m_funcScript = &SafeMoveLength;
+        }
+        Log(originalMoveLength ? "ai: GetCombatMoveLength wrapped (fight target not bound)" : "ai: GetCombatMoveLength NOT found, not wrapped");
     }
     if (installed || searched) return;
     if (auto* script = Find(admin.GetScripts(), Name)) {

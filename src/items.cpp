@@ -133,6 +133,7 @@ std::map<std::string, int> Carried(eCDynamicEntity* hero)
     return out;
 }
 bool disabled = false;  // QA negative control
+unsigned takesBegun = 0;
 unsigned tookCount = 0, sent = 0, received = 0, granted = 0, denials = 0, removed = 0, returned = 0;
 char lastTook[200] = "-";
 }
@@ -143,6 +144,7 @@ void BeforeTake(gCScriptProcessingUnit* spu)
     if (!item) item = spu ? spu->GetOtherEntity() : nullptr;
     taking = item != nullptr;
     if (!taking) return;
+    ++takesBegun;
     const eCEntityProxy proxy(item);
     std::memcpy(takingGuid, &proxy.GetEntityID().GetCore(), 16);
     strncpy_s(takingName, Entity(item).GetName().GetText(), _TRUNCATE);
@@ -277,6 +279,10 @@ void Disable(LogFn log)
     disabled = true;
     log("ITEMSYNCOFF ok=1");
 }
+
+unsigned Returned() { return returned; }
+unsigned TakesBegun() { return takesBegun; }
+unsigned TakesDone() { return tookCount; }
 }
 
 namespace g3t::items {

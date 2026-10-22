@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -468,6 +469,45 @@ std::string Join(bTObjArray<bCString>& list)
 }
 
 // QA, stage E3: a dialog option's conditions and its script lines, to see why it cannot run.
+// QA (stage Q2): dialog options whose script gives experience (GiveXP) and whose only conditions are simple (no quest, no
+// knowledge, no items): name, owner, condition type, parent, told; the owner's distance from the hero in metres.
+void XpInfos(LogFn log)
+{
+    char line[400];
+    gCInfoManager_PS* manager = gCSession::GetInstance().IsGameRunning() ? gCInfoManager_PS::GetInstance() : nullptr;
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    if (!manager || !hero) { log("REFUSED xpinfos: no game"); return; }
+    auto& all = manager->AccessInfos();
+    unsigned found = 0;
+    for (int i = 0; i < all.GetCount(); ++i) {
+        gCInfo_PS* info = all.AccessAt(i);
+        if (!info || info->AccessInfoGiven() || info->AccessQuest().GetLength() || info->AccessConditionPlayerKnows().GetCount() ||
+            info->AccessCondItems().GetCount() || info->AccessCondSecondaryNPC().GetCount())
+            continue;
+        gCInfoScript_PS* script = info->AccessInfoScript().GetObject();
+        int xp = 0;
+        for (GEInt c = 0; script && c < script->GetCommandCount(); ++c)
+            if (gCInfoScriptLine_PS* command = script->GetCommand(c))
+                if (command->AccessCommand() == bCString("GiveXP")) xp = std::atoi(command->AccessID1().GetText());
+        if (xp <= 0) continue;
+        Entity owner = Entity::GetEntity(info->AccessOwner());
+        float distance = -1.0f;
+        if (owner.GetInstance()) {
+            const bCVector& a = owner.GetInstance()->GetWorldPosition();
+            const bCVector& b = hero->GetWorldPosition();
+            distance = std::sqrt((a.GetX() - b.GetX()) * (a.GetX() - b.GetX()) + (a.GetY() - b.GetY()) * (a.GetY() - b.GetY()) +
+                                 (a.GetZ() - b.GetZ()) * (a.GetZ() - b.GetZ())) / 100.0f;
+        }
+        sprintf_s(line, "XPINFO name=%s owner=%s xp=%d cond_type=%d parent=%s distance_m=%.0f", info->AccessName().GetText(),
+                  info->AccessOwner().GetText(), xp, static_cast<int>(static_cast<gEInfoCondType const&>(info->AccessConditionType())),
+                  info->AccessParent().GetLength() ? info->AccessParent().GetText() : "-", distance);
+        log(line);
+        ++found;
+    }
+    sprintf_s(line, "XPINFOS end found=%u", found);
+    log(line);
+}
+
 void InfoDescribe(char const* name, LogFn log)
 {
     char line[900];
@@ -520,6 +560,30 @@ void NpcFight(char const* argument, LogFn log)
     const GEInt result = GetScriptAdminExt().CallScript(bCString("AssessTarget"), attacker.GetInstance(), target.GetInstance(), gEAttackReason_Enemy);
     sprintf_s(line, "NPCFIGHT attacker=%s target=%s result=%d task=%s", arg.substr(0, cut).c_str(), arg.substr(cut + 1).c_str(), result,
               attacker.Routine.GetCurrentTask().GetText());
+    log(line);
+}
+
+// As a duel starts (attack reason Duel): the game ends it with a knock-out (Defeat), not a death (PLAN-2026-10-22 2.2).
+void DuelHero(char const* name, LogFn log)
+{
+    char line[300];
+    Entity attacker = Entity::GetEntity(bCString(name));
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    if (!attacker.GetInstance() || !hero) { log("REFUSED duelhero: no such NPC or no hero"); return; }
+    if (npcs::IsMirrored(attacker.GetInstance())) {  // the host's NPC: its owner starts the duel, as for a dialog's duel
+        net::WorldState s{};
+        s.kind = 3;
+        const eCEntityProxy proxy(attacker.GetInstance());
+        std::memcpy(s.guid, &proxy.GetEntityID().GetCore(), 16);
+        s.guard = net::LocalId();
+        strncpy_s(s.routine, "Duel", _TRUNCATE);
+        net::SendWorldState(s, 0);
+        sprintf_s(line, "DUELHERO attacker=%s result=sent_to_owner task=%s", name, attacker.Routine.GetCurrentTask().GetText());
+        log(line);
+        return;
+    }
+    const GEInt result = GetScriptAdminExt().CallScript(bCString("AssessTarget"), attacker.GetInstance(), hero, gEAttackReason_Duel);
+    sprintf_s(line, "DUELHERO attacker=%s result=%d task=%s", name, result, attacker.Routine.GetCurrentTask().GetText());
     log(line);
 }
 }

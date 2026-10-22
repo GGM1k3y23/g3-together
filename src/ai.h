@@ -18,6 +18,8 @@ void DumpNames(char const* path, void (*log)(char const*));  // QA: every regist
 void FindByRva(char const* rvaHex, void (*log)(char const*)); // QA: registered names whose function is Script_Game.dll+rva
 void ContinueRoutineReport(void (*log)(char const*));  // QA: CONTINUEROUTINE line (puppets kept out of their routine)
 void ContinueRoutineOn(void (*log)(char const*));      // QA negative control: ContinueRoutine runs for puppets again
+void MoveLengthReport(void (*log)(char const*));       // QA: MOVELENGTH line (GetCombatMoveLength without the fight target)
+void MoveLengthOff(void (*log)(char const*));          // QA negative control: the original binds the target again
 // GetAttitude wrapper: an NPC judging a puppet judges the local hero instead.
 bool AttitudeInstalled();
 bool AttitudeNative();          // jump in the native function (all callers), not only the script table

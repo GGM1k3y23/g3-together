@@ -1,19 +1,8 @@
 # G3 Together
 
-Co-op for Gothic 3, tested with Steam, Community Patch 1.75.14 and Parallel Universe Patch 1.1.1, built on the unofficial
+Co-op for Gothic 3 (Steam, Community Patch 1.75.14), built on the unofficial
 [Gothic 3 SDK](https://github.com/georgeto/gothic3sdk). GPL-3.0-or-later (see COPYING).
 Bundles [ENet](https://github.com/lsalzman/enet) 1.3.18 (MIT, thirdparty/enet/LICENSE).
-
-## Player guides
-
-- **English:** [Install and play](docs/PLAYING.md) · [Join a host](docs/JOINING.md) · [Playtest checklist](docs/PLAYTEST.md)
-- **Deutsch:** [Installieren und spielen](docs/SPIELEN.md) · [Beim Host beitreten](docs/MITSPIELER.md) · [Spieltest-Checkliste](docs/TESTPLAN.md)
-
-Use the same tested setup on both PCs: Gothic 3 from Steam, Community Patch **1.75.14**, then
-[Parallel Universe Patch **1.1.1**](https://www.worldofgothic.de/dl/download_678.htm), then the same G3 Together build.
-This is the tested baseline; compatibility without Parallel Universe Patch has not been established.
-Mod messages use English by default. Set `language = de` in `g3together.ini` for German, or `language = en`
-for English. Each player can choose independently; this does not change the game's own language.
 
 > **Work in progress, not reviewed by human players yet.** Every stage below is tested by
 > automated bot suites that drive two real game clients on one PC. Human playtesting has only
@@ -33,13 +22,18 @@ with a negative control that fails.
 | 3a | NPCs owned by the host, mirrored on clients (position, hit points, death), client AI off | passing |
 | 3b | Damage with host authority: client hits on host NPCs go through the host, host hits on puppets reach the player's hero, deaths mirrored | passing (bot hits via OnDamage; real swings not bot-driven yet) |
 | 3c | Experience goes to whoever earned it: the killer is rewarded on its own machine, mirrored deaths pay nobody else; quest rewards are shared | passing |
+| Q2 | Experience from a dialog (handing in a quest: GiveXP) goes to every player, gold stays with the one who hands in: the other machines run the same reward for their own hero | passing (Brenton's boar quest, as on the first play evening) |
 | A | No game over while a partner can help: a hero the game would let die is knocked out instead; hits on a client's hero are judged on that client (armour, stumble, knock-out), and everyone sees the fall | passing (monsters attacking a downed hero, robbery and partner revive not checked) |
 | A2 | A knocked-out player waits for a partner: stays down while someone could help; a partner next to it for 3 s pays one healing potion (the cheapest It_Potion_Health*) and stands it up; without a potion both are told and it stays down; when nobody can help for 5 s (everybody down, alone) it dies as in the single-player game; on-screen messages | passing (the only healing potion template found is It_Potion_Health) |
+| A3 | A knock-out of the game's own (guards, a duel, the arena) takes the game's course: only a death the mod turned into a knock-out waits for help; the partner is told only about that one (player state bit 3) | passing (duel knock-out of the host's hero by the game's damage path; robbing a client's real hero is not done yet) |
+| A4 | Duels and arena bouts belong to their two fighters: a hit on an NPC in a bout (attack reason Duel or Arena) with someone else does not count; its opponent's last transferred hit knocks it out (ZS_Unconscious, Defeat), never kills it (no murder) | passing |
 | B | Distance notice: a client more than 35 m from the host is told that the area now runs on its machine (stage E), the host is told who is far away, both get an all-clear back under 25 m | passing (screenshots checked) |
 | C | World journal for deaths: deaths in a player's own region reach the host and the other players and are applied once they process that NPC | passing (deaths only; items, containers and persistence with the save come later) |
+| K | Corpses lie on every machine, also long after the death: deaths applied from the world journal (an NPC that died in another player's region) are laid down like dead mirrors; every corpse logs once, 45 s after its death, whether it lies | passing (orcs, slaves and people at the start; Brenton, Gelford and rebels at Reddock through the journal) |
 | D1 | Saves: every save (menu or QA) removes puppets first, so it loads; the world journal goes into a sidecar <save>.g3t and comes back with that save | passing (menu save path assumed to use the same function) |
 | D2 | Each player's own hero as a record: level, experience, learn points, attributes, inventory with quality and equipment, learned skills | passing (position, quick slots, effects, fame not yet) |
 | D3 | Campaigns: when the host saves, every client keeps its own hero for that save; a client that joins gets the host's save over the network, loads it by itself and gets its own hero back | passing |
+| S | One world for everyone: the host numbers its worlds (a new number with every load, new game and return to the menu) and tells every client; a client that does not play the host's world gets the host's save, loads it by itself (also when the host loads during the session) and only then exchanges anything with the host; a save goes out only once it is complete on disk | passing (S1 the host loads during the session, S2 a client in a new game joins a host still in the menu, S3 a client in a save of its own while the host plays an unsaved new game) |
 | G | One time of day: the host's clock goes to every client; a sleep on any machine moves time on for everyone (also when a clock update arrives in the same frame as the sleep) | passing (real bed dialog not bot-driven) |
 | H | Dialog effects: story events a dialog sets on one hero are shared; after a dialog command that changes an NPC (trade/teach flags, guard status, routine, class, alignment, position, enclave raid/revolution) or a sector, the resulting state reaches every machine | passing (Attack, Spawn, inventory and party commands not yet) |
 | H3 | Fights started by dialogs: a client's duel or "attack" dialog with a host NPC makes that NPC attack the client on the host (AssessTarget) | passing |

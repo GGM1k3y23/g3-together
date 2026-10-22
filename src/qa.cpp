@@ -13,6 +13,7 @@
 #include "talk.h"
 #include "items.h"
 #include "containers.h"
+#include "dialogaudio.h"
 #include "explore.h"
 #include "npcs.h"
 #include "downed.h"
@@ -32,6 +33,7 @@
 #include "trace.h"
 #include "world.h"
 #include "social.h"
+#include "enclaves.h"
 #include "doors.h"
 
 #include <Game.h>
@@ -229,20 +231,68 @@ void Quest(gCSession& session, const char* action)
 // Commands added after the chain below reached MSVC's limit of nested blocks (C1061).
 bool RunLaterAction(const char* action)
 {
-    if (!std::strcmp(action, "reacthitsoff")) {
+    if (!std::strcmp(action, "world")) {
+        g3t::persist::WorldReport(&Log);
+    } else if (!std::strcmp(action, "worldsyncoff")) {
+        g3t::persist::WorldSyncOff(&Log);
+    } else if (!std::strcmp(action, "dialogxpoff")) {
+        g3t::infocmd::DialogXpOff(&Log);
+    } else if (!std::strcmp(action, "duelhero")) {
+        g3t::explore::DuelHero(argument, &Log);
+    } else if (!std::strcmp(action, "lethalonlyoff")) {
+        g3t::downed::LethalOnlyOff(&Log);
+    } else if (!std::strcmp(action, "arenaruleoff")) {
+        g3t::combat::ArenaRuleOff(&Log);
+    } else if (!std::strcmp(action, "arena")) {
+        g3t::combat::ArenaReport(argument, &Log);
+    } else if (!std::strcmp(action, "npchp")) {
+        g3t::combat::NpcHp(argument, &Log);
+    } else if (!std::strcmp(action, "xpinfos")) {
+        g3t::explore::XpInfos(&Log);
+    } else if (!std::strcmp(action, "forgetnpclist")) {
+        g3t::remote::ForgetNpcListOn(&Log);
+    } else if (!std::strcmp(action, "contactsoff")) {
+        g3t::remote::ContactsOff(&Log);
+    } else if (!std::strcmp(action, "badtransfer")) {
+        g3t::persist::BadTransfer(&Log);
+    } else if (!std::strcmp(action, "badrecord")) {
+        g3t::npcs::BadRecord(&Log);
+    } else if (!std::strcmp(action, "badstates")) {
+        g3t::remote::BadStates(argument, &Log);
+    } else if (!std::strcmp(action, "reacthitsoff")) {
         g3t::combat::ReactHitsOff(&Log);
+    } else if (!std::strcmp(action, "keeplocaloff")) {
+        g3t::enclaves::KeepLocalOff(&Log);
+    } else if (!std::strcmp(action, "enclavescanpause")) {
+        g3t::enclaves::PauseScan(argument, &Log);
+    } else if (!std::strcmp(action, "crimeadd")) {
+        g3t::enclaves::AddCrime(argument, &Log);
+    } else if (!std::strcmp(action, "npcsend")) {
+        g3t::npcs::SendInfo(argument, &Log);
+    } else if (!std::strcmp(action, "joingraceoff")) {
+        g3t::npcs::JoinGraceOff(&Log);
+    } else if (!std::strcmp(action, "hostwinsoff")) {
+        g3t::npcs::HostWinsOff(&Log);
     } else if (!std::strcmp(action, "doors")) {
         g3t::doors::Report(&Log);
     } else if (!std::strcmp(action, "doorsyncoff")) {
         g3t::doors::SyncOff(&Log);
     } else if (!std::strcmp(action, "owned")) {
         g3t::social::Owned(argument, &Log);
+    } else if (!std::strcmp(action, "enclavesync")) {
+        g3t::enclaves::Report(&Log);
+    } else if (!std::strcmp(action, "enclavesyncoff")) {
+        g3t::enclaves::SyncOff(&Log);
+    } else if (!std::strcmp(action, "unarm")) {
+        g3t::social::Unarm(&Log);
     } else if (!std::strcmp(action, "enclaves")) {
         g3t::social::Enclaves(&Log);
     } else if (!std::strcmp(action, "crime")) {
         g3t::social::Crime(argument, &Log);
     } else if (!std::strcmp(action, "usables")) {
         g3t::world::Usables(argument, &Log);
+    } else if (!std::strcmp(action, "face")) {
+        g3t::world::Face(argument, &Log);
     } else if (!std::strcmp(action, "use")) {
         g3t::world::Use(argument, &Log);
     } else if (!std::strcmp(action, "unlock")) {
@@ -255,6 +305,10 @@ bool RunLaterAction(const char* action)
         g3t::ai::ContinueRoutineReport(&Log);
     } else if (!std::strcmp(action, "continueroutineon")) {
         g3t::ai::ContinueRoutineOn(&Log);
+    } else if (!std::strcmp(action, "movelength")) {
+        g3t::ai::MoveLengthReport(&Log);
+    } else if (!std::strcmp(action, "movelengthoff")) {
+        g3t::ai::MoveLengthOff(&Log);
     } else if (!std::strcmp(action, "scriptfind")) {
         g3t::ai::FindByRva(argument, &Log);
     } else if (!std::strcmp(action, "heropos")) {
@@ -273,6 +327,8 @@ bool RunLaterAction(const char* action)
         g3t::partner::JumpQa(&Log);
     } else if (!std::strcmp(action, "partyxpoff")) {
         g3t::combat::PartyXpOff(&Log);
+    } else if (!std::strcmp(action, "npcrecvon")) {
+        g3t::npcs::RecvOn(&Log);
     } else if (!std::strcmp(action, "npcrecvoff")) {
         g3t::npcs::RecvOff(&Log);
     } else if (!std::strcmp(action, "fleekeepoff")) {
@@ -311,6 +367,10 @@ bool RunLaterAction(const char* action)
         g3t::summon::Report(&Log);
     } else if (!std::strcmp(action, "summoncopyhero")) {
         g3t::summon::CopyHeroOff(&Log);
+    } else if (!std::strcmp(action, "creatures")) {
+        g3t::summon::Creatures(&Log);
+    } else if (!std::strcmp(action, "areatickon")) {
+        g3t::summon::AreaTickOn(&Log);
     } else if (!std::strcmp(action, "summonmirroroff")) {
         g3t::summon::MirrorOff(&Log);
     } else if (!std::strcmp(action, "shotstate")) {
@@ -321,8 +381,22 @@ bool RunLaterAction(const char* action)
         g3t::spells::Report(&Log);
     } else if (!std::strcmp(action, "spellmirroroff")) {
         g3t::spells::MirrorOff(&Log);
+    } else if (!std::strcmp(action, "statusof")) {
+        g3t::spells::StatusOf(argument, &Log);
+    } else if (!std::strcmp(action, "tickguardoff")) {
+        g3t::spells::TickGuardOff(&Log);
+    } else if (!std::strcmp(action, "spawnnpc")) {
+        g3t::spells::SpawnNpc(argument, &Log);
+    } else if (!std::strcmp(action, "party")) {
+        g3t::spells::Party(&Log);
+    } else if (!std::strcmp(action, "npcmemory")) {
+        g3t::spells::NpcMemory(argument, &Log);
+    } else if (!std::strcmp(action, "npcgrudge")) {
+        g3t::spells::NpcGrudge(argument, &Log);
     } else if (!std::strcmp(action, "puppetguid")) {
         g3t::spells::PuppetGuid(argument, &Log);
+    } else if (!std::strcmp(action, "locks")) {
+        g3t::spells::Locks(&Log);
     } else if (!std::strcmp(action, "sethp")) {
         g3t::spells::SetHp(argument, &Log);
     } else if (!std::strcmp(action, "touchlog")) {
@@ -346,6 +420,17 @@ bool RunLaterAction(const char* action)
         g3t::remote::ShapeOff(&Log);
     } else if (!std::strcmp(action, "walkby")) {
         g3t::transform::Walk(std::atoi(argument), &Log);
+    } else if (!std::strcmp(action, "dialogaudio")) {
+        g3t::dialogaudio::Report(&Log);
+    } else if (!std::strcmp(action, "mutegame")) {
+        g3t::dialogaudio::MuteGame(argument, &Log);
+    } else if (!std::strcmp(action, "dialogaudiooff")) {
+        g3t::dialogaudio::Disable(&Log);
+    } else if (!std::strcmp(action, "spellfunc")) {
+        g3t::spells::SpellFunc(argument, &Log);
+    } else if (!std::strcmp(action, "quickloot")) {  // "quickloot" queues the action, "quickloot count" only counts
+        if (!std::strcmp(argument, "count")) g3t::containers::QuickLootActions(&Log);
+        else g3t::containers::QuickLoot(&Log);
     } else {
         return false;
     }
@@ -461,12 +546,16 @@ void RunAction(const char* action)
         g3t::containers::Stock(argument, &Log);
     } else if (!std::strcmp(action, "goods")) {
         g3t::containers::Goods(argument, &Log);
+    } else if (!std::strcmp(action, "invstate")) {
+        g3t::containers::InvState(argument, &Log);
+    } else if (!std::strcmp(action, "chests")) {
+        g3t::containers::Chests(&Log);
     } else if (!std::strcmp(action, "lootsilent")) {
         g3t::containers::Silent(argument, &Log);
     } else if (!std::strcmp(action, "containersync")) {
         g3t::containers::Report(&Log);
     } else if (!std::strcmp(action, "containersyncoff")) {
-        g3t::containers::Disable(&Log);
+        g3t::containers::Disable(argument, &Log);
     } else if (!std::strcmp(action, "containers")) {
         g3t::items::Containers(&Log);
     } else if (!std::strcmp(action, "invcount")) {

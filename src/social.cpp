@@ -84,8 +84,10 @@ void Owned(char const* radius, LogFn log)
         Entity zoneOwner = zone.GetAIZoneOwner();
         const int security = static_cast<int>(zone.GetAIZoneSecurityLevel());
         FormatGuid(entity.GetInstance(), guid, sizeof(guid));
-        sprintf_s(line, "OWNED guid=%s name=%s distance_cm=%.0f zone=%s zone_owner=%s security=%d", guid, entity.GetName().GetText(),
-                  distance, zone.GetName().GetText(), zoneOwner.GetInstance() ? zoneOwner.GetName().GetText() : "-", security);
+        const bCVector& at = entity.GetInstance()->GetWorldPosition();
+        sprintf_s(line, "OWNED guid=%s name=%s distance_cm=%.0f pos=%.0f_%.0f_%.0f zone=%s zone_owner=%s security=%d", guid,
+                  entity.GetName().GetText(), distance, at.GetX(), at.GetY(), at.GetZ(), zone.GetName().GetText(),
+                  zoneOwner.GetInstance() ? zoneOwner.GetName().GetText() : "-", security);
         log(line);
         ++found;
     }
@@ -128,6 +130,18 @@ void Enclaves(LogFn log)
         log(line);
     }
     sprintf_s(line, "ENCLAVES end count=%d", count);
+    log(line);
+}
+
+void Unarm(LogFn log)
+{
+    char line[160];
+    eCDynamicEntity* hero = gCSession::GetInstance().GetHero();
+    if (!hero) { log("REFUSED unarm: no hero"); return; }
+    Entity self(hero);
+    const GEBool put = self.Inventory.HoldStacks(-1, -1);
+    Entity inHand = self.Inventory.GetItemFromSlot(gESlot_RightHand);
+    sprintf_s(line, "UNARM put=%d right_hand=%s", put ? 1 : 0, inHand.GetInstance() ? inHand.GetName().GetText() : "none");
     log(line);
 }
 }

@@ -6,13 +6,17 @@
 #include "log.h"
 #include "parity.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 
 namespace g3t::net {
 namespace {
-constexpr uint16_t ProtocolVersion = 38;  // 36: summoned things (MsgSummon); 37: shots (MsgShot); 38: spell projectiles, MsgPlayerSpell
-enum : uint8_t { MsgHello = 1, MsgWelcome = 2, MsgState = 3, MsgLeave = 4, MsgNpcs = 5, MsgMotionName = 6, MsgHitNpc = 7, MsgHitPlayer = 8, MsgStates = 9, MsgTalk = 10, MsgItem = 11, MsgContents = 12, MsgContainerTx = 13, MsgTxResult = 14, MsgWatch = 15, MsgKilled = 16, MsgRefused = 17, MsgDeath = 18, MsgCampaign = 19, MsgFileChunk = 20, MsgFileDone = 21, MsgClock = 22, MsgWorldState = 23, MsgSummon = 24, MsgShot = 25, MsgPlayerSpell = 26 };
+constexpr uint16_t ProtocolVersion = 43;  // 36: MsgSummon; 37: MsgShot; 38: spell projectiles, MsgPlayerSpell; 39: MsgNpcSpell; 40: creatures; 41: town reputation (MsgEnclave); 42: world gate (MsgWorld); 43: MsgDialogLine
+enum : uint8_t { MsgHello = 1, MsgWelcome = 2, MsgState = 3, MsgLeave = 4, MsgNpcs = 5, MsgMotionName = 6, MsgHitNpc = 7, MsgHitPlayer = 8, MsgStates = 9, MsgTalk = 10, MsgItem = 11, MsgContents = 12, MsgContainerTx = 13, MsgTxResult = 14, MsgWatch = 15, MsgKilled = 16, MsgRefused = 17, MsgDeath = 18, MsgCampaign = 19, MsgFileChunk = 20, MsgFileDone = 21, MsgClock = 22, MsgWorldState = 23, MsgSummon = 24, MsgShot = 25, MsgPlayerSpell = 26, MsgNpcSpell = 27, MsgEnclave = 28, MsgWorld = 29, MsgDialogLine = 30 };
+// UDP payload per datagram (ENet default 1392 = up to 1420-byte IP packets): VPNs such as Hamachi carry about 1400, so
+// stay well below (C, re/findings/hamachi-net-c.md, 21.10.). ENet splits larger messages into fragments of this size.
+constexpr enet_uint32 Mtu = 1200;
 enum : uint8_t { ChannelState = 0, ChannelReliable = 1, ChannelNpcs = 2, ChannelCount = 3 };
 
 #pragma pack(push, 1)
@@ -42,7 +46,11 @@ struct KilledMsg { uint8_t type; uint8_t guid[16]; uint8_t to; };
 struct DeathMsg { uint8_t type; uint8_t guid[16]; uint8_t by; };
 struct SummonMsg { uint8_t type; uint8_t from; SummonNote note; };
 struct ShotMsg { uint8_t type; uint8_t from; ShotNote note; };
+struct DialogLineMsg { uint8_t type; uint8_t from; DialogLineNote note; };
 struct PlayerSpellMsg { uint8_t type; uint8_t from; uint8_t to; char script[32]; };
+struct NpcSpellMsg { uint8_t type; uint8_t from; uint8_t to; char script[32]; uint8_t target[16]; int32_t args; };
+struct EnclaveMsg { uint8_t type; EnclaveNote note; };
+struct WorldMsg { uint8_t type; WorldNote note; };
 #pragma pack(pop)
 
 ENetHost* host = nullptr;
@@ -80,12 +88,54 @@ FileDoneHandler fileDoneHandler = nullptr;
 ENetPeer* peers[MaxPlayers] = {};  // host side: peer for each client id
 SummonHandler summonHandler = nullptr;
 ShotHandler shotHandler = nullptr;
+DialogLineHandler dialogLineHandler = nullptr;
 PlayerSpellHandler playerSpellHandler = nullptr;
+NpcSpellHandler npcSpellHandler = nullptr;
+EnclaveHandler enclaveHandler = nullptr;
+WorldHandler worldHandler = nullptr;
+bool inWorld = false;                  // client side: this machine is in the host's world (persist.cpp)
+bool clientInWorld[MaxPlayers] = {};   // host side: that client is in the host's world
+unsigned gatedIn = 0, gatedOut = 0;
+
+// What passes the world gate: joining, the save transfer and the world messages. Motion names wait for the world too
+// (Fable's review 22.10. 1.8: they were open to a peer that never said Hello); the host resends them all on entry.
+bool Gated(uint8_t type)
+{
+    switch (type) {
+    case MsgHello: case MsgWelcome: case MsgRefused: case MsgLeave: case MsgFileChunk: case MsgFileDone: case MsgWorld:
+        return false;
+    default:
+        return true;
+    }
+}
+
+bool Open(ENetPeer* peer)
+{
+    if (!isHost) return inWorld;
+    const uintptr_t id = reinterpret_cast<uintptr_t>(peer->data);
+    return id > 1 && id < MaxPlayers && clientInWorld[id];
+}
 
 void Send(ENetPeer* peer, void const* data, size_t size, uint8_t channel, bool reliable)
 {
+    if (size && Gated(static_cast<uint8_t const*>(data)[0]) && !Open(peer)) { ++gatedOut; return; }
     ENetPacket* packet = enet_packet_create(data, size, reliable ? ENET_PACKET_FLAG_RELIABLE : 0);
+    if (!packet) return;  // out of memory
     if (enet_peer_send(peer, channel, packet) < 0) enet_packet_destroy(packet);
+}
+
+// A player's state from the network (Fable's review 22.10. 1.2, 1.6): its strings may lack their terminator and its floats
+// may be anything; the puppet code feeds them to %s, strstr, Template(...) and MoveTo.
+bool Sane(PlayerState& state)
+{
+    state.name[sizeof(state.name) - 1] = 0;
+    state.animation[sizeof(state.animation) - 1] = 0;
+    state.heldRight[sizeof(state.heldRight) - 1] = 0;
+    state.heldLeft[sizeof(state.heldLeft) - 1] = 0;
+    state.shape[sizeof(state.shape) - 1] = 0;
+    for (float v : state.position) if (!std::isfinite(v) || std::fabs(v) > 1e7f) return false;
+    for (float v : state.rotation) if (!std::isfinite(v) || std::fabs(v) > 2.0f) return false;
+    return true;
 }
 
 void Store(PlayerState const& state)
@@ -105,13 +155,16 @@ void Drop(uint8_t id)
     if (id == 0 || id >= MaxPlayers) return;
     remotes[id] = Remote{};
     peers[id] = nullptr;
+    clientInWorld[id] = false;
 }
 
 void OnReceive(ENetPeer* peer, ENetPacket* packet)
 {
     if (packet->dataLength < 1) return;
     const uint8_t type = packet->data[0];
+    if (Gated(type) && !Open(peer)) { ++gatedIn; return; }  // from another world (a client still loading, or the host before a load)
     if (type == MsgHello && isHost && packet->dataLength >= 3) {
+        if (peer->data) { Log("net: a second hello from a player who joined already; ignored"); return; }  // it took a new slot each time
         Hello hello{};
         std::memcpy(&hello, packet->data, packet->dataLength < sizeof(hello) ? packet->dataLength : sizeof(hello));
         hello.name[sizeof(hello.name) - 1] = '\0';
@@ -137,12 +190,12 @@ void OnReceive(ENetPeer* peer, ENetPacket* packet)
         if (!id) { enet_peer_disconnect(peer, 2); return; }
         peers[id] = peer;
         peer->data = reinterpret_cast<void*>(static_cast<uintptr_t>(id));
-        remotes[id].connected = true;
+        remotes[id].connected = false;  // until it is in the host's world (SetInWorld)
+        clientInWorld[id] = false;
         strncpy_s(remotes[id].latest.name, hello.name, _TRUNCATE);
         const Welcome welcome{MsgWelcome, id};
         Send(peer, &welcome, sizeof(welcome), ChannelReliable, true);
         Logf("net: %s joined as player %u", hello.name, id);
-        ++joins;
     } else if (type == MsgRefused && !isHost && packet->dataLength == sizeof(RefusedMsg)) {
         RefusedMsg refusal;
         std::memcpy(&refusal, packet->data, sizeof(refusal));
@@ -152,12 +205,15 @@ void OnReceive(ENetPeer* peer, ENetPacket* packet)
     } else if (type == MsgWelcome && !isHost && packet->dataLength == sizeof(Welcome)) {
         Welcome welcome;
         std::memcpy(&welcome, packet->data, sizeof(welcome));
+        if (welcome.id < 2 || welcome.id >= MaxPlayers) { Logf("net: welcome with player id %u; ignored", welcome.id); return; }
         localId = welcome.id;
         connected = true;
+        inWorld = false;  // until the host's world is known to be this one (persist.cpp)
         Logf("net: welcomed as player %u", localId);
     } else if (type == MsgState && packet->dataLength == sizeof(State)) {
         State message;
         std::memcpy(&message, packet->data, sizeof(message));
+        if (!Sane(message.state)) return;
         if (isHost) {
             // The host decides who sent it; a client cannot speak for another player.
             message.state.id = static_cast<uint8_t>(reinterpret_cast<uintptr_t>(peer->data));
@@ -207,6 +263,8 @@ void OnReceive(ENetPeer* peer, ENetPacket* packet)
     } else if (type == MsgHitPlayer && packet->dataLength == sizeof(HitPlayerMsg)) {
         HitPlayerMsg message;
         std::memcpy(&message, packet->data, sizeof(message));
+        if (message.delta < -1000000 || message.delta > 0) return;  // damage only, no overflow
+        if (isHost && message.attackerPlayer) message.attackerPlayer = static_cast<uint8_t>(reinterpret_cast<uintptr_t>(peer->data));
         if (isHost && message.to > 1 && message.to < MaxPlayers && peers[message.to]) {
             Send(peers[message.to], &message, sizeof(message), ChannelReliable, true);
             return;
@@ -239,6 +297,12 @@ void OnReceive(ENetPeer* peer, ENetPacket* packet)
                 if (peers[i] && i != message.from) Send(peers[i], &message, sizeof(message), ChannelReliable, true);
         }
         if (summonHandler && message.from) summonHandler(message.from, message.note);
+    } else if (type == MsgEnclave && packet->dataLength == sizeof(EnclaveMsg)) {
+        EnclaveMsg message;
+        std::memcpy(&message, packet->data, sizeof(message));
+        message.note.name[sizeof(message.note.name) - 1] = 0;
+        const uint8_t from = isHost ? static_cast<uint8_t>(reinterpret_cast<uintptr_t>(peer->data)) : 1;
+        if (enclaveHandler && from) enclaveHandler(from, message.note);
     } else if (type == MsgPlayerSpell && packet->dataLength == sizeof(PlayerSpellMsg)) {
         PlayerSpellMsg message;
         std::memcpy(&message, packet->data, sizeof(message));
@@ -251,6 +315,18 @@ void OnReceive(ENetPeer* peer, ENetPacket* packet)
             }
         }
         if (playerSpellHandler && message.from && message.to == localId) playerSpellHandler(message.from, message.script);
+    } else if (type == MsgNpcSpell && packet->dataLength == sizeof(NpcSpellMsg)) {
+        NpcSpellMsg message;
+        std::memcpy(&message, packet->data, sizeof(message));
+        message.script[sizeof(message.script) - 1] = 0;
+        if (isHost) {
+            message.from = static_cast<uint8_t>(reinterpret_cast<uintptr_t>(peer->data));
+            if (message.to > 1 && message.to < MaxPlayers && peers[message.to]) {
+                Send(peers[message.to], &message, sizeof(message), ChannelReliable, true);
+                return;
+            }
+        }
+        if (npcSpellHandler && message.from && message.to == localId) npcSpellHandler(message.from, message.script, message.target, message.args);
     } else if (type == MsgShot && packet->dataLength == sizeof(ShotMsg)) {
         ShotMsg message;
         std::memcpy(&message, packet->data, sizeof(message));
@@ -262,6 +338,16 @@ void OnReceive(ENetPeer* peer, ENetPacket* packet)
                 if (peers[i] && i != message.from) Send(peers[i], &message, sizeof(message), ChannelReliable, true);
         }
         if (shotHandler && message.from) shotHandler(message.from, message.note);
+    } else if (type == MsgDialogLine && packet->dataLength == sizeof(DialogLineMsg)) {
+        DialogLineMsg message;
+        std::memcpy(&message, packet->data, sizeof(message));
+        message.note.sample[sizeof(message.note.sample) - 1] = 0;
+        if (isHost) {  // from a client: pass it on to the others
+            message.from = static_cast<uint8_t>(reinterpret_cast<uintptr_t>(peer->data));
+            for (uint8_t i = 2; i < MaxPlayers; ++i)
+                if (peers[i] && i != message.from) Send(peers[i], &message, sizeof(message), ChannelReliable, true);
+        }
+        if (dialogLineHandler && message.from) dialogLineHandler(message.from, message.note);
     } else if (type == MsgItem && packet->dataLength == sizeof(ItemMsg)) {
         ItemMsg message;
         std::memcpy(&message, packet->data, sizeof(message));
@@ -342,6 +428,12 @@ void OnReceive(ENetPeer* peer, ENetPacket* packet)
         std::memcpy(&leave, packet->data, sizeof(leave));
         Logf("net: player %u left", leave.id);
         Drop(leave.id);
+    } else if (type == MsgWorld && packet->dataLength == sizeof(WorldMsg)) {
+        WorldMsg message;
+        std::memcpy(&message, packet->data, sizeof(message));
+        message.note.campaign[sizeof(message.note.campaign) - 1] = 0;
+        const uint8_t from = isHost ? static_cast<uint8_t>(reinterpret_cast<uintptr_t>(peer->data)) : 1;
+        if (worldHandler && from) worldHandler(from, message.note);
     }
 }
 }
@@ -358,7 +450,52 @@ uint8_t LocalId() { return localId; }
 bool IsHost() { return isHost; }
 uint32_t JoinCount() { return joins; }
 
+void SetInWorld(uint8_t id, bool in)
+{
+    if (!isHost) {
+        if (inWorld == in) return;
+        inWorld = in;
+        if (!in) for (uint8_t i = 0; i < MaxPlayers; ++i) remotes[i] = Remote{};  // the others' puppets are of that world
+        Logf("net: this player is %s the host's world", in ? "in" : "out of");
+        return;
+    }
+    if (id < 2 || id >= MaxPlayers || !peers[id] || clientInWorld[id] == in) return;
+    clientInWorld[id] = in;
+    if (in) {
+        ++joins;  // like a join for everything that sends a newcomer the whole state
+    } else {
+        Remote cleared{};
+        strncpy_s(cleared.latest.name, remotes[id].latest.name, _TRUNCATE);
+        remotes[id] = cleared;  // its puppet goes; it comes back with the first state from the host's world
+    }
+    Logf("net: player %u (%s) is %s the host's world", id, remotes[id].latest.name, in ? "in" : "out of");
+}
+
+bool InWorld(uint8_t id) { return isHost ? (id == 1 || (id < MaxPlayers && clientInWorld[id])) : inWorld; }
+bool Joined() { return connected; }
+bool PeerJoined(uint8_t id) { return isHost && id > 1 && id < MaxPlayers && peers[id]; }
+char const* PeerName(uint8_t id) { return id < MaxPlayers ? remotes[id].latest.name : ""; }
+void GateCounts(unsigned& in, unsigned& out) { in = gatedIn; out = gatedOut; }
+void SetWorldHandler(WorldHandler handler) { worldHandler = handler; }
+
+void SendWorld(WorldNote const& note, uint8_t to)
+{
+    if (!host) return;
+    const WorldMsg message{MsgWorld, note};
+    if (isHost) {
+        if (to > 1 && to < MaxPlayers && peers[to]) Send(peers[to], &message, sizeof(message), ChannelReliable, true);
+    } else if (server && connected) {
+        Send(server, &message, sizeof(message), ChannelReliable, true);
+    }
+}
+
 uint32_t HashName(char const* name) { return HashWorld(name); }
+
+uint32_t NextDeedId()
+{
+    static uint32_t last = 0;
+    return ++last;
+}
 
 void SetNpcHandlers(NpcHandler npcs, MotionNameHandler names)
 {
@@ -568,7 +705,33 @@ void SendItem(ItemNote const& note, uint8_t to)
 
 void SetSummonHandler(SummonHandler handler) { summonHandler = handler; }
 void SetShotHandler(ShotHandler handler) { shotHandler = handler; }
+void SetDialogLineHandler(DialogLineHandler handler) { dialogLineHandler = handler; }
 void SetPlayerSpellHandler(PlayerSpellHandler handler) { playerSpellHandler = handler; }
+void SetNpcSpellHandler(NpcSpellHandler handler) { npcSpellHandler = handler; }
+
+void SendNpcSpell(uint8_t to, char const* script, uint8_t const target[16], int32_t args)
+{
+    if (!host || to == localId || to >= MaxPlayers) return;
+    NpcSpellMsg message{MsgNpcSpell, localId, to, {}, {}, args};
+    strncpy_s(message.script, script, _TRUNCATE);
+    std::memcpy(message.target, target, 16);
+    if (!isHost) { if (server && connected) Send(server, &message, sizeof(message), ChannelReliable, true); return; }
+    if (peers[to]) Send(peers[to], &message, sizeof(message), ChannelReliable, true);
+}
+
+void SetEnclaveHandler(EnclaveHandler handler) { enclaveHandler = handler; }
+
+void SendEnclave(EnclaveNote const& note, uint8_t to)
+{
+    if (!host) return;
+    const EnclaveMsg message{MsgEnclave, note};
+    if (!isHost) {
+        if (server && connected) Send(server, &message, sizeof(message), ChannelReliable, true);
+        return;
+    }
+    for (uint8_t i = 2; i < MaxPlayers; ++i)
+        if (peers[i] && (to == 0 || to == i)) Send(peers[i], &message, sizeof(message), ChannelReliable, true);
+}
 
 void SendPlayerSpell(uint8_t to, char const* script)
 {
@@ -583,6 +746,18 @@ void SendShot(ShotNote const& note)
 {
     if (!host) return;
     const ShotMsg message{MsgShot, localId, note};
+    if (!isHost) {
+        if (server && connected) Send(server, &message, sizeof(message), ChannelReliable, true);
+        return;
+    }
+    for (uint8_t i = 2; i < MaxPlayers; ++i)
+        if (peers[i]) Send(peers[i], &message, sizeof(message), ChannelReliable, true);
+}
+
+void SendDialogLine(DialogLineNote const& note)
+{
+    if (!host) return;
+    const DialogLineMsg message{MsgDialogLine, localId, note};
     if (!isHost) {
         if (server && connected) Send(server, &message, sizeof(message), ChannelReliable, true);
         return;
@@ -639,7 +814,7 @@ void SendMotionName(uint32_t hash, char const* name)
     for (uint8_t i = 2; i < MaxPlayers; ++i)
         if (peers[i]) Send(peers[i], &message, sizeof(message), ChannelReliable, true);
 }
-bool Connected() { return connected; }
+bool Connected() { return isHost ? connected : connected && inWorld; }
 Remote const* Remotes() { return remotes; }
 
 void Stop()
@@ -665,11 +840,13 @@ bool Start(bool asHost, char const* address, unsigned short port, char const* na
         bind.host = ENET_HOST_ANY;
         bind.port = port;
         host = enet_host_create(&bind, MaxPlayers - 1, ChannelCount, 0, 0);
+        if (host) host->mtu = Mtu;
         localId = 1;
         connected = true;
         Logf("net: hosting on UDP %u: %s", port, host ? "ok" : "FAILED");
     } else {
         host = enet_host_create(nullptr, 1, ChannelCount, 0, 0);
+        if (host) host->mtu = Mtu;  // before connecting: the connect proposes it, both sides keep the smaller
         enet_address_set_host(&target, address);
         target.port = port;
         server = host ? enet_host_connect(host, &target, ChannelCount, 0) : nullptr;
@@ -683,7 +860,8 @@ void Tick(PlayerState const& local, bool haveLocal)
 {
     if (!host) return;
     ENetEvent event;
-    while (enet_host_service(host, &event, 0) > 0) {
+    // At most 512 events a frame: a flood must not stall the game (Fable's review 22.10. 1.9); the rest waits for the next.
+    for (int events = 0; events < 512 && enet_host_service(host, &event, 0) > 0; ++events) {
         switch (event.type) {
         case ENET_EVENT_TYPE_CONNECT:
             // World loads and the intro video stop the engine loop (and so this service call) for
@@ -711,6 +889,7 @@ void Tick(PlayerState const& local, bool haveLocal)
             } else {
                 Log("net: disconnected from host; will reconnect");
                 connected = false;
+                inWorld = false;
                 server = nullptr;
                 for (uint8_t i = 0; i < MaxPlayers; ++i) Drop(i);
             }

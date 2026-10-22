@@ -4,6 +4,7 @@
 #include "ai.h"
 #include "body.h"
 #include "config.h"
+#include "downed.h"
 #include "log.h"
 #include "net.h"
 #include "npcs.h"
@@ -14,7 +15,10 @@
 #include <Windows.h>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <string>
+#include <unordered_set>
+#include <vector>
 
 namespace g3t::remote {
 namespace {
@@ -51,11 +55,20 @@ void LogMotions(char const* who, Entity& entity, LogFn log)
     log(line);
 }
 
+bool badStates = false;  // QA (stage X1): the next states carry a NaN position and strings without terminator
+
 bool LocalState(net::PlayerState& state)
 {
     gCSession& session = gCSession::GetInstance();
     eCDynamicEntity* own = session.GetHero();
     if (!own || !session.IsGameRunning()) return false;
+    if (badStates) {
+        state.position[0] = std::nanf("");
+        std::memset(state.name, 'X', sizeof(state.name));
+        std::memset(state.shape, 'Y', sizeof(state.shape));
+        state.flags = 1;
+        return true;
+    }
     // Transformed, the player controls a creature and the hero's own body stays hidden where the spell was cast
     // (transformdiag 19.10.: the other machine showed a human standing still while the wolf ran about).
     eCEntity* hero = ControlledBody();
@@ -70,7 +83,8 @@ bool LocalState(net::PlayerState& state)
     state.rotation[1] = q.GetY();
     state.rotation[2] = q.GetZ();
     state.rotation[3] = q.GetW();
-    state.flags = 1 | (Entity(own).IsDown() ? 2 : 0) | (Entity(own).IsDead() ? 4 : 0);  // bit 1: knocked out, bit 2: dead
+    // bit 1: knocked out, bit 2: dead, bit 3: waiting for help (an intercepted death, downed.cpp)
+    state.flags = 1 | (Entity(own).IsDown() ? 2 : 0) | (Entity(own).IsDead() ? 4 : 0) | (downed::Held() ? 8 : 0);
     state.movementMode = static_cast<uint8_t>(Entity(hero).CharacterMovement.GetMovementMode());
     state.aniState = static_cast<uint8_t>(static_cast<int>(Entity(hero).Routine.AniState));
     body::CurrentMotion(hero, state.animation, sizeof(state.animation));
@@ -81,16 +95,50 @@ bool LocalState(net::PlayerState& state)
     return true;
 }
 
+// NPCs that dealt with each puppet (judged it in GetAttitude, were hit by it, hit it, attacked it after a dialog), by
+// GUID, taken while the NPC was in hand. Forget clears the puppet out of exactly these, looked up again by GUID: its
+// walk through Entity::GetNPCs() met a freed NPC still in that list, a per-frame copy of raw entity pointers (access
+// violation while the host saved, run 20261022-080317; re/findings/save-forget-npclist-c.md).
+std::unordered_set<std::string> contacts[net::MaxPlayers];
+bool byContacts = true;  // QA negative control: forgetnpclist (the walk through Entity::GetNPCs, as before 22.10.)
+bool noting = true;      // QA negative control: contactsoff (nothing is noted, so Forget lets nobody go)
+unsigned contactsNoted = 0, contactsLookedUp = 0, contactsGone = 0;
+
+std::string KeyOf(eCEntity* entity)
+{
+    const eCEntityProxy proxy(entity);
+    return std::string(reinterpret_cast<char const*>(&proxy.GetEntityID().GetCore()), 16);
+}
+
+Entity ByKey(std::string const& key)
+{
+    _GUID raw;
+    std::memcpy(&raw, key.data(), 16);
+    return Entity(bCPropertyID(bCGuid(raw)));
+}
+
 // NPCs that fight a puppet hold it as target, attacker or spell target, and their AI states read it every frame: a
 // client crashed (access violation under an attack state, stage E2) when the host left mid-fight and its puppet was
-// destroyed. Every NPC lets go of the puppet first; the ones that were after it start their routine again.
-void Forget(eCEntity* entity)
+// destroyed. Every NPC that dealt with the puppet lets go of it first; the ones that were after it start their routine
+// again.
+void Forget(int id, eCEntity* entity)
 {
     if (!entity) return;
-    const bTObjArray<Entity> all = Entity::GetNPCs();
+    std::vector<Entity> candidates;
+    if (byContacts) {
+        for (auto const& key : contacts[id]) {
+            ++contactsLookedUp;
+            Entity npc = ByKey(key);
+            if (npc.GetInstance()) candidates.push_back(npc);
+            else ++contactsGone;
+        }
+    } else {
+        const bTObjArray<Entity> all = Entity::GetNPCs();
+        for (int i = 0; i < all.GetCount(); ++i) candidates.push_back(all.GetAt(i));
+    }
+    contacts[id].clear();
     int released = 0;
-    for (int i = 0; i < all.GetCount(); ++i) {
-        Entity npc = all.GetAt(i);
+    for (Entity& npc : candidates) {
         eCEntity* instance = npc.GetInstance();
         if (!instance || instance == entity || !instance->GetPropertySet(eEPropertySetType_NPC)) continue;
         bool after = false;
@@ -106,7 +154,7 @@ void Forget(eCEntity* entity)
         }
         if (after) ++released;
     }
-    if (released) Logf("remote: %d NPCs let go of a removed puppet", released);
+    Logf("remote: %d NPCs let go of removed puppet %d (%zu %s)", released, id, candidates.size(), byContacts ? "known contacts" : "from Entity::GetNPCs");
 }
 
 // The puppet used to join the local hero's party so enemies would attack it; that had no effect on GetAttitude
@@ -156,7 +204,7 @@ void Despawn(int id, char const* reason)
             puppet.entity.Party.SetPartyLeader(Entity());
             puppet.entity.Party.PartyMemberType = gEPartyMemberType_None;
         }
-        Forget(entity);
+        Forget(id, entity);
     }
     if (entity && current && puppet.world == CurrentWorld())
         current->DestroyDynamicEntity(static_cast<eCDynamicEntity*>(entity));
@@ -301,7 +349,33 @@ void Start()
 void OnWorldDeactivate()
 {
     for (auto& puppet : puppets) puppet = Puppet{};
+    for (auto& set : contacts) set.clear();
     haveAnchor = false;
+}
+
+void NoteContact(eCEntity* npc, eCEntity* puppet)
+{
+    const int id = PuppetOwner(puppet);
+    if (!noting || !id || !npc || npc == puppet) return;
+    if (contacts[id].insert(KeyOf(npc)).second) ++contactsNoted;
+}
+
+void BadStates(char const* argument, LogFn log)
+{
+    badStates = std::strcmp(argument, "off") != 0;
+    log(badStates ? "BADSTATES on" : "BADSTATES off");
+}
+
+void ContactsOff(LogFn log)
+{
+    noting = false;
+    log("CONTACTSOFF ok=1");
+}
+
+void ForgetNpcListOn(LogFn log)
+{
+    byContacts = false;
+    log("FORGETNPCLIST ok=1 (puppets are forgotten by walking Entity::GetNPCs, as before)");
 }
 
 void Tick()

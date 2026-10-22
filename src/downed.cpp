@@ -3,7 +3,6 @@
 
 #include "body.h"
 #include "hud.h"
-#include "i18n.h"
 #include "log.h"
 #include "net.h"
 #include "remote.h"
@@ -20,6 +19,11 @@ namespace {
 bool enabled = true;      // death becomes a knock-out
 bool holdEnabled = true;  // a knocked-out hero waits for a partner
 bool potionNeeded = true; // QA negative control: potionoff (helping up is free again)
+// Only a death the mod turned into a knock-out (RedirectDeath) waits for help (PLAN-2026-10-22 2.2, re/findings/
+// defeat-arena-c.md). A knock-out of the game's own (guards, a duel, the arena: Defeat) takes the game's course:
+// the winner may rob the hero, the hero stands up by itself. Before, every knock-out was held (spieltest 21.10.
+// 21:35: guards knocked a player out, a partner paid a potion, nobody robbed him).
+bool lethalOnly = true;   // QA negative control: lethalonlyoff (every knock-out waits for help again)
 unsigned redirects = 0, revives = 0, releases = 0, deaths = 0, potionsPaid = 0, refusedNoPotion = 0;
 char const* const KnockOutTask = "ZS_LieKnockDown";
 char const* const DeathTask = "ZS_Dead";
@@ -31,6 +35,10 @@ constexpr uint32_t AloneGrace = 5000;  // ms nobody can help before the knocked-
 constexpr uint32_t PaidCooldown = 5000; // ms: the revived player's state still says "down" for a moment
 
 bool held = false;              // the local hero lies knocked out and waits for help
+bool lethal = false;            // the knock-out it lies in replaced its death (RedirectDeath)
+bool lethalSeenDown = false;    // ... and the hero has lain down since (until then a frame without IsDown is no standing up)
+uint32_t lethalAt = 0;          // when RedirectDeath set it
+bool nativeNoted = false;       // logged once per knock-out of the game's own
 bool dying = false;             // nobody could help: the hero dies like in the single-player game
 uint32_t diedAt = 0;            // when the death task was (last) set
 uint32_t aloneSince = 0;        // when the knocked-out hero last had nobody able to help (0: someone can)
@@ -41,10 +49,11 @@ uint32_t helpingSince[net::MaxPlayers] = {};  // local hero next to downed playe
 bool hinted[net::MaxPlayers] = {};            // "you need a potion" shown for this stay next to player i
 uint32_t paidAt[net::MaxPlayers] = {};        // when we paid a potion for player i
 
-// A remote player who can help: in the same world, in game, recent, and neither lying down nor dead.
+// A remote player who can help: in the same world, in game, recent, neither dead nor waiting for help itself. One
+// in a knock-out of the game's own stands up by itself shortly.
 bool Able(net::Remote const& r, uint32_t now)
 {
-    return r.connected && r.latestTicks && now - r.latestTicks < StaleState && (r.latest.flags & 1) && !(r.latest.flags & 6) &&
+    return r.connected && r.latestTicks && now - r.latestTicks < StaleState && (r.latest.flags & 1) && !(r.latest.flags & 12) &&
            r.latest.world == remote::CurrentWorld();
 }
 
@@ -54,7 +63,12 @@ bool Present(net::Remote const& r, uint32_t now)
            r.latest.world == remote::CurrentWorld();
 }
 
-void Wide(char const* text, wchar_t* out, int size) { MultiByteToWideChar(CP_UTF8, 0, text, -1, out, size); }
+void Wide(char const* text, wchar_t* out, int size)
+{
+    out[0] = 0;
+    if (!MultiByteToWideChar(CP_UTF8, 0, text, -1, out, size)) out[0] = 0;
+    out[size - 1] = 0;
+}
 
 void StandUp(Entity& hero)
 {
@@ -96,7 +110,7 @@ void Help(Entity& hero, net::Remote const* remotes, uint32_t now)
     for (int i = 1; i < net::MaxPlayers; ++i) {
         if (i == net::LocalId()) continue;
         net::Remote const& r = remotes[i];
-        const bool down = Present(r, now) && (r.latest.flags & 2) && !(r.latest.flags & 4);
+        const bool down = Present(r, now) && (r.latest.flags & 8) && !(r.latest.flags & 4);  // waiting for help, not any knock-out
         if (!down || body::Distance(r.latest.position, here) > ReviveRange || now - paidAt[i] < PaidCooldown) {
             helpingSince[i] = 0;
             hinted[i] = false;
@@ -111,7 +125,7 @@ void Help(Entity& hero, net::Remote const* remotes, uint32_t now)
             if (!hinted[i]) {
                 hinted[i] = true;
                 ++refusedNoPotion;
-                swprintf_s(text, i18n::Text(i18n::NeedHealingPotion), name);
+                swprintf_s(text, L"Du brauchst einen Heiltrank, um %s aufzuhelfen.", name);
                 hud::Message(hud::Warning, text);
                 SendToPlayer(9, i);
                 Logf("downed: next to player %d without a healing potion", i);
@@ -125,7 +139,7 @@ void Help(Entity& hero, net::Remote const* remotes, uint32_t now)
         paidAt[i] = now;
         helpingSince[i] = 0;
         SendToPlayer(8, i);
-        swprintf_s(text, potionNeeded ? i18n::Text(i18n::HelpedUpWithPotion) : i18n::Text(i18n::HelpedUp), name);
+        swprintf_s(text, potionNeeded ? L"Du hast %s aufgeholfen (ein Heiltrank verbraucht)." : L"Du hast %s aufgeholfen.", name);
         hud::Message(hud::Good, text);
         Logf("downed: helped player %d up, paid %s", i, *potion ? potion : "nothing");
     }
@@ -139,7 +153,7 @@ void Die(Entity& hero)
     held = false;
     ++deaths;
     Logf("downed: nobody can help; the hero dies (hp=%d)", hero.PlayerMemory.GetHitPoints());
-    hud::Message(hud::Bad, i18n::Text(i18n::NobodyCanHelp));
+    hud::Message(hud::Bad, L"Niemand kann dir mehr helfen.");
     hero.PlayerMemory.SetHitPoints(0);
     hero.Routine.FullStop();
     hero.Routine.SetTask(bCString(DeathTask));
@@ -158,6 +172,9 @@ bool RedirectDeath(eCEntity* self, char const* state)
     Entity hero(self);
     hero.Routine.FullStop();
     hero.Routine.SetTask(bCString(KnockOutTask));
+    lethal = true;
+    lethalSeenDown = false;
+    lethalAt = net::Now();
     ++redirects;
     Logf("downed: hero would die (%s), knocked out instead (hp=%d)", state, hero.PlayerMemory.GetHitPoints());
     return true;
@@ -173,7 +190,7 @@ void Tick()
 {
     gCSession& session = gCSession::GetInstance();
     eCDynamicEntity* instance = session.GetHero();
-    if (!instance || !session.IsGameRunning()) { held = false; dying = false; aloneSince = 0; revivedBy = 0; return; }
+    if (!instance || !session.IsGameRunning()) { held = false; lethal = false; dying = false; aloneSince = 0; revivedBy = 0; return; }
     Entity hero(instance);
     const uint32_t now = net::Now();
     net::Remote const* remotes = net::Remotes();
@@ -185,25 +202,32 @@ void Tick()
         if (i == self) continue;
         const bool present = Present(remotes[i], now);
         const bool dead = present && (remotes[i].latest.flags & 4);
-        const bool down = present && (remotes[i].latest.flags & 2) && !dead;
+        const bool down = present && (remotes[i].latest.flags & 8) && !dead;  // waiting for help
         Wide(remotes[i].latest.name, name, 32);
         if (down && !told[i]) {
-            swprintf_s(text, potionNeeded ? i18n::Text(i18n::PartnerDownNeedsPotion)
-                                          : i18n::Text(i18n::PartnerDown), name);
+            swprintf_s(text, potionNeeded ? L"%s liegt am Boden. Stell dich mit einem Heiltrank daneben, um aufzuhelfen."
+                                          : L"%s liegt am Boden. Stell dich daneben, um aufzuhelfen.", name);
             hud::Message(hud::Warning, text);
         }
         if (dead && !toldDead[i]) {
-            swprintf_s(text, i18n::Text(i18n::PartnerDied), name);
+            swprintf_s(text, L"%s ist gestorben.", name);
             hud::Message(hud::Bad, text);
         }
         told[i] = down;
         toldDead[i] = dead;
     }
 
-    if (hero.IsDead()) { held = false; return; }
+    if (hero.IsDead()) { held = false; lethal = false; return; }
     const bool down = hero.IsDown();
+    if (down && lethal) lethalSeenDown = true;
     if (!down) {
+        // The knock-out task RedirectDeath sets makes the hero lie a frame or more later: not standing up yet (22.10.:
+        // reset at once, every intercepted death went the game's own way and nobody could help, stages A and A2).
+        if (lethal && !lethalSeenDown && now - lethalAt < 3000) return;
         held = false;
+        lethal = false;
+        lethalSeenDown = false;
+        nativeNoted = false;
         dying = false;
         aloneSince = 0;
         revivedBy = 0;
@@ -225,12 +249,20 @@ void Tick()
     }
     if (!held) {
         if (!holdEnabled) return;  // QA negative control: the game's own timer stands the hero up
+        if (lethalOnly && !lethal) {
+            if (!nativeNoted) {
+                nativeNoted = true;
+                Logf("downed: hero knocked out by the game's own rules (not a death; hp=%d); it stands up by itself",
+                     hero.PlayerMemory.GetHitPoints());
+            }
+            return;
+        }
         held = true;
         aloneSince = 0;
         revivedBy = 0;
         Logf("downed: hero knocked out, waiting for a partner (hp=%d)", hero.PlayerMemory.GetHitPoints());
-        hud::Message(hud::Bad, potionNeeded ? i18n::Text(i18n::KnockedOutNeedsPotion)
-                                            : i18n::Text(i18n::KnockedOut));
+        hud::Message(hud::Bad, potionNeeded ? L"Du bist niedergeschlagen. Ein Mitspieler mit Heiltrank kann dir aufhelfen."
+                                            : L"Du bist niedergeschlagen. Warte, bis dein Mitspieler dir aufhilft.");
     }
     hero.Routine.SetTaskTime(0.0f);
     if (hero.PlayerMemory.GetHitPoints() > 1) hero.PlayerMemory.SetHitPoints(1);
@@ -243,7 +275,7 @@ void Tick()
         ++revives;
         StandUp(hero);
         Wide(remotes[by].latest.name, name, 32);
-        swprintf_s(text, i18n::Text(i18n::RevivedByPartner), name);
+        swprintf_s(text, L"%s hat dir aufgeholfen.", name);
         hud::Message(hud::Good, text);
         Logf("downed: revived by player %d (hp=%d)", by, hero.PlayerMemory.GetHitPoints());
         return;
@@ -269,7 +301,7 @@ void HelperHasNoPotion(int byPlayer)
     if (byPlayer <= 0 || byPlayer >= net::MaxPlayers || !held) return;
     wchar_t name[32], text[160];
     Wide(net::Remotes()[byPlayer].latest.name, name, 32);
-    swprintf_s(text, i18n::Text(i18n::HelperHasNoPotion), name);
+    swprintf_s(text, L"%s hat keinen Heiltrank, um dir aufzuhelfen.", name);
     hud::Message(hud::Info, text);
 }
 
@@ -291,6 +323,12 @@ void PotionOff(LogFn log)
 {
     potionNeeded = false;
     log("POTIONOFF helping up is free");
+}
+
+void LethalOnlyOff(LogFn log)
+{
+    lethalOnly = false;
+    log("LETHALONLYOFF ok=1");
 }
 
 // QA: items for the local hero ("Template" or "Template-Amount"; QA arguments allow only [A-Za-z0-9_-]).
@@ -342,8 +380,8 @@ void Potions(LogFn log)
 void Report(LogFn log)
 {
     char line[240];
-    sprintf_s(line, "DOWNED enabled=%d hold=%d held=%d redirects=%u revives=%u releases=%u deaths=%u potions_paid=%u no_potion=%u potion_needed=%d",
-              enabled ? 1 : 0, holdEnabled ? 1 : 0, held ? 1 : 0, redirects, revives, releases, deaths, potionsPaid, refusedNoPotion,
+    sprintf_s(line, "DOWNED lethal=%d lethal_only=%d enabled=%d hold=%d held=%d redirects=%u revives=%u releases=%u deaths=%u potions_paid=%u no_potion=%u potion_needed=%d",
+              lethal ? 1 : 0, lethalOnly ? 1 : 0, enabled ? 1 : 0, holdEnabled ? 1 : 0, held ? 1 : 0, redirects, revives, releases, deaths, potionsPaid, refusedNoPotion,
               potionNeeded ? 1 : 0);
     log(line);
 }

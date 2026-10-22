@@ -11,6 +11,7 @@
 #include <Script.h>
 #include <Windows.h>
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <vector>
@@ -298,6 +299,16 @@ void OnShot(uint8_t from, net::ShotNote const& note)
     if (!puppetBody) {
         ++noPuppet;
         Logf("shot: net %08X from player %u: no puppet here", note.netId, from);
+        return;
+    }
+    // Numbers from the network go into the game's physics: no NaN or infinity (Fable review 22.10.).
+    bool finite = std::isfinite(note.velocity) && std::isfinite(note.multiplier);
+    for (float v : note.position) finite = finite && std::isfinite(v);
+    for (float v : note.rotation) finite = finite && std::isfinite(v);
+    for (float v : note.direction) finite = finite && std::isfinite(v);
+    if (!finite) {
+        ++badTemplate;
+        Logf("shot: net %08X from player %u: not a number in its flight", note.netId, from);
         return;
     }
     const Template arrowTemplate(note.arrow);

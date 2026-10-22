@@ -14,7 +14,8 @@ struct PlayerState
     uint32_t world = 0;   // FNV-1a of the world's file base name
     float position[3] = {};
     float rotation[4] = {};  // quaternion x, y, z, w
-    uint8_t flags = 0;       // bit 0: in game (hero present, session running), bit 1: knocked out, bit 2: dead
+    uint8_t flags = 0;       // bit 0: in game (hero present, session running), bit 1: knocked out, bit 2: dead,
+                             // bit 3: waiting for help (a death turned into a knock-out, downed.cpp)
     uint8_t movementMode = 0;  // gECharMovementMode of the hero: stand, sneak, walk, run, sprint, jump, swim
     uint8_t aniState = 0;      // gEAniState of the hero (stand 2, lying knocked out 16, ...): which motions fit
     char name[24] = {};
@@ -56,18 +57,48 @@ void Stop();  // at shutdown: disconnect now so the others notice at once
 // Service the socket and, at most every 50 ms, send the local state. Call once per frame.
 void Tick(PlayerState const& local, bool haveLocal);
 uint8_t LocalId();
+// Host: always. Client: welcomed by the host and in the host's world (SetInWorld); gameplay pauses otherwise.
 bool Connected();
-Remote const* Remotes();  // indexed by player id, size MaxPlayers
+Remote const* Remotes();  // indexed by player id, size MaxPlayers; a client outside the host's world is not connected here
 constexpr int MaxPlayers = 8;
 uint32_t HashWorld(char const* name);
 uint32_t HashName(char const* name);
 bool IsHost();
-// Increments whenever a client joins; the host resends its motion-name table then.
+// Increments whenever a client enters the host's world (after a join, or after loading the host's save again); the host
+// resends its motion-name table and container contents then.
 uint32_t JoinCount();
+
+// The world gate (persist.cpp, PLAN-2026-10-22 0.1/0.2): gameplay messages flow only between the host and clients that
+// are in the host's world. Joining, the save transfer and MsgWorld itself always pass.
+void SetInWorld(uint8_t id, bool in);  // host: that client entered (left) the host's world; client: id = LocalId(), this machine
+bool InWorld(uint8_t id);
+bool Joined();                   // client: welcomed by the host, in its world or not
+bool PeerJoined(uint8_t id);     // host: a client with this id is connected, in the host's world or not
+char const* PeerName(uint8_t id);
+void GateCounts(unsigned& in, unsigned& out);  // gameplay messages dropped at the gate so far
+// World identity, reliable. Host -> one client: WorldHost, the world the host plays (epoch changes with every load, new
+// game and return to the menu; campaign: the save a player loads to be in it). Client -> host: WorldReady (this player is
+// in that world now) or WorldOther (it is not: another save, a new game of its own, or no game).
+enum : uint8_t { WorldHost = 1, WorldReady = 2, WorldOther = 3 };
+enum : uint8_t { KindMenu = 0, KindNew = 1, KindSaved = 2 };
+enum : uint8_t { WorldSyncOff = 1 };  // flags: QA negative control, the host passes no world change on (the old behaviour)
+#pragma pack(push, 1)
+struct WorldNote {
+    uint8_t op = 0;
+    uint8_t kind = 0;      // host's world: KindMenu, KindNew (not saved yet), KindSaved; client: its own
+    uint8_t flags = 0;
+    uint32_t epoch = 0;    // the host's world; a client answers with the epoch it means
+    char campaign[64] = {};
+};
+#pragma pack(pop)
+void SendWorld(WorldNote const& note, uint8_t to);  // host: to client `to`; client: to the host (to ignored)
+using WorldHandler = void (*)(uint8_t from, WorldNote const& note);
+void SetWorldHandler(WorldHandler handler);
 
 // NPC snapshots (unreliable) and motion names (reliable): host -> every client; client -> host (its own region,
 // passed on by the host).
-constexpr int MaxNpcsPerMessage = 48;
+constexpr int MaxNpcsPerMessage = 48;  // receiving limit
+constexpr int NpcsPerSend = 18;         // sent per message: 7 + 18 x 63 bytes fit one 1200-byte datagram (hamachi-net-c.md)
 void SendNpcs(NpcRecord const* records, int count);
 void SendMotionName(uint32_t hash, char const* name);
 // Client side: received NPC snapshots and motion names are handed to these callbacks.
@@ -191,7 +222,7 @@ void SetContainerHandlers(ContentsHandler contents, ContainerTxHandler tx, TxRes
 // Summoned things (summon.cpp, P1), reliable. A player's own summon got a net ID (caster id in the top byte); the
 // others replay it on that player's puppet. op 1: spawned; op 2: gone. Client -> host; host -> every other client
 // (relayed, `from` = the caster).
-enum : uint8_t { SummonSpawned = 1, SummonGone = 2 };
+enum : uint8_t { SummonSpawned = 1, SummonGone = 2, SummonCreature = 3 };  // 3: a summoned creature (an NPC), see guid
 #pragma pack(push, 1)
 struct SummonNote {
     uint8_t op = 0;
@@ -201,11 +232,26 @@ struct SummonNote {
     float rotation[4] = {};
     char spellItem[40] = {};  // the item cast from (It_Spell_Meteor, a scroll ...)
     char spawn[40] = {};      // the summoned entity's template (Smn_Meteor ...)
+    uint8_t guid[16] = {};    // SummonCreature: the creature's GUID, which its copy takes over (SetID)
 };
 #pragma pack(pop)
 void SendSummon(SummonNote const& note);
 using SummonHandler = void (*)(uint8_t from, SummonNote const& note);
 void SetSummonHandler(SummonHandler handler);
+// Who did a deed and with what (A0/B0, agreed by agents A and B on 20.10.): the context a message about an arrow, a
+// spell, a summon or a controlled creature carries, so that witnesses, crimes and reputation (enclaves.cpp) can blame
+// the right player. Not on the wire yet: whoever sends it first adds it to that message and raises the protocol.
+#pragma pack(push, 1)
+struct DeedContext {
+    char player[24] = {};   // the responsible player's name (PlayerState::name, config `name`): the same in every session
+    uint8_t playerId = 0;   // that player's net ID: this session only
+    uint32_t deedId = 0;    // NextDeedId() on the player's machine: a (player, deedId) counts once, repeats are dropped
+    uint8_t body[16] = {};  // GUID of the body that acted: zeros for the player's own hero, else a creature it controls
+    uint8_t source[16] = {};  // GUID of what did it (an arrow, a summon ...); zeros: the body itself
+    uint8_t target[16] = {};  // GUID of what it was done to; zeros: nothing or an area
+};
+#pragma pack(pop)
+uint32_t NextDeedId();  // counts up from 1 per session on this machine
 // Shots (shot.cpp, P2), reliable: a player's own arrow or spell projectile as it set off; the others fly a copy that belongs to that
 // player's puppet. Client -> host; host -> every other client (relayed, `from` = the shooter).
 #pragma pack(push, 1)
@@ -232,6 +278,46 @@ void SetShotHandler(ShotHandler handler);
 void SendPlayerSpell(uint8_t to, char const* script);
 using PlayerSpellHandler = void (*)(uint8_t from, char const* script);
 void SetPlayerSpellHandler(PlayerSpellHandler handler);
+// A spell a player cast on NPCs another machine simulates (spells.cpp): it runs there. Any machine -> player `to`
+// (through the host). target: the NPC's GUID (zeros: the NPCs round the caster); args: the script's int argument.
+void SendNpcSpell(uint8_t to, char const* script, uint8_t const target[16], int32_t args);
+using NpcSpellHandler = void (*)(uint8_t from, char const* script, uint8_t const target[16], int32_t args);
+void SetNpcSpellHandler(NpcSpellHandler handler);
+// Town reputation (enclaves.cpp), reliable. Host -> clients (`to`, 0 = all): EnclaveState, the host's counters of one
+// enclave, and the host's reputation mode. Client -> host: EnclaveDelta (what this player's own deeds added to the
+// counters; suspect/known: the new values) or EnclaveRequest (send me every enclave).
+enum : uint8_t { EnclaveState = 1, EnclaveDelta = 2, EnclaveRequest = 3 };
+#pragma pack(push, 1)
+struct EnclaveNote {
+    uint8_t op = 0;
+    uint8_t mode = 0;          // host's reputation mode (config.h Reputation)
+    char name[32] = {};        // the enclave entity's name (Ardea, Silden ...)
+    int32_t crime[5] = {};     // CrimeCount per gEPlayerCrime (state: values; delta: added)
+    int32_t suspect[5] = {};   // SuspectComment per crime (values)
+    int32_t known = 0;         // KnownPlayerCrime
+    int32_t fame = 0;          // PlayerFame (state: value; delta: added)
+};
+#pragma pack(pop)
+void SendEnclave(EnclaveNote const& note, uint8_t to);
+using EnclaveHandler = void (*)(uint8_t from, EnclaveNote const& note);
+void SetEnclaveHandler(EnclaveHandler handler);
+// A line of a player's dialog (dialogaudio.cpp): the other players play the same voice file at the speaker. Any machine
+// -> everyone else (through the host), reliable and in order, so a line's end never arrives before its start.
+enum : uint8_t { DialogLineStart = 1, DialogLineEnd = 2 };
+enum : uint8_t { DialogSpeakerNpc = 1, DialogSpeakerPlayer = 2 };
+#pragma pack(push, 1)
+struct DialogLineNote {
+    uint8_t kind = 0;           // DialogLineStart / DialogLineEnd
+    uint8_t reason = 0;         // end: 1 finished or skipped, 2 replaced by the next line, 3 dialog over
+    uint8_t speakerKind = 0;    // DialogSpeakerNpc: speaker is the NPC's GUID; DialogSpeakerPlayer: the sender's hero
+    uint32_t lineId = 0;        // per sender, counts up
+    uint8_t speaker[16] = {};
+    char sample[128] = {};      // the voice file the game resolved (INFO_..._GER.wav), start only
+};
+#pragma pack(pop)
+void SendDialogLine(DialogLineNote const& note);
+using DialogLineHandler = void (*)(uint8_t from, DialogLineNote const& note);
+void SetDialogLineHandler(DialogLineHandler handler);
 // The clock that stamps received states (ENet's). Compare stamps only against this clock.
 uint32_t Now();
 }

@@ -36,9 +36,16 @@ void Log(const char* text)
     if (file == INVALID_HANDLE_VALUE) return;
     SYSTEMTIME now;
     GetLocalTime(&now);
+    // A long text is cut off: sprintf_s and vsprintf_s end the game when the buffer is too small (stage E2 22.10.: a
+    // trader's contents in one container line closed the client with 0xC0000409, no line written).
     char line[1024];
-    const int length = sprintf_s(line, "%02u:%02u:%02u.%03u %s\r\n", now.wHour, now.wMinute, now.wSecond,
-                                 now.wMilliseconds, text);
+    int length = sprintf_s(line, "%02u:%02u:%02u.%03u ", now.wHour, now.wMinute, now.wSecond, now.wMilliseconds);
+    if (length > 0) {
+        _snprintf_s(line + length, sizeof(line) - length - 2, _TRUNCATE, "%s", text);
+        length = static_cast<int>(std::strlen(line));
+        line[length++] = '\r';
+        line[length++] = '\n';
+    }
     DWORD written = 0;
     if (length > 0) WriteFile(file, line, static_cast<DWORD>(length), &written, nullptr);
     CloseHandle(file);
@@ -49,7 +56,8 @@ void Logf(const char* format, ...)
     char text[900];
     va_list args;
     va_start(args, format);
-    vsprintf_s(text, format, args);
+    // Truncate: vsprintf_s ends the process when the text does not fit (a trader's goods, Fable review 22.10.).
+    _vsnprintf_s(text, sizeof(text), _TRUNCATE, format, args);
     va_end(args);
     Log(text);
 }

@@ -57,10 +57,23 @@ eCEntity* Nearest(char const* name)
     PositionOf(body, from);
     eCEntity* best = nullptr;
     float bestDistance = 1e12f;
+    // A GUID ("8-4-4-4-12") picks that one entity: chests all share one name.
+    const bool byGuid = std::strlen(name) == 36 && name[8] == '-' && name[13] == '-';
     bTSmallArray<eCEntity*> const* every = Processed();
     for (GEU16 i = 0; every && i < every->GetCount(); ++i) {
         eCEntity* instance = every->GetAt(i);
-        if (!instance || std::strcmp(instance->GetName().GetText(), name) != 0) continue;
+        if (!instance) continue;
+        if (byGuid) {
+            const eCEntityProxy proxy(instance);
+            _GUID raw;
+            std::memcpy(&raw, &proxy.GetEntityID().GetCore(), 16);
+            char text[40];
+            sprintf_s(text, "%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", raw.Data1, raw.Data2, raw.Data3, raw.Data4[0], raw.Data4[1],
+                      raw.Data4[2], raw.Data4[3], raw.Data4[4], raw.Data4[5], raw.Data4[6], raw.Data4[7]);
+            if (_stricmp(text, name) != 0) continue;
+        } else if (std::strcmp(instance->GetName().GetText(), name) != 0) {
+            continue;
+        }
         float p[3];
         PositionOf(instance, p);
         const float d = body::Distance(p, from);
@@ -126,8 +139,11 @@ void UseInfo(char const* name, LogFn log)
     Entity self(hero);
     float at[3] = {};
     if (hero) PositionOf(hero, at);
-    sprintf_s(line, "USEINFO %s hero_task=%s hero_state=%s hero_pos=%.0f_%.0f_%.0f hero_ani=%d", text, self.Routine.GetCurrentTask().GetText(),
-              self.Routine.GetCurrentState().GetText(), at[0], at[1], at[2], hero ? static_cast<int>(self.Routine.AniState) : -1);
+    Entity focus = hero ? self.Focus.GetFocusEntity() : Entity();
+    sprintf_s(line, "USEINFO %s hero_task=%s hero_state=%s hero_pos=%.0f_%.0f_%.0f hero_ani=%d focus=%s focus_is_it=%d", text,
+              self.Routine.GetCurrentTask().GetText(), self.Routine.GetCurrentState().GetText(), at[0], at[1], at[2],
+              hero ? static_cast<int>(self.Routine.AniState) : -1, focus.GetInstance() ? focus.GetName().GetText() : "-",
+              focus.GetInstance() == target ? 1 : 0);
     log(line);
 }
 
@@ -143,12 +159,10 @@ void Unlock(char const* name, LogFn log)
     log(line);
 }
 
-void Use(char const* name, LogFn log)
+namespace {
+// Stand in front of the entity, facing it, as a player who walks up to it; the anchor point if it has one.
+Entity Approach(eCEntity* hero, eCEntity* target)
 {
-    char line[400];
-    eCEntity* hero = remote::ControlledBody();
-    eCEntity* target = Nearest(name);
-    if (!hero || !target) { log("REFUSED use: no hero or no such entity"); return; }
     // Stand 1.2 m in front of it, facing it, as a player who walks up to it.
     float from[3], at[3];
     PositionOf(hero, from);
@@ -173,8 +187,19 @@ void Use(char const* name, LogFn log)
     }
     const float yaw = std::atan2(-dx, -dz);
     const float rotation[4] = {0.0f, std::sin(yaw / 2), 0.0f, std::cos(yaw / 2)};
+    Entity(hero).MoveTo(body::Pose(*hero, place, rotation));
+    return anchor;
+}
+}
+
+void Use(char const* name, LogFn log)
+{
+    char line[400];
+    eCEntity* hero = remote::ControlledBody();
+    eCEntity* target = Nearest(name);
+    if (!hero || !target) { log("REFUSED use: no hero or no such entity"); return; }
+    Entity anchor = Approach(hero, target);
     Entity self(hero);
-    self.MoveTo(body::Pose(*hero, place, rotation));
     Entity object(target);
     self.Focus.SetFocusEntity(object);
     self.NPC.SetCurrentTarget(object);
@@ -182,6 +207,20 @@ void Use(char const* name, LogFn log)
     const bCString use = object.Interaction.UseFunc;
     sprintf_s(line, "USE name=%s usefunc=%s hero_task=%s anchor=%s", name, use.GetText(), self.Routine.GetCurrentTask().GetText(),
               anchor.GetInstance() ? anchor.GetName().GetText() : "-");
+    log(line);
+}
+}
+
+namespace g3t::world {
+// QA: stand in front of an entity and face it, without using it (the game's own focus then picks it).
+void Face(char const* name, LogFn log)
+{
+    eCEntity* hero = remote::ControlledBody();
+    eCEntity* target = Nearest(name);
+    if (!hero || !target) { log("REFUSED face: no hero or no such entity"); return; }
+    Approach(hero, target);
+    char line[200];
+    sprintf_s(line, "FACE name=%s", name);
     log(line);
 }
 }

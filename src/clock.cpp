@@ -76,6 +76,11 @@ void OnClock(net::ClockState const& host)
         // A client slept (or waited): time moves on for everyone, never back.
         const uint32_t own = Entity::GetWorldEntity().Clock.GetTimeStampInSeconds();
         if (host.timestamp <= own) return;
+        // A sleep moves on a day at most; anything else is no sleep of this game (Fable's review 22.10. 1.9).
+        if (host.hour >= 24 || host.minute >= 60 || host.timestamp - own > 48u * 3600) {
+            Logf("clock: a time request out of range (day %u %02u:%02u, %u s ahead); ignored", host.day, host.hour, host.minute, host.timestamp - own);
+            return;
+        }
         Apply(host);
         ++granted;
         lastSend = 0;  // tell everyone at once

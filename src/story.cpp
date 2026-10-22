@@ -305,14 +305,26 @@ namespace g3t::story {
 // QA diagnostics: hold a dialog the way talking to an NPC does (info manager between hero and NPC).
 void Talk(char const* npcName, LogFn log)
 {
-    char line[260];
     gCInfoManager_PS* manager = Infos();
     eCEntity* hero = gCSession::GetInstance().GetHero();
     Entity npc = Entity::GetEntity(bCString(npcName));
     if (!manager || !hero || !npc.GetInstance()) { log("REFUSED talk: no game, hero or NPC"); return; }
     const GEBool started = manager->StartInfoManager(*hero, *npc.GetInstance());
-    sprintf_s(line, "TALK npc=%s started=%d running=%d available=%d npc_task=%s", npcName, started ? 1 : 0,
-              manager->AccessIsRunning() ? 1 : 0, manager->GetAvailableInfoCount(), npc.Routine.GetCurrentTask().GetText());
+    // The options on offer; ":xp" marks one whose script gives experience (GiveXP), for stage Q2.
+    std::string offered;
+    for (GEInt i = 0; i < manager->GetAvailableInfoCount(); ++i) {
+        gCInfo_PS* info = manager->GetAvailableInfo(i);
+        if (!info) continue;
+        bool xp = false;
+        gCInfoScript_PS* script = info->AccessInfoScript().GetObject();
+        for (GEInt c = 0; script && c < script->GetCommandCount(); ++c)
+            if (gCInfoScriptLine_PS* command = script->GetCommand(c)) xp = xp || command->AccessCommand() == bCString("GiveXP");
+        offered += std::string(offered.empty() ? "" : ",") + info->AccessName().GetText() + (xp ? ":xp" : "");
+    }
+    char line[900];
+    sprintf_s(line, "TALK npc=%s started=%d running=%d available=%d npc_task=%s infos=%s", npcName, started ? 1 : 0,
+              manager->AccessIsRunning() ? 1 : 0, manager->GetAvailableInfoCount(), npc.Routine.GetCurrentTask().GetText(),
+              offered.empty() ? "-" : offered.c_str());
     log(line);
 }
 

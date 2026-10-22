@@ -15,4 +15,6 @@ void Owned(char const* radius, LogFn log);
 void Crime(char const* name, LogFn log);
 // ENCLAVE lines: every enclave of the world with its member count, a member to go to, status and counters; ENCLAVES end.
 void Enclaves(LogFn log);
+// QA: the hero puts its weapons away (NPCs react to a drawn weapon before they would notice a theft): UNARM line.
+void Unarm(LogFn log);
 }

@@ -13,6 +13,7 @@
 #include <Game.h>
 #include <Script.h>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -23,6 +24,12 @@ unsigned observed = 0, distinct = 0, snapshotsSent = 0, snapshotsApplied = 0, se
 std::string lastKey;
 std::string lastText = "-";
 bool sharing = true;  // QA negative control
+// Owner's decision 21.10. (play evening): experience a dialog gives (handing in a quest) goes to every player, gold
+// only to the one who hands in. The dialog runs on the speaker's machine only (GiveXP takes Entity::GetPlayer(),
+// re/findings/info-commands.md); every other machine runs the same reward for its own hero (world state kind 11).
+bool sharingXp = true;  // QA negative control `dialogxpoff`
+unsigned xpSent = 0, xpApplied = 0;
+constexpr uint8_t DialogXp = 11;
 
 // Commands whose result is a state of their first entity (static analysis of IS_Running_ProcessInfo: dialog
 // flags, guard status, class, political alignment, immortality, routine, position, enclave raid/revolution).
@@ -71,6 +78,7 @@ void StartFights()
         if (talk::IsHeld(attacker.GetInstance())) { ++it; continue; }  // still standing in the client's dialog
         const int reason = ReasonOf(it->reason, attacker.GetInstance(), target);
         GetScriptAdminExt().CallScript(bCString("AssessTarget"), attacker.GetInstance(), target, reason);
+        remote::NoteContact(attacker.GetInstance(), target);
         ++fightsStarted;
         Logf("infocmd: %s attacks player %u (%s, reason %d) after a dialog", attacker.GetName().GetText(), it->player, it->reason.c_str(), reason);
         it = fights.erase(it);
@@ -127,6 +135,19 @@ void Apply(net::WorldState const& s, uint8_t from)
         doors::OnState(from, s);
         return;
     }
+    if (s.kind == DialogXp) {  // another player's dialog gave experience: the same reward for this player's hero
+        eCEntity* hero = gCSession::GetInstance().GetHero();
+        const int amount = std::atoi(s.routine);
+        // The game's dialogs give 10 to 2000 (Infos.pak); far more is no dialog of this game (Fable's review 22.10. 1.9).
+        if (!hero || amount <= 0 || amount > 5000 || !gCSession::GetInstance().IsGameRunning()) return;
+        Entity self(hero);
+        const int before = static_cast<int>(self.PlayerMemory.XP);
+        // As the dialog command does: no victim, the hero earns it; the game turns the amount into experience.
+        GetScriptAdminExt().CallScript(bCString("GiveXP"), nullptr, hero, amount);
+        ++xpApplied;
+        Logf("infocmd: dialog experience %d from player %u: xp %d -> %d", amount, from, before, static_cast<int>(self.PlayerMemory.XP));
+        return;
+    }
     if (s.kind == 4 || s.kind == 5) {  // a client took over (4) or gave back (5) a companion
         if (net::IsHost()) npcs::OnClaim(s.guid, from, s.kind == 4);
         return;
@@ -148,7 +169,9 @@ void Apply(net::WorldState const& s, uint8_t from)
     }
     if (s.kind == 3) {
         if (!net::IsHost()) return;
-        Fight f{{}, s.guard ? s.guard : from, s.routine, net::Now() + 15000, net::JoinCount()};
+        const uint8_t player = s.guard ? s.guard : from;
+        if (player != from || player >= net::MaxPlayers) return;  // a client starts fights against its own puppet only (Fable 1.3)
+        Fight f{{}, player, s.routine, net::Now() + 15000, net::JoinCount()};
         std::memcpy(f.attacker, s.guid, 16);
         fights.push_back(f);
         return;
@@ -266,6 +289,16 @@ void Observe(gCScriptProcessingUnit* spu)
         pending.push_back({{}, command.GetID1().GetText(), net::Now() + ReadAfter});
         return;
     }
+    if (!std::strcmp(name, "GiveXP")) {
+        if (!sharingXp || std::atoi(command.GetID1().GetText()) <= 0) return;
+        net::WorldState s{};
+        s.kind = DialogXp;
+        strncpy_s(s.routine, command.GetID1().GetText(), _TRUNCATE);
+        Send(s);
+        ++xpSent;
+        Logf("infocmd: dialog experience %s passed on to the other players", s.routine);
+        return;
+    }
     eCEntity* target = e1.GetInstance();
     if (!std::strcmp(name, "Attack") && !net::IsHost() && target && npcs::IsMirrored(target) &&
         e2.GetInstance() == gCSession::GetInstance().GetHero()) {
@@ -339,10 +372,16 @@ void Off(LogFn log)
     log("INFOCMDOFF ok=1");
 }
 
+void DialogXpOff(LogFn log)
+{
+    sharingXp = false;
+    log("DIALOGXPOFF ok=1");
+}
+
 void Report(LogFn log)
 {
     char line[600];
-    sprintf_s(line, "INFOCMD observed=%u distinct=%u sent=%u applied=%u sectors_sent=%u sectors_applied=%u fights_sent=%u fights_started=%u last=%s", observed, distinct,
+    sprintf_s(line, "INFOCMD xp_sent=%u xp_applied=%u observed=%u distinct=%u sent=%u applied=%u sectors_sent=%u sectors_applied=%u fights_sent=%u fights_started=%u last=%s", xpSent, xpApplied, observed, distinct,
               snapshotsSent, snapshotsApplied, sectorsSent, sectorsApplied, fightsSent, fightsStarted, lastText.c_str());
     log(line);
 }
@@ -350,6 +389,8 @@ void Report(LogFn log)
 
 namespace g3t::infocmd {
 // QA, stage E3: "join Name_1" / "join Name_0" on a client, the same path as the dialog command JoinPlayer.
+bool TakeOver(eCEntity* target, bool join) { return Join(target, join); }
+
 void JoinQa(char const* argument, LogFn log)
 {
     char line[200];

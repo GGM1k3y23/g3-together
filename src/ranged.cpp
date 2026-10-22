@@ -5,6 +5,7 @@
 #include "log.h"
 #include "remote.h"
 #include "summon.h"
+#include "world.h"
 
 #include <Game.h>
 #include <Script.h>
@@ -59,8 +60,20 @@ char const* HeldName(Entity& self, gESlot slot, char* out, size_t size)
 Entity EntityAt(char const* guid)
 {
     _GUID raw;
-    if (!ParseGuid(guid, raw)) return Entity();
-    return Entity(bCPropertyID(bCGuid(raw)));
+    if (ParseGuid(guid, raw)) return Entity(bCPropertyID(bCGuid(raw)));
+    // Not a GUID: the nearest processed entity of that name (doors and chests have no GUID in the QA output, and chests
+    // share names; MagicOpenLocks).
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    eCEntity* best = nullptr;
+    float bestDistance = 1e30f;
+    bTSmallArray<eCEntity*> const* every = world::ProcessedEntities();
+    for (GEU16 i = 0; hero && every && i < every->GetCount(); ++i) {
+        eCEntity* e = every->GetAt(i);
+        if (!e || std::strcmp(e->GetName().GetText(), guid)) continue;
+        const float distance = (e->GetWorldPosition() - hero->GetWorldPosition()).GetMagnitude();
+        if (distance < bestDistance) best = e, bestDistance = distance;
+    }
+    return best ? Entity(best) : Entity();
 }
 
 GEInt ManaOf(eCEntity* body)

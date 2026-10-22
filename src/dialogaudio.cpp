@@ -1,0 +1,341 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+#include "dialogaudio.h"
+
+#include "log.h"
+#include "net.h"
+#include "remote.h"
+
+#include <Engine.h>
+#include <Game.h>
+#include <Script.h>
+#include <Windows.h>
+#include <cmath>
+#include <cstdio>
+#include <cstring>
+#include <memory>
+#include <vector>
+
+namespace g3t::dialogaudio {
+namespace {
+// Every spoken line of the game starts in gCScriptProcessingUnit::StartOutput (Game.dll+0x16fc50, after _AI_Say_Ex,
+// StartSay and StartSayEx; C dialog-audio-c.md), once per line. Prologue of this build: sub esp,0Ch; push ebx;
+// mov ebx,ecx (6 bytes, no relative operands); checked before patching.
+constexpr uintptr_t StartOutputRva = 0x16fc50;
+constexpr unsigned char StartOutputPrologue[] = {0x83, 0xEC, 0x0C, 0x53, 0x8B, 0xD9};
+constexpr float StartRange = 2000.0f, FadeRange = 2500.0f;  // 20 m: a line starts; 25 m: faded out and stopped
+// The game's own voice distances (Game.dll+0x307ffc/+0x307ff8), so the line sounds as it does to the speaker.
+constexpr float MinDistance = 500.0f, MaxDistance = 1000000.0f;
+
+using StartOutputFn = GEBool(__thiscall*)(gCScriptProcessingUnit*, bCString const&);
+StartOutputFn original = nullptr;
+bool hooked = false, hookFailed = false, disabled = false;
+
+// The line this machine's dialog is speaking.
+struct Speaking {
+    uint32_t lineId = 0;
+    uint8_t speaker[16] = {};  // looked up by GUID every tick, never kept as a pointer
+    DWORD since = 0;
+};
+Speaking speaking;
+uint32_t nextLineId = 1;
+
+// A line from another player, playing here.
+struct Playing {
+    uint8_t from = 0;
+    uint32_t lineId = 0;
+    uint8_t speakerKind = 0;
+    uint8_t speaker[16] = {};
+    std::unique_ptr<eCAudioSound> sound;
+    std::unique_ptr<eCAudioChannel> channel;
+};
+std::vector<Playing> playing;
+
+unsigned sentStarts = 0, sentEnds = 0, thirdSpeakers = 0, received = 0, played = 0, droppedFar = 0, droppedOwnDialog = 0,
+         droppedNoSpeaker = 0, droppedFailed = 0, stoppedFar = 0, finished = 0;
+char lastSample[128] = "-";
+
+void GuidOf(eCEntity* entity, uint8_t out[16])
+{
+    const eCEntityProxy proxy(entity);
+    std::memcpy(out, &proxy.GetEntityID().GetCore(), 16);
+}
+
+eCEntity* Resolve(uint8_t const guid[16])
+{
+    _GUID raw;
+    std::memcpy(&raw, guid, 16);
+    return Entity(bCPropertyID(bCGuid(raw))).GetInstance();
+}
+
+gCInfoManager_PS* Infos() { return gCSession::GetInstance().IsGameRunning() ? gCInfoManager_PS::GetInstance() : nullptr; }
+
+bool OwnDialog()
+{
+    gCInfoManager_PS* infos = Infos();
+    return infos && infos->AccessIsRunning();
+}
+
+void SendEnd(uint8_t reason)
+{
+    if (!speaking.lineId) return;
+    net::DialogLineNote note;
+    note.kind = net::DialogLineEnd;
+    note.reason = reason;
+    note.lineId = speaking.lineId;
+    net::SendDialogLine(note);
+    ++sentEnds;
+    speaking = {};
+}
+
+void OnLocalLine(gCScriptProcessingUnit* spu, bCString const& sample)
+{
+    if (disabled || !net::Connected() || !OwnDialog()) return;
+    eCEntity* speaker = spu->GetSelfEntity();
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    eCEntity* partner = reinterpret_cast<eCEntity*>(Infos()->GetDialogPartnerNPC());
+    if (!speaker || (speaker != hero && speaker != partner)) {
+        // Version 1 sends the hero and the dialog partner only; a third speaker is counted, for a later version.
+        ++thirdSpeakers;
+        Logf("dialogaudio: line by %s (not hero or partner) not sent: %s", speaker ? speaker->GetName().GetText() : "-", sample.GetText());
+        return;
+    }
+    SendEnd(2);  // the line before, if still marked, was replaced
+    net::DialogLineNote note;
+    note.kind = net::DialogLineStart;
+    note.lineId = nextLineId++;
+    if (speaker == hero) {
+        note.speakerKind = net::DialogSpeakerPlayer;
+    } else {
+        note.speakerKind = net::DialogSpeakerNpc;
+        GuidOf(speaker, note.speaker);
+    }
+    strncpy_s(note.sample, sample.GetText(), _TRUNCATE);
+    net::SendDialogLine(note);
+    ++sentStarts;
+    strncpy_s(lastSample, note.sample, _TRUNCATE);
+    speaking = {};
+    speaking.lineId = note.lineId;
+    GuidOf(speaker, speaking.speaker);
+    speaking.since = GetTickCount();
+    Logf("dialogaudio: line %u by %s sent: %s", note.lineId, speaker->GetName().GetText(), note.sample);
+}
+
+GEBool __fastcall StartOutput(gCScriptProcessingUnit* spu, void*, bCString const& sample)
+{
+    const GEBool ok = original(spu, sample);
+    if (ok) OnLocalLine(spu, sample);
+    return ok;
+}
+
+void Hook()
+{
+    auto* game = reinterpret_cast<unsigned char*>(GetModuleHandleA("Game.dll"));
+    if (!game) return;
+    unsigned char* target = game + StartOutputRva;
+    constexpr size_t stolen = sizeof(StartOutputPrologue);
+    if (std::memcmp(target, StartOutputPrologue, stolen) != 0) {
+        hookFailed = true;
+        Log("dialogaudio: StartOutput not as expected; dialog lines are not shared");
+        return;
+    }
+    auto* trampoline = static_cast<unsigned char*>(VirtualAlloc(nullptr, 32, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE));
+    if (!trampoline) { hookFailed = true; return; }
+    std::memcpy(trampoline, target, stolen);
+    trampoline[stolen] = 0xE9;
+    const int32_t back = static_cast<int32_t>((target + stolen) - (trampoline + stolen + 5));
+    std::memcpy(trampoline + stolen + 1, &back, 4);
+    DWORD old = 0;
+    if (!VirtualProtect(target, stolen, PAGE_EXECUTE_READWRITE, &old)) { hookFailed = true; return; }
+    target[0] = 0xE9;
+    const int32_t to = static_cast<int32_t>(reinterpret_cast<unsigned char*>(&StartOutput) - (target + 5));
+    std::memcpy(target + 1, &to, 4);
+    target[5] = 0x90;
+    VirtualProtect(target, stolen, old, &old);
+    FlushInstructionCache(GetCurrentProcess(), target, stolen);
+    original = reinterpret_cast<StartOutputFn>(trampoline);
+    hooked = true;
+    Log("dialogaudio: StartOutput hooked");
+}
+
+float Distance(eCEntity* a, eCEntity* b)
+{
+    const bCVector& p = a->GetWorldPosition();
+    const bCVector& q = b->GetWorldPosition();
+    const float dx = p.GetX() - q.GetX(), dy = p.GetY() - q.GetY(), dz = p.GetZ() - q.GetZ();
+    return std::sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+eCEntity* SpeakerOf(uint8_t from, uint8_t kind, uint8_t const guid[16])
+{
+    if (kind == net::DialogSpeakerPlayer) return remote::PuppetOf(from);
+    if (kind == net::DialogSpeakerNpc) return Resolve(guid);
+    return nullptr;
+}
+
+void Stop(Playing& line)
+{
+    if (line.channel) line.channel->Stop();
+    line.channel.reset();
+    line.sound.reset();
+}
+
+void StopAll()
+{
+    for (auto& line : playing) Stop(line);
+    playing.clear();
+}
+
+// A voice file name from the network: a bare resource name ending in .wav, nothing that names a path.
+bool PlainSample(char const* sample)
+{
+    const size_t length = std::strlen(sample);
+    if (length < 5 || _stricmp(sample + length - 4, ".wav") != 0 || std::strstr(sample, "..")) return false;
+    for (char const* c = sample; *c; ++c)
+        if (*c == '\\' || *c == '/' || *c == ':' || static_cast<unsigned char>(*c) < 32) return false;
+    return true;
+}
+
+void OnLine(uint8_t from, net::DialogLineNote const& note)
+{
+    if (disabled) return;
+    ++received;
+    if (note.kind == net::DialogLineEnd) {
+        for (auto it = playing.begin(); it != playing.end(); ++it)
+            if (it->from == from && it->lineId == note.lineId) {
+                Stop(*it);
+                playing.erase(it);
+                ++finished;
+                break;
+            }
+        return;
+    }
+    if (note.kind != net::DialogLineStart) return;
+    if (!PlainSample(note.sample)) {
+        ++droppedFailed;
+        Logf("dialogaudio: line %u from player %u refused: not a plain voice file name", note.lineId, from);
+        return;
+    }
+    // One line per sender: a new one replaces what is left of the one before.
+    for (auto it = playing.begin(); it != playing.end(); ++it)
+        if (it->from == from) {
+            Stop(*it);
+            playing.erase(it);
+            break;
+        }
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    eCEntity* speaker = SpeakerOf(from, note.speakerKind, note.speaker);
+    if (!hero || !speaker) {
+        ++droppedNoSpeaker;
+        Logf("dialogaudio: line %u from player %u: speaker not here", note.lineId, from);
+        return;
+    }
+    if (OwnDialog()) {  // the player's own dialog comes first
+        ++droppedOwnDialog;
+        return;
+    }
+    if (Distance(hero, speaker) > StartRange) {
+        ++droppedFar;
+        return;
+    }
+    Playing line;
+    line.from = from;
+    line.lineId = note.lineId;
+    line.speakerKind = note.speakerKind;
+    std::memcpy(line.speaker, note.speaker, 16);
+    line.sound = std::make_unique<eCAudioSound>();
+    line.channel = std::make_unique<eCAudioChannel>();
+    const GEBool ok = eCAudioModule::GetInstance().PlayStream3D(eEAudioChannelGroup_Voice, bCString(note.sample), speaker->GetWorldPosition(),
+                                                                1.0f, MinDistance, MaxDistance, line.sound.get(), line.channel.get());
+    if (!ok || !line.channel->IsPlaying()) {
+        ++droppedFailed;
+        Logf("dialogaudio: line %u from player %u not played (ok=%d): %s", note.lineId, from, ok ? 1 : 0, note.sample);
+        Stop(line);
+        return;
+    }
+    ++played;
+    strncpy_s(lastSample, note.sample, _TRUNCATE);
+    Logf("dialogaudio: line %u from player %u plays at %s: %s", note.lineId, from, speaker->GetName().GetText(), note.sample);
+    playing.push_back(std::move(line));
+}
+
+void TickSpeaking()
+{
+    if (!speaking.lineId) return;
+    if (!OwnDialog()) {
+        SendEnd(3);
+        return;
+    }
+    // A short grace after the start; then the line is over when the speaker's output stops (finished, skipped, or a
+    // full stop), whichever way it ended.
+    eCEntity* speaker = Resolve(speaking.speaker);
+    auto* routine = speaker ? static_cast<gCScriptRoutine_PS*>(speaker->GetPropertySet(eEPropertySetType_ScriptRoutine)) : nullptr;
+    if (GetTickCount() - speaking.since > 300 && (!routine || !routine->GetSPU().IsOutputPlaying())) SendEnd(1);
+}
+
+void TickPlaying()
+{
+    if (playing.empty()) return;
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    if (!hero || !net::Connected() || OwnDialog()) {
+        StopAll();
+        return;
+    }
+    for (auto it = playing.begin(); it != playing.end();) {
+        eCEntity* speaker = SpeakerOf(it->from, it->speakerKind, it->speaker);
+        const float distance = speaker ? Distance(hero, speaker) : FadeRange + 1.0f;
+        if (!speaker || distance > FadeRange || !it->channel->IsPlaying()) {
+            if (speaker && distance > FadeRange) ++stoppedFar;
+            else ++finished;
+            Stop(*it);
+            it = playing.erase(it);
+            continue;
+        }
+        it->channel->SetLocation(speaker->GetWorldPosition());
+        it->channel->SetVolume(distance <= StartRange ? 1.0f : (FadeRange - distance) / (FadeRange - StartRange));
+        ++it;
+    }
+}
+}
+
+void Start() { net::SetDialogLineHandler(&OnLine); }
+
+void Tick()
+{
+    if (!gCSession::GetInstance().IsGameRunning()) {
+        StopAll();
+        speaking = {};
+        return;
+    }
+    if (!hooked && !hookFailed) Hook();
+    TickSpeaking();
+    TickPlaying();
+}
+
+void Report(LogFn log)
+{
+    char line[600];
+    sprintf_s(line,
+              "DIALOGAUDIO hooked=%d sent_starts=%u sent_ends=%u third_speakers=%u received=%u played=%u playing=%zu finished=%u "
+              "stopped_far=%u dropped_far=%u dropped_own_dialog=%u dropped_no_speaker=%u dropped_failed=%u last=%s",
+              hooked, sentStarts, sentEnds, thirdSpeakers, received, played, playing.size(), finished, stoppedFar, droppedFar,
+              droppedOwnDialog, droppedNoSpeaker, droppedFailed, lastSample);
+    log(line);
+}
+
+void Disable(LogFn log)
+{
+    disabled = true;
+    StopAll();
+    log("DIALOGAUDIOOFF ok=1");
+}
+
+void MuteGame(char const* on, LogFn log)
+{
+    eCAudioChannelGroup* master = eCAudioModule::GetInstance().GetChannelGroup(eEAudioChannelGroup_Master);
+    const bool mute = on && *on == '1';
+    if (master) master->SetVolume(mute ? 0.0f : 1.0f);
+    char line[80];
+    sprintf_s(line, "MUTEGAME ok=%d muted=%d", master ? 1 : 0, mute ? 1 : 0);
+    log(line);
+}
+}

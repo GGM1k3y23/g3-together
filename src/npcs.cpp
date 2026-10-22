@@ -11,6 +11,7 @@
 #include <Game.h>
 #include <Script.h>
 #include <Windows.h>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <string>
@@ -31,6 +32,12 @@ std::unordered_set<uint32_t> namesSent;
 std::unordered_set<std::string> owned;  // GUIDs this machine sent in its last update
 bool owning = true;                     // QA negative control (client): send nothing of its own
 unsigned claimsRefused = 0;             // host: a client's snapshots of NPCs the host simulates itself
+unsigned hostWins = 0;                  // client: NPCs it simulated itself until the host's snapshots came (now mirrors)
+bool hostWinsRule = true;               // QA negative control: HostWinsOff
+constexpr uint32_t JoinGrace = 10000;   // ms after a client joined in which the host keeps the NPCs near its hero
+uint32_t joinedAt[net::MaxPlayers] = {};  // host: when each client was first seen connected (net::Now), 0 = not now
+unsigned joinRefused = 0;               // host: a joining client's snapshots of NPCs near the host, refused
+bool joinGraceRule = true;              // QA negative control: JoinGraceOff
 // Companions: a client that recruits one of the host's NPCs takes it over for good (it follows that player, and
 // the game's follow state follows the local hero, GetPlayer()); the host then only mirrors it.
 std::unordered_map<std::string, uint8_t> claimedBy;  // host: NPC -> the client that took it over
@@ -70,10 +77,19 @@ struct Mirror
     bool laid = false;             // lying-dead start motion played
     uint32_t lieCheckAt = 0;
     unsigned lieTries = 0;
+    uint8_t lieNoted = 0;          // log lines written about lying down (PLAN-2026-10-22 1.5): 1 no skeleton, 2 lies, 4 gave up
+    uint32_t killedAt = 0;         // net::Now() when it died here (mirrored death or journal), for the late check
+    bool lateNoted = false;        // "corpse X after 45 s: lies / STANDS" written
+    bool wasMirror = false;        // a dead mirror whose owner stopped sending it, laid down here further
 };
 unsigned holdChanges = 0;
 bool style = true;  // QA negative control: StyleOff (no weapons in hand, no stance on mirrors)
 std::unordered_map<std::string, Mirror> mirrors;
+// Deaths applied here as a state, outside mirroring (journal.cpp: an NPC that died in another player's region, applied
+// once this machine processes it). They got AIMode 9 and ZS_Dead, which lays nothing down: the body froze in its last
+// pose (deaddiag 19.10., the same as dead mirrors before LayDown; Brenton stood on the host on 21.10.). Laid down like
+// dead mirrors. Looked up by GUID every time, never kept as a raw pointer (save-forget-npclist-c.md).
+std::unordered_map<std::string, Mirror> corpses;
 std::unordered_map<uint32_t, std::string> motionNames;
 
 std::string Key(uint8_t const guid[16]) { return std::string(reinterpret_cast<char const*>(guid), 16); }
@@ -125,6 +141,13 @@ Entity Resolve(uint8_t const guid[16])
     return Entity(bCPropertyID(bCGuid(raw)));
 }
 
+bool IsNpc(eCEntity* instance)
+{
+    return instance && instance->GetPropertySet(eEPropertySetType_NPC) && instance->GetPropertySet(eEPropertySetType_ScriptRoutine) &&
+           instance->GetPropertySet(eEPropertySetType_DamageReceiver) && instance != gCSession::GetInstance().GetHero() &&
+           !remote::IsPuppet(instance);
+}
+
 bool receiving = true;  // QA (invariant self-test): RecvOff drops all NPC snapshots, so both machines simulate
 
 void OnNpcs(net::NpcRecord const* records, int count, uint32_t now, uint8_t owner)
@@ -135,9 +158,29 @@ void OnNpcs(net::NpcRecord const* records, int count, uint32_t now, uint8_t owne
         // Whoever simulated an NPC first keeps it. Both starting at once: the host keeps it, and the client
         // turns its copy into a mirror as soon as the host's snapshots arrive.
         if (!net::IsHost() && myClaims.count(key)) continue;  // ours now; the host's last snapshots are late
-        if (owned.count(key) && !claimedBy.count(key)) { ++claimsRefused; continue; }
+        if (owned.count(key) && !claimedBy.count(key)) {
+            // Host: it keeps what it simulates. Client: the host's snapshots win over its own simulation (a mirror gone
+            // stale for 3 s gets its own AI back and is then sent from here; refusing the host's snapshots left both
+            // simulating the NPC for good: Slave_04 following the host in stageControl, Lester in stageP3a, 20.10.).
+            if (net::IsHost() || owner != 1 || !hostWinsRule) { ++claimsRefused; continue; }
+            owned.erase(key);
+            ++hostWins;
+        }
         const auto claim = claimedBy.find(key);
         if (claim != claimedBy.end() && claim->second != owner) { ++claimsRefused; continue; }  // someone else's companion
+        if (net::IsHost() && owner > 1 && owner < net::MaxPlayers && claim == claimedBy.end() && joinGraceRule) {
+            // A client that just joined sends what it processes before the host's first snapshots reach it; the host then
+            // took over as mirrors the NPCs around its own hero (37 of 40 runs, 20.10.: raiders fought by the host ran on
+            // the client). Near the host's hero, the host keeps them for a while after a join; the client turns its copies
+            // into mirrors when the host's snapshots arrive.
+            if (!joinedAt[owner]) joinedAt[owner] = now ? now : 1;
+            if (static_cast<int32_t>(now - joinedAt[owner]) < static_cast<int32_t>(JoinGrace) && !mirrors.count(key)) {
+                eCEntity* body = remote::ControlledBody();
+                const bCVector& h = body ? body->GetWorldPosition() : bCVector();
+                const float heroAt[3] = {h.GetX(), h.GetY(), h.GetZ()};
+                if (body && body::Distance(records[i].position, heroAt) <= InterestRadius) { ++joinRefused; continue; }
+            }
+        }
         if (claim != claimedBy.end()) claimSeen[key] = now;
         givenBack.erase(key);  // the host sends it again: mirror it
         Mirror& m = mirrors[key];
@@ -149,7 +192,14 @@ void OnNpcs(net::NpcRecord const* records, int count, uint32_t now, uint8_t owne
     }
 }
 
-void OnMotionName(uint32_t hash, char const* name) { motionNames[hash] = name; }
+void OnMotionName(uint32_t hash, char const* name)
+{
+    if (motionNames.size() < 50000 || motionNames.count(hash)) motionNames[hash] = name;  // the game has some 20000 motions
+}
+
+// QA (NPCSEND): why SendOwned last left an NPC out, or "sent", and when (net::Now()).
+struct SendNote { char const* reason = "never"; uint32_t at = 0; };
+std::unordered_map<std::string, SendNote> sendNotes;
 
 // Every NPC this machine processes and nobody else simulates, near a player: one snapshot each.
 void SendOwned(eCEntity* hero, float const players[][3], int playerCount)
@@ -164,17 +214,21 @@ void SendOwned(eCEntity* hero, float const players[][3], int playerCount)
         eCEntity* instance = npc.GetInstance();
         if (!instance || instance == hero || remote::IsPuppet(instance)) continue;
         if (instance == controlled) continue;  // a transformed player's creature travels as its player state
-        if (journal::Pending(instance)) continue;  // a recorded death not applied yet: never show it alive
         uint8_t guid[16];
         Guid(instance, guid);
-        if (mirrors.count(Key(guid)) || claimedBy.count(Key(guid))) continue;  // simulated elsewhere: we show theirs
+        SendNote& note = sendNotes[Key(guid)];
+        note.at = net::Now();
+        if (journal::Pending(instance)) { note.reason = "pending"; continue; }  // a recorded death not applied yet: never show it alive
+        if (mirrors.count(Key(guid))) { note.reason = "mirror"; continue; }      // simulated elsewhere: we show theirs
+        if (claimedBy.count(Key(guid))) { note.reason = "claimed"; continue; }
         const auto back = givenBack.find(Key(guid));
-        if (back != givenBack.end() && static_cast<int32_t>(net::Now() - back->second) < 0) continue;  // handed back
+        if (back != givenBack.end() && static_cast<int32_t>(net::Now() - back->second) < 0) { note.reason = "givenback"; continue; }  // handed back
         const bCVector& p = instance->GetWorldPosition();
         const float at[3] = {p.GetX(), p.GetY(), p.GetZ()};
         bool inRange = false;
         for (int k = 0; k < playerCount && !inRange; ++k) inRange = body::Distance(at, players[k]) <= InterestRadius;
-        if (!inRange) continue;
+        if (!inRange) { note.reason = "range"; continue; }
+        note.reason = "sent";
         net::NpcRecord& r = batch[n];
         r = net::NpcRecord{};
         std::memcpy(r.guid, guid, 16);
@@ -200,7 +254,7 @@ void SendOwned(eCEntity* hero, float const players[][3], int playerCount)
             r.motion = net::HashName(motion);
             if (namesSent.insert(r.motion).second) net::SendMotionName(r.motion, motion);
         }
-        if (++n == net::MaxNpcsPerMessage) { net::SendNpcs(batch, n); n = 0; }
+        if (++n == net::NpcsPerSend) { net::SendNpcs(batch, n); n = 0; }
     }
     if (n) net::SendNpcs(batch, n);
 }
@@ -226,7 +280,7 @@ void HostTick()
     net::Remote const* remotes = net::Remotes();
     bool anyClient = false;
     for (int id = 2; id < net::MaxPlayers; ++id) {
-        if (!remotes[id].connected) continue;
+        if (!remotes[id].connected) { joinedAt[id] = 0; continue; }
         anyClient = true;
         if (!(remotes[id].latest.flags & 1) || remotes[id].latest.world != remote::CurrentWorld()) continue;
         std::memcpy(players[playerCount++], remotes[id].latest.position, sizeof(float) * 3);
@@ -345,9 +399,46 @@ void LearnSkeleton(Mirror& m, char const* motion)
 // all and the body froze in its last pose, mostly standing; the owner's ZS_Dead plays <skeleton>_..._LieDead_Begin and
 // then LieDead_Ambient_Loop every ~400 ms, and a ragdoll death falls by physics there. Here: the start motion once,
 // then the loop whenever slot 0 shows something else.
+// Lying as the QA's deadpose measures it: a lying motion runs on slot 0, nothing on the locomotion slots 1-3.
+bool Lies(eCEntity* entity, char* shows, size_t size, char* slots, size_t slotsSize)
+{
+    body::CurrentMotion(entity, shows, size);
+    bool still = true;
+    *slots = '\0';
+    if (auto* animation = static_cast<eCVisualAnimation_PS*>(entity->GetPropertySet(eEPropertySetType_Animation)))
+        for (int slot = 1; slot <= 3; ++slot) {
+            char name[128] = {};
+            body::MotionName(animation, slot, name, sizeof(name));
+            const bool runs = animation->GetActor() && animation->GetActor()->IsMotionRunning(static_cast<eCWrapper_emfx2Actor::eEMotionType>(slot));
+            still = still && !runs;
+            sprintf_s(slots + strlen(slots), slotsSize - strlen(slots), "%s%d:%s:%s", slot > 1 ? "|" : "", slot, runs ? "run" : "off", *name ? name : "-");
+        }
+    return std::strstr(shows, "_Lie") && body::MotionRunning(entity) && still;  // LieDead, or a knock-out's LieKnockDown
+}
+
+// Once per corpse, 45 s after its death here: does it lie? A play evening's log counts standing corpses from these lines
+// (owner, 22.10.: far more stood than the two examples).
+void LateCheck(Mirror& m, uint32_t now, char const* kind)
+{
+    if (m.lateNoted || !m.killedAt || static_cast<int32_t>(now - m.killedAt) < 45000) return;
+    m.lateNoted = true;
+    char shows[128], slots[400];
+    const bool lies = Lies(m.entity.GetInstance(), shows, sizeof(shows), slots, sizeof(slots));
+    Logf("npcs: corpse %s (%s) after 45 s: %s (shows %s, slots %s)", m.entity.GetName().GetText(), kind, lies ? "lies" : "STANDS", shows, slots);
+}
+
 void LayDown(Mirror& m, uint32_t now)
 {
-    if (!deadPose || m.lieTries >= 40 || static_cast<int32_t>(now - m.lieCheckAt) < 0) return;
+    if (!deadPose || static_cast<int32_t>(now - m.lieCheckAt) < 0) return;
+    if (m.lieTries >= 40) {
+        if (!(m.lieNoted & 4)) {
+            m.lieNoted |= 4;
+            char shows[128];
+            body::CurrentMotion(m.entity.GetInstance(), shows, sizeof(shows));
+            Logf("npcs: corpse %s: the lying motion did not run after 40 tries; gave up (shows %s)", m.entity.GetName().GetText(), shows);
+        }
+        return;
+    }
     m.lieCheckAt = now + 400;
     char shows[128];
     body::CurrentMotion(m.entity.GetInstance(), shows, sizeof(shows));
@@ -356,7 +447,13 @@ void LayDown(Mirror& m, uint32_t now)
         auto name = motionNames.find(m.latest.motion);
         if (name != motionNames.end()) LearnSkeleton(m, name->second.c_str());
     }
-    if (!*m.skeleton) return;
+    if (!*m.skeleton) {
+        if (!(m.lieNoted & 1)) {
+            m.lieNoted |= 1;
+            Logf("npcs: corpse %s: no skeleton known from its motions (shows %s); it cannot be laid down yet", m.entity.GetName().GetText(), shows);
+        }
+        return;
+    }
     // Nothing of its life may go on underneath, at every check: the movement controller (a mirror walking when it died)
     // and the locomotion slots 1-3 kept playing standing and walking motions, and 3 of 12 corpses stood with the lying
     // loop running on slot 0 (deaddiag 19.10.); stopped once, 1 of 12 still stood (it had been in its fighting stance).
@@ -368,6 +465,10 @@ void LayDown(Mirror& m, uint32_t now)
     // Lying already: the start motion or the loop still plays (once a motion ends the body falls back to its bind pose).
     if (std::strstr(shows, "LieDead") && body::MotionRunning(m.entity.GetInstance())) {
         m.lieTries = 0;  // the cap counts only starts in a row that did not run
+        if (!(m.lieNoted & 2)) {
+            m.lieNoted |= 2;
+            Logf("npcs: corpse %s lies (%s)", m.entity.GetName().GetText(), shows);
+        }
         return;
     }
     char motion[128];
@@ -408,7 +509,7 @@ void MirrorTick()
         if (!m.resolved) {
             m.entity = Resolve(m.latest.guid);
             m.resolved = true;
-            m.missing = !m.entity.GetInstance();
+            m.missing = !IsNpc(m.entity.GetInstance());  // the host's hero, a chest or a puppet is no mirror (Fable 1.6)
             // The game's death and knock-out scripts reward the player (GiveXP) for any NPC not yet marked as
             // defeated by the player, and then mark it. For mirrors that rewarded this client for every NPC the
             // host or anyone else defeated (1250 XP in stage 3c without a single own hit; 500 when marked only
@@ -430,6 +531,17 @@ void MirrorTick()
             if (!m.killed) {
                 body::Release(m.entity, m.body);  // out of the host's interest area: own AI again
                 if (m.guarded) m.entity.NPC.DefeatedByPlayer = m.defeatedBefore;
+            } else if (!m.lateNoted) {
+                // Dead, and its owner stopped sending it before it lay (or before its late check): lying down goes on here,
+                // looked up by GUID (B's stageK1 run 20261022-153310-p2: Slave_03 stood in a get-up motion, and no line at all
+                // said it lay or gave up).
+                char shows[128], slots[400];
+                const bool lies = Lies(m.entity.GetInstance(), shows, sizeof(shows), slots, sizeof(slots));
+                Logf("npcs: corpse %s: its owner stopped sending it (%s); laid down here further", m.entity.GetName().GetText(),
+                     lies ? "lies" : "not lying yet");
+                Mirror& c = corpses[it->first];
+                c = m;
+                c.wasMirror = true;
             }
             it = mirrors.erase(it);
             continue;
@@ -439,6 +551,7 @@ void MirrorTick()
             // from view), so a client never showed a corpse.
             const bool first = !m.killed;
             m.killed = true;  // before SetTask: the AI filter lets the death state run only for killed mirrors
+            if (first) m.killedAt = now ? now : 1;
             if (first)
                 Logf("npcs: mirror %s dead on the host; here dead=%d defeated_by_player=%d task=%s", m.entity.GetName().GetText(),
                      m.entity.IsDead() ? 1 : 0, m.entity.NPC.DefeatedByPlayer ? 1 : 0, m.entity.Routine.GetCurrentTask().GetText());
@@ -457,6 +570,7 @@ void MirrorTick()
                 m.entity.Routine.SetTask(bCString(DeathTask));
             }
             if (xpGuard) LayDown(m, now);
+            LateCheck(m, now, "mirror");
             ++it;
             continue;
         }
@@ -519,6 +633,28 @@ bool DiedOnHost(eCEntity const* entity)
     return false;
 }
 
+// QA, client (stage X1): one NPC record with this machine's hero GUID (the same entity as the host's hero in a shared
+// world) and a NaN position, sent as if it were an NPC of this client's region.
+void BadRecord(LogFn log)
+{
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    if (!hero || net::IsHost()) { log("REFUSED badrecord: client with a hero only"); return; }
+    net::NpcRecord record{};
+    Guid(hero, record.guid);
+    record.position[0] = std::nanf("");
+    record.position[1] = record.position[2] = 0.0f;
+    record.rotation[3] = 1.0f;
+    record.hitPoints = 1;
+    net::SendNpcs(&record, 1);
+    log("BADRECORD sent=1");
+}
+
+eCEntity* NpcByGuid(uint8_t const guid[16])
+{
+    eCEntity* instance = Resolve(guid).GetInstance();
+    return IsNpc(instance) ? instance : nullptr;
+}
+
 bool IsMirrored(eCEntity const* entity)
 {
     if (!entity) return false;
@@ -530,12 +666,26 @@ bool IsMirrored(eCEntity const* entity)
 void OnWorldDeactivate()
 {
     mirrors.clear();
+    corpses.clear();
     namesSent.clear();
     // A loaded save or another world starts without companions taken over (nothing of them is saved yet).
     claimedBy.clear();
     claimSeen.clear();
     myClaims.clear();
     givenBack.clear();
+}
+
+void CorpseTick(uint32_t now)
+{
+    for (auto it = corpses.begin(); it != corpses.end();) {
+        Mirror& c = it->second;
+        c.entity = Resolve(c.latest.guid);
+        if (!c.entity.GetInstance()) { ++it; continue; }  // not in this part of the world now; again when it is
+        if (!c.entity.IsDead() || mirrors.count(it->first)) { it = corpses.erase(it); continue; }  // alive again, or mirrored now
+        LayDown(c, now);
+        LateCheck(c, now, c.wasMirror ? "mirror" : "journal");
+        ++it;
+    }
 }
 
 void Tick()
@@ -551,6 +701,20 @@ void Tick()
     if (net::IsHost()) HostTick();
     else OwnTick();
     MirrorTick();
+    CorpseTick(net::Now());
+}
+
+void LayDownCorpse(eCEntity* entity)
+{
+    if (!entity) return;
+    uint8_t guid[16];
+    Guid(entity, guid);
+    const std::string key = Key(guid);
+    if (corpses.count(key)) return;
+    Mirror& c = corpses[key];
+    std::memcpy(c.latest.guid, guid, 16);
+    c.killed = true;
+    c.killedAt = net::Now() ? net::Now() : 1;
 }
 
 void Claim(eCEntity* entity)
@@ -560,6 +724,9 @@ void Claim(eCEntity* entity)
     Guid(entity, guid);
     const std::string key = Key(guid);
     myClaims.insert(key);
+    // Ours again right after the host took it back (kind 7 follows the revoke within milliseconds): the hand-back pause
+    // from Unclaim would keep it from being sent, and the host ends the claim again for want of snapshots (run 223228).
+    givenBack.erase(key);
     auto it = mirrors.find(key);
     if (it != mirrors.end()) {
         if (!it->second.killed) body::Release(it->second.entity, it->second.body);  // its own AI again, here
@@ -576,6 +743,20 @@ void Unclaim(eCEntity* entity)
     Guid(entity, guid);
     myClaims.erase(Key(guid));
     givenBack[Key(guid)] = net::Now() + GiveBackFor;  // stop sending it; the host's snapshots make it a mirror again
+}
+
+void Foreign(uint8_t const guid[16])
+{
+    // As for a companion handed back: not sent until the snapshots of the machine that simulates it arrive.
+    givenBack[Key(guid)] = net::Now() + GiveBackFor;
+}
+
+void Rebind(uint8_t const guid[16])
+{
+    const auto it = mirrors.find(Key(guid));
+    if (it == mirrors.end()) return;
+    it->second.resolved = false;  // the next tick resolves it again
+    it->second.missing = false;
 }
 
 void Revoked(uint8_t const guid[16])
@@ -672,6 +853,40 @@ void Report(LogFn log)
                   mirror != mirrors.end() ? mirror->second.owner : 0);
         log(line);
     }
+    sprintf_s(line, "NPCSYNC claims_refused=%u host_wins=%u host_wins_rule=%d join_refused=%u join_grace=%d", claimsRefused, hostWins,
+              hostWinsRule ? 1 : 0, joinRefused, joinGraceRule ? 1 : 0);
+    log(line);
+}
+
+void SendInfo(char const* name, LogFn log)
+{
+    Entity npc = Entity::GetEntity(bCString(name));
+    char line[300];
+    if (!npc.GetInstance()) { log("REFUSED npcsend: no such NPC"); return; }
+    uint8_t guid[16];
+    Guid(npc.GetInstance(), guid);
+    const std::string key = Key(guid);
+    const auto note = sendNotes.find(key);
+    const auto back = givenBack.find(key);
+    char text[48];
+    FormatGuid(guid, text, sizeof(text));
+    sprintf_s(line, "NPCSEND name=%s guid=%s reason=%s age_ms=%d myclaim=%d mirror=%d givenback_ms=%d", name, text,
+              note != sendNotes.end() ? note->second.reason : "never",
+              note != sendNotes.end() ? static_cast<int>(net::Now() - note->second.at) : -1, myClaims.count(key) ? 1 : 0,
+              mirrors.count(key) ? 1 : 0, back != givenBack.end() ? static_cast<int>(back->second - net::Now()) : 0);
+    log(line);
+}
+
+void JoinGraceOff(LogFn log)
+{
+    joinGraceRule = false;
+    log("JOINGRACEOFF ok=1");
+}
+
+void HostWinsOff(LogFn log)
+{
+    hostWinsRule = false;
+    log("HOSTWINSOFF ok=1");
 }
 }
 
@@ -683,7 +898,7 @@ namespace g3t::npcs {
 void Adopt(uint8_t const guid[16])
 {
     Entity e = Resolve(guid);
-    if (!e.GetInstance()) return;
+    if (!IsNpc(e.GetInstance())) return;
     Claim(e.GetInstance());
     e.Routine.FullStop();
     e.Dialog.SlaveryEnabled = GETrue;
@@ -759,6 +974,12 @@ unsigned HoldChanges() { return holdChanges; }
 }
 
 namespace g3t::npcs {
+void RecvOn(LogFn log)
+{
+    receiving = true;
+    log("NPCRECVON ok=1");
+}
+
 void RecvOff(LogFn log)
 {
     receiving = false;
@@ -778,23 +999,23 @@ void DeadPoseReport(LogFn log)
     char line[700];
     // Per mirror: the motion on slot 0, whether it runs, and the height of the animated body (lying: low).
     unsigned alive = 0;
+    auto report = [&](Mirror& m, char const* kind) {
+        char shows[128], slots[400];
+        Lies(m.entity.GetInstance(), shows, sizeof(shows), slots, sizeof(slots));
+        sprintf_s(line, "DEADPOSE mirror=%s killed=%d running=%d height=%.0f ani=%d motion=%s slots=%s kind=%s", m.entity.GetName().GetText(),
+                  m.killed ? 1 : 0, body::MotionRunning(m.entity.GetInstance()) ? 1 : 0, body::BoundaryHeight(m.entity.GetInstance()),
+                  static_cast<int>(m.entity.Routine.AniState), *shows ? shows : "-", slots, kind);
+        log(line);
+    };
     for (auto& entry : mirrors) {
         Mirror& m = entry.second;
         if (!m.entity.GetInstance() || (!m.killed && alive++ >= 3)) continue;
-        char shows[128];
-        body::CurrentMotion(m.entity.GetInstance(), shows, sizeof(shows));
-        char slots[400] = {};
-        if (auto* animation = static_cast<eCVisualAnimation_PS*>(m.entity.GetInstance()->GetPropertySet(eEPropertySetType_Animation)))
-            for (int slot = 1; slot <= 3; ++slot) {
-                char name[128] = {};
-                body::MotionName(animation, slot, name, sizeof(name));
-                const bool runs = animation->GetActor() && animation->GetActor()->IsMotionRunning(static_cast<eCWrapper_emfx2Actor::eEMotionType>(slot));
-                sprintf_s(slots + strlen(slots), sizeof(slots) - strlen(slots), "%s%d:%s:%s", slot > 1 ? "|" : "", slot, runs ? "run" : "off", *name ? name : "-");
-            }
-        sprintf_s(line, "DEADPOSE mirror=%s killed=%d running=%d height=%.0f ani=%d motion=%s slots=%s", m.entity.GetName().GetText(), m.killed ? 1 : 0,
-                  body::MotionRunning(m.entity.GetInstance()) ? 1 : 0, body::BoundaryHeight(m.entity.GetInstance()),
-                  static_cast<int>(m.entity.Routine.AniState), *shows ? shows : "-", slots);
-        log(line);
+        report(m, "mirror");
+    }
+    for (auto& entry : corpses) {  // the "mirror=" key stays: the suites parse it
+        Mirror& c = entry.second;
+        c.entity = Resolve(c.latest.guid);
+        if (c.entity.GetInstance()) report(c, "journal");
     }
     sprintf_s(line, "DEADPOSE enabled=%d laid=%u loops=%u slots_stopped=%u", deadPose ? 1 : 0, corpsesLaid, corpseLoops, slotsStopped);
     log(line);

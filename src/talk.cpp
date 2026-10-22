@@ -55,10 +55,16 @@ void OnTalk(uint8_t from, bool begin, uint8_t const guid[16])
     auto it = holds.find(key);
     if (begin) {
         if (it != holds.end()) { it->second.player = from; return; }
-        _GUID raw;
-        std::memcpy(&raw, guid, 16);
-        Entity npc = Entity(bCPropertyID(bCGuid(raw)));
+        Entity npc(npcs::NpcByGuid(guid));  // an NPC only, not the host's hero (Fable 1.7)
         if (!npc.GetInstance() || npc.IsDead()) return;
+        // One dialog per player: a new hold ends that player's earlier one (one message per GUID held a whole town).
+        for (auto other = holds.begin(); other != holds.end(); ++other)
+            if (other->second.player == from) {
+                Logf("talk: releasing %s (player %u talks to someone else)", other->second.entity.GetName().GetText(), from);
+                Release(other->second);
+                holds.erase(other);
+                break;
+            }
         Hold& hold = holds.emplace(key, Hold{npc, {}, from}).first->second;
         body::Pacify(hold.entity, hold.state);
         ++holdsStarted;

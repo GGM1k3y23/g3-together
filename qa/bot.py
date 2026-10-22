@@ -89,6 +89,29 @@ def post_key(pid, key):
     return len(found)
 
 
+def post_rclick(pid):
+    """Queue a right mouse click (down/up, window centre) to the visible top-level windows of our own game process."""
+    user = ctypes.WinDLL('user32', use_last_error=True)
+    from ctypes import wintypes
+    found = []
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    def visit(hwnd, _):
+        owner = ctypes.c_ulong()
+        user.GetWindowThreadProcessId(ctypes.c_void_p(hwnd), ctypes.byref(owner))
+        if owner.value == pid and user.IsWindowVisible(ctypes.c_void_p(hwnd)):
+            found.append(hwnd)
+        return True
+    user.EnumWindows(visit, None)
+    user.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    for hwnd in found:
+        rect = wintypes.RECT()
+        user.GetClientRect(ctypes.c_void_p(hwnd), ctypes.byref(rect))
+        at = (rect.right // 2) | (rect.bottom // 2) << 16
+        user.PostMessageW(ctypes.c_void_p(hwnd), 0x0204, 0x0002, at)  # WM_RBUTTONDOWN, MK_RBUTTON
+        user.PostMessageW(ctypes.c_void_p(hwnd), 0x0205, 0, at)       # WM_RBUTTONUP
+    return len(found)
+
+
 def place_on_second_screen(pid, slot, seconds=90):
     """Place the game window of `pid` side by side on a monitor: the primary one, or with G3_SCREEN=2 a secondary one.
     slot 0 = left half, 1 = right half of that monitor. Runs in a thread: retries while the game creates and

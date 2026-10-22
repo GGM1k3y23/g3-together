@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 namespace g3t::combat {
 eCEntity* DamageSource(eCDynamicEntity* hero, char const** name);  // below
@@ -39,6 +40,25 @@ bool reactHits = true;  // QA negative control: ReactHitsOff
 unsigned reactionsStarted = 0;  // host: client hits that made the NPC judge its attacker (AssessTarget)
 bool npcHits = true;  // QA negative control: NpcHitsOff
 unsigned forwardedJudged = 0, forwardedBare = 0;  // client: forwarded hits judged here / applied as bare hit points
+// Arena and duel (owner's decision 22.10., variant b; re/findings/defeat-arena-c.md): an NPC fighting a duel or an arena
+// bout (attack reason Duel or Arena) takes hits only from its opponent there; a second player's hits do not count. Its
+// opponent's last hit ends the bout as the game does, with a knock-out (Defeat), never with the kill cheat: a client's
+// transferred hit at 0 hit points went to OnCheatKill and counted as murder (spieltest 21.10., Reddock, twice).
+bool arenaRule = true;  // QA negative control: arenaruleoff
+unsigned duelHitsRefused = 0, duelKnockouts = 0;
+
+bool InBout(Entity& npc)
+{
+    if (!npc.GetInstance() || !npc.GetInstance()->GetPropertySet(eEPropertySetType_NPC)) return false;
+    const gEAttackReason reason = npc.NPC.AttackReason;
+    return reason == gEAttackReason_Duel || reason == gEAttackReason_Arena;
+}
+
+// A hit by `attacker` on an NPC in a bout with someone else: not counted.
+bool OutsideBout(Entity& npc, eCEntity* attacker)
+{
+    return arenaRule && attacker && InBout(npc) && npc.NPC.GetCurrentTarget().GetInstance() != attacker;
+}
 
 template <typename T>
 T* Find(bTValMap<bCString, T*>& map, char const* name)
@@ -126,9 +146,15 @@ GEInt GE_STDCALL Filter(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid oth
         ++claimsSent;
         return GETrue;
     }
-    // 3. A hit on another player's puppet: that player's real hero takes it, judged on that player's machine
+    // 3. An NPC this machine simulates in a duel or arena bout with someone else: our hero's hit does not count.
+    if (attacker && attacker == hero && OutsideBout(victim, hero)) {
+        ++duelHitsRefused;
+        return GETrue;
+    }
+    // 4. A hit on another player's puppet: that player's real hero takes it, judged on that player's machine
     //    against its own hero (armour, stumble, knock-out), so the attacker goes along.
     if (const int owner = remote::PuppetOwner(instance)) {
+        if (attacker && attacker != hero) remote::NoteContact(attacker, instance);
         uint8_t guid[16] = {};
         uint8_t attackerPlayer = 0;
         if (attacker && attacker == hero) attackerPlayer = net::LocalId();
@@ -161,9 +187,7 @@ GEInt GameHit(Entity& victim, eCEntity* source, int* pending)
 // earns experience: marked as defeated, the death script pays no one (static analysis of Kill).
 void OnNpcHit(uint8_t from, Entity& target, int32_t delta, uint8_t const npc[16], bool party)
 {
-    _GUID raw;
-    std::memcpy(&raw, npc, 16);
-    Entity attacker = Entity(bCPropertyID(bCGuid(raw)));
+    Entity attacker(npcs::NpcByGuid(npc));
     // An attacker not found here (an entity spawned only on the sender's machine, such as a weapon without an owner)
     // still hurts: dropping those hits lost all 14 of one fight (stage E4). The victim stands in as the source then.
     if (!attacker.GetInstance()) ++npcHitsUnresolved;
@@ -190,16 +214,20 @@ void OnNpcHit(uint8_t from, Entity& target, int32_t delta, uint8_t const npc[16]
 // Host: a client's hit on one of the host's NPCs.
 void OnHitNpc(uint8_t from, uint8_t const guid[16], int32_t delta, uint8_t const weapon[16], uint8_t const npc[16])
 {
-    _GUID raw;
-    std::memcpy(&raw, guid, 16);
-    Entity target = Entity(bCPropertyID(bCGuid(raw)));
-    if (!target.GetInstance() || target.IsDead() || delta >= 0) return;
+    Entity target(npcs::NpcByGuid(guid));  // an NPC only: no chest, door, hero or puppet (Fable 1.7)
+    if (!target.GetInstance() || target.IsDead() || delta >= 0 || delta < -1000000) return;
     static const uint8_t zeros[16] = {};
     if (std::memcmp(npc, zeros, 16)) {
         OnNpcHit(from, target, delta, npc, weapon[0] == 1);
         return;
     }
     eCEntity* attacker = remote::PuppetOf(from);
+    remote::NoteContact(target.GetInstance(), attacker);  // it may turn on the puppet now
+    if (OutsideBout(target, attacker)) {
+        ++duelHitsRefused;
+        Logf("combat: player %u hit %s, who fights a duel or arena bout with someone else; not counted", from, target.GetName().GetText());
+        return;
+    }
     ++claimsApplied;
     // Applied with the sender's puppet as attacker; the filter's rule for hits by puppets must not drop it.
     struct Pass { Pass() { forwarded = true; } ~Pass() { forwarded = false; } } pass;
@@ -213,6 +241,18 @@ void OnHitNpc(uint8_t from, uint8_t const guid[16], int32_t delta, uint8_t const
             CallScript("AssessTarget", target.GetInstance(), attacker, gEAttackReason_ReactToDamage);
             ++reactionsStarted;
         }
+        return;
+    }
+    if (arenaRule && InBout(target)) {
+        // The bout's end, as the game ends it: knocked out by its opponent (ZS_Unconscious takes CurrentAttacker and runs
+        // Defeat: AIMode 8, the bout's quest and victory notice), not killed.
+        eCEntity* victim = target.GetInstance();
+        target.NPC.SetCurrentAttacker(Entity(attacker));
+        CallScript("AddHitPoints", victim, attacker, -HitPoints(target));
+        target.Routine.FullStop();
+        target.Routine.SetTask(bCString("ZS_Unconscious"));
+        ++duelKnockouts;
+        Logf("combat: player %u won the duel or arena bout against %s (knocked out, not killed)", from, target.GetName().GetText());
         return;
     }
     // Lethal. Not a hit judged by the game: for any attacker but the local player the hit judgement caps the
@@ -259,10 +299,8 @@ void OnHitPlayer(int32_t delta, uint8_t const attacker[16], uint8_t attackerPlay
     if (attackerPlayer) {
         by = remote::PuppetOf(attackerPlayer);
     } else {
-        _GUID raw;
-        std::memcpy(&raw, attacker, 16);
         static const uint8_t none[16] = {};
-        if (std::memcmp(attacker, none, 16)) by = Entity(bCPropertyID(bCGuid(raw))).GetInstance();
+        if (std::memcmp(attacker, none, 16)) by = npcs::NpcByGuid(attacker);  // its weapon is read below: an NPC only
     }
     if (!by || by == hero) {
         // Bare hit points, as before: without the hit judgement the hero neither stumbles nor falls, and at 0 hit
@@ -600,5 +638,41 @@ void ReactHitsOff(LogFn log)
 {
     reactHits = false;
     log("REACTHITSOFF ok=1");
+}
+
+void ArenaRuleOff(LogFn log)
+{
+    arenaRule = false;
+    log("ARENARULEOFF ok=1");
+}
+
+// QA: "Name_HP" sets that NPC's hit points (a tough duel partner, stage A4).
+void NpcHp(char const* argument, LogFn log)
+{
+    char line[200];
+    std::string arg = argument ? argument : "";
+    const size_t cut = arg.rfind('_');
+    Entity npc = cut == std::string::npos ? Entity() : Entity::GetEntity(bCString(arg.substr(0, cut).c_str()));
+    if (!npc.GetInstance() || !HasDamageReceiver(npc.GetInstance())) { log("REFUSED npchp: Name_HP of an NPC"); return; }
+    const int before = HitPoints(npc);
+    npc.DamageReceiver.HitPoints = std::atoi(arg.substr(cut + 1).c_str());
+    sprintf_s(line, "NPCHP name=%s before=%d after=%d", arg.substr(0, cut).c_str(), before, HitPoints(npc));
+    log(line);
+}
+
+void ArenaReport(char const* name, LogFn log)
+{
+    char line[300];
+    Entity npc = Entity::GetEntity(bCString(name));
+    if (!npc.GetInstance() || !npc.GetInstance()->GetPropertySet(eEPropertySetType_NPC)) { log("REFUSED arena: no such NPC"); return; }
+    const Entity target = npc.NPC.GetCurrentTarget();
+    // The player the target belongs to: this machine's hero, another player's puppet, or 0 (an NPC, nobody).
+    const int player = !target.GetInstance() ? 0 : target.GetInstance() == gCSession::GetInstance().GetHero() ? net::LocalId()
+                                                                                                           : remote::PuppetOwner(target.GetInstance());
+    sprintf_s(line, "ARENA npc=%s reason=%d in_bout=%d target=%s target_player=%d hp=%d down=%d dead=%d refused=%u knockouts=%u rule=%d", name,
+              static_cast<int>(static_cast<gEAttackReason>(npc.NPC.AttackReason)), InBout(npc) ? 1 : 0,
+              target.GetInstance() ? target.GetName().GetText() : "-", player, HitPoints(npc), npc.IsDown() ? 1 : 0, npc.IsDead() ? 1 : 0,
+              duelHitsRefused, duelKnockouts, arenaRule ? 1 : 0);
+    log(line);
 }
 }

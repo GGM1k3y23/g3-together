@@ -64,9 +64,7 @@ void OnDeath(uint8_t by, uint8_t const guid[16])
     ++received;
     if (net::IsHost()) net::SendDeath(guid, by, by);  // pass it on to everyone else
     const std::string key(reinterpret_cast<char const*>(guid), 16);
-    _GUID raw;
-    std::memcpy(&raw, guid, 16);
-    Entity npc = Entity(bCPropertyID(bCGuid(raw)));
+    Entity npc(npcs::NpcByGuid(guid));  // an NPC only (Fable 1.7: quest counters ran on any GUID)
     if (!npc.GetInstance()) return;
     const bool first = deaths.find(key) == deaths.end();
     Death& d = deaths[key];
@@ -100,6 +98,7 @@ void Apply(Entity& npc, Death& d)
     npc.DamageReceiver.HitPoints = 0;
     npc.Routine.AIMode = gEAIMode_Dead;
     npc.Routine.SetTask(bCString("ZS_Dead"));
+    npcs::LayDownCorpse(npc.GetInstance());  // ZS_Dead with AIMode 9 lays nothing down (PLAN-2026-10-22 1.5)
     d.applied = true;
     ++appliedCount;
     Logf("journal: applied the death of %s (player %u's region): dead=%d", d.name.c_str(), d.by, npc.IsDead() ? 1 : 0);

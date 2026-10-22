@@ -25,7 +25,10 @@ void FleeFrom(char const* guid, LogFn log);     // QA stage V5: an NPC flees fro
 void Report(LogFn log);                    // QA: HP of the local hero and counters
 void Uninstall(LogFn log);                  // QA negative control: let every hit through
 void NpcHitsOff(LogFn log);
-void ReactHitsOff(LogFn log);  // QA negative control: a client's hit does not make the host's NPC judge its attacker
+void ReactHitsOff(LogFn log);
+void ArenaRuleOff(LogFn log);  // QA negative control: hits on an NPC in a duel or arena bout count from anyone (as before)
+void ArenaReport(char const* name, LogFn log);
+void NpcHp(char const* argument, LogFn log);  // QA: "Name_HP" sets an NPC's hit points  // QA: ARENA line (attack reason, target, refused hits, knock-outs)  // QA negative control: a client's hit does not make the host's NPC judge its attacker
 void PartyXpOff(LogFn log);  // QA negative control: kills by our companions/summons pay no one                 // QA negative control: our NPCs' hits on others' NPCs are dropped
 void Arm(char const* item, LogFn log);
 bool LethalHit(eCEntity* victim);  // QA: kill through the game's own hit judgement

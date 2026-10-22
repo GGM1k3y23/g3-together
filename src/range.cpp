@@ -3,7 +3,6 @@
 
 #include "body.h"
 #include "hud.h"
-#include "i18n.h"
 #include "log.h"
 #include "net.h"
 #include "remote.h"
@@ -53,26 +52,27 @@ void Tick()
         const bool wasFar = isFar[i];
         if (!wasFar && distance[i] > FarAt) isFar[i] = true;
         else if (wasFar && distance[i] < NearAt) isFar[i] = false;
-        wchar_t text[200], name[32];
-        MultiByteToWideChar(CP_UTF8, 0, r.latest.name, -1, name, 32);
+        wchar_t text[200], name[32] = {};
+        if (!MultiByteToWideChar(CP_UTF8, 0, r.latest.name, -1, name, 32)) name[0] = 0;
+        name[31] = 0;
         if (isFar[i] && (!wasFar || now - lastTold[i] > Reminder)) {
             lastTold[i] = now;
             ++warnings;
             if (host) {
-                if (otherWorld) swprintf_s(text, i18n::Text(i18n::PartnerInOtherWorld), name);
-                else swprintf_s(text, i18n::Text(i18n::PartnerFarAway), name, static_cast<int>(distance[i] / 100.0f));
+                if (otherWorld) swprintf_s(text, L"%s ist in einer anderen Welt.", name);
+                else swprintf_s(text, L"%s ist weit entfernt (%d m).", name, static_cast<int>(distance[i] / 100.0f));
                 hud::Message(hud::Warning, text);
             } else {
-                hud::Message(hud::Warning, i18n::Text(i18n::FarFromHost));
+                hud::Message(hud::Warning, L"Weit weg vom Host: Diese Gegend läuft jetzt bei dir.");
             }
             Logf("range: player %d far away (%.0f m)", i, distance[i] / 100.0f);
         } else if (!isFar[i] && wasFar) {
             ++allClears;
             if (host) {
-                swprintf_s(text, i18n::Text(i18n::PartnerNearby), name);
+                swprintf_s(text, L"%s ist wieder in der N\u00e4he.", name);
                 hud::Message(hud::Good, text);
             } else {
-                hud::Message(hud::Good, i18n::Text(i18n::NearHost));
+                hud::Message(hud::Good, L"Wieder beim Host.");
             }
             Logf("range: player %d near again (%.0f m)", i, distance[i] / 100.0f);
         }

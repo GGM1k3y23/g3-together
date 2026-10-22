@@ -2,6 +2,7 @@
 #include "hitprobe.h"
 
 #include "log.h"
+#include "qa.h"
 
 #include <Game.h>
 #include <Script.h>
@@ -113,7 +114,8 @@ GEInt GE_STDCALL Filter(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid oth
 
 void Tick()
 {
-    if (installed || !gCSession::GetInstance().IsGameRunning()) return;
+    // A diagnostic (a stack walk on every AddHitPoints): with the QA bot only (Fable review 22.10.).
+    if (installed || !qa::Enabled() || !gCSession::GetInstance().IsGameRunning()) return;
     const DWORD now = GetTickCount();
     if (now - lastTry < 1000) return;
     lastTry = now;

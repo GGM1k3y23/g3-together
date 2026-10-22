@@ -16,10 +16,15 @@ eCEntity* ControlledBody();
 int PuppetOwner(eCEntity const* entity);  // player id whose puppet this is, 0 if none
 eCEntity* PuppetOf(int playerId);
 void DespawnAll(char const* reason);  // before a native save: puppets are hero entities (two heroes = fatal on load)
+// An NPC dealt with a puppet (judged it, was hit by it, hit it, attacked it): it lets go of the puppet when that goes.
+void NoteContact(eCEntity* npc, eCEntity* puppet);
 bool TraceEnabled();
 using LogFn = void (*)(char const*);
 void Report(LogFn log);   // QA: one REMOTE line per known player
 void PuppetPartyOff(LogFn log);
+void ForgetNpcListOn(LogFn log);
+void ContactsOff(LogFn log);
+void BadStates(char const* argument, LogFn log);  // QA (stage X1): "on" sends NaN positions and unterminated strings, "off" stops  // QA negative control: no NPC is noted as a puppet's contact  // QA negative control: forget puppets by walking Entity::GetNPCs (before 22.10.)
 void PuppetHoldOff(LogFn log);
 void PuppetCombatOff(LogFn log);
 void ShapeOff(LogFn log);  // QA negative control of stage T  // QA negative control: puppets replay swings by motion name  // QA negative control: puppets hold no weapons  // QA negative control: puppets do not join the local hero's party

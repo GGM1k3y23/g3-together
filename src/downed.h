@@ -20,6 +20,7 @@ using LogFn = void (*)(char const*);
 void Off(LogFn log);     // QA negative control: let the hero die again
 void HoldOff(LogFn log); // QA negative control: the hero gets up by itself again
 void PotionOff(LogFn log); // QA negative control: helping up costs nothing
+void LethalOnlyOff(LogFn log);  // QA negative control: every knock-out waits for help, not only an intercepted death
 void GivePotion(char const* argument, LogFn log);  // QA: "Template[-Amount]" into the hero's inventory ("-0" takes all away)
 void Potions(LogFn log); // QA: POTION lines for the hero's potions
 void Report(LogFn log);  // QA: DOWNED line
