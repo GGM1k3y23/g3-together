@@ -19,8 +19,11 @@ void OnWorldDeactivate();
 using LogFn = void (*)(char const*);
 void Off(LogFn log);     // QA negative control: write no sidecar
 void CampaignOff(LogFn log);  // QA negative control (host): joining players get no campaign
-void WorldSyncOff(LogFn log);
-void BadTransfer(LogFn log);   // QA, host (stage X1): a wrapping file chunk and a save name with ..\\..\\  // QA negative control (host): no world change is passed on; the save only at a join (as before)
+void WorldSyncOff(LogFn log);  // QA negative control (host): no world change is passed on; the save only at a join (as before)
+void BadTransfer(LogFn log);   // QA, host (stage X1): a wrapping file chunk and a save name that leaves the save folder
+void GenerationOff(LogFn log); // QA negative control (host, stage W1): a slot starts over only once it is empty (as before 23.10.)
+void Pause(char const* argument, LogFn log);  // QA (host, stage W1): "<ms>": the world bookkeeping waits, as if leave and join fell in one frame
+void WorldGateLate(LogFn log); // QA negative control (client, stage W3): the gate stays open into a load and opens before the hero record
 void WorldReport(LogFn log);   // QA: WORLD line
 void Report(LogFn log);  // QA: PERSIST line
 }

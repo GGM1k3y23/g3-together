@@ -28,6 +28,7 @@ constexpr float PreRollRadius = 1500.0f;  // a client this close to an unrolled 
 
 bool disabled = false;
 bool traderFillOff = false;  // QA negative control: the host does not fill traders before a dialog
+bool forgetOff = false;  // QA negative control: container state survives a world change (as before R5)
 unsigned contentsSent = 0, contentsReceived = 0, rewrites = 0, txSent = 0, txApplied = 0, txRefused = 0, txMismatch = 0, txDenied = 0,
          reverted = 0;
 
@@ -258,7 +259,12 @@ DWORD lastHostPoll = 0;
 void Broadcast(std::string const& key, Content const& content)
 {
     const std::vector<net::ContentEntry> entries = Entries(content);
-    net::SendContents(reinterpret_cast<uint8_t const*>(key.data()), entries.data(), static_cast<int>(entries.size()));
+    if (!net::SendContents(reinterpret_cast<uint8_t const*>(key.data()), entries.data(), static_cast<int>(entries.size()))) {
+        // Not marked as sent, so it goes out again once it fits (Codex review R4: marked anyway, it never went again).
+        if (!lastSent.count(key) || lastSent[key] != content)
+            Logf("containers: contents of %s not sent (%zu entries, at most %d)", NameOf(Resolve(key)).c_str(), entries.size(), net::MaxContentEntries);
+        return;
+    }
     auto before = lastSent.find(key);
     if (watched.count(key) || (before != lastSent.end() && before->second != content)) {  // first sends near a player are many
         Entity entity = Resolve(key);
@@ -405,6 +411,7 @@ DWORD activeSince = 0;
 struct Pending {
     std::string key;
     Content deltas;  // container side: negative = the hero took, positive = the hero put in
+    Content after;   // the container here right after sending; host contents arriving meanwhile do not change it
 };
 std::map<uint32_t, Pending> pending;
 uint32_t nextSeq = 1;
@@ -426,10 +433,15 @@ void ReportChange(Entity& container, Content& hostContent)
     for (auto const& [name, amount] : local) deltas[name] += amount;
     for (auto const& [name, amount] : hostContent) deltas[name] -= amount;
     for (auto it = deltas.begin(); it != deltas.end();) it = it->second == 0 ? deltas.erase(it) : ++it;
-    const uint32_t seq = nextSeq++;
-    pending[seq] = Pending{active, deltas};
     const std::vector<net::ContentEntry> entries = Entries(deltas);
-    net::SendContainerTx(reinterpret_cast<uint8_t const*>(active.data()), seq, entries.data(), static_cast<int>(entries.size()));
+    const uint32_t seq = nextSeq;
+    // Pending only once it went out: a transaction that could not be sent blocked the container for good (R4).
+    if (!net::SendContainerTx(reinterpret_cast<uint8_t const*>(active.data()), seq, entries.data(), static_cast<int>(entries.size()))) {
+        Logf("containers: transaction for %s not sent (%zu entries, at most %d)", NameOf(container).c_str(), entries.size(), net::MaxContentEntries);
+        return;
+    }
+    ++nextSeq;
+    pending[seq] = Pending{active, deltas, local};
     ++txSent;
     Note("containers: transaction %u sent for %s: %s", seq, NameOf(container).c_str(), Describe(deltas).c_str());
     hostContent = local;  // optimistic until the result arrives
@@ -476,10 +488,12 @@ void OnTxResult(uint8_t const guid[16], uint32_t seq, bool ok)
     // Undo what this hero gained or gave in that transaction, and in anything done since that was not
     // reported yet; the container then follows the host's contents.
     Entity container = Resolve(guid);
+    // What the hero changed here since sending counts against the container as it was then, not against host contents that
+    // arrived meanwhile (Codex review R2: with those, a refused take could leave the hero its item).
     Content undo = done.deltas;
-    if (auto optimistic = known.find(done.key); container.GetInstance() && optimistic != known.end()) {
+    if (container.GetInstance()) {
         for (auto const& [name, amount] : Read(container)) undo[name] += amount;
-        for (auto const& [name, amount] : optimistic->second) undo[name] -= amount;
+        for (auto const& [name, amount] : done.after) undo[name] -= amount;
     }
     if (eCDynamicEntity* hero = gCSession::GetInstance().GetHero()) {
         Entity self(hero);
@@ -711,6 +725,19 @@ namespace {
 
 void Start() { net::SetContainerHandlers(&OnContents, &OnTx, &OnTxResult, &OnWatch); }
 
+void OnWorldChange()
+{
+    if (forgetOff) return;
+    // A load brings the containers back as saved: what was known, open, sent or pending belongs to the world before.
+    // Kept, a client compared the reloaded container with its old copy and reported the difference as a deposit
+    // (Codex review R5). Changes count again from the host's first contents in the new world.
+    known.clear();
+    pending.clear();
+    active.clear();
+    lastSent.clear();
+    watched.clear();
+}
+
 void Tick()
 {
     if (disabled || !gCSession::GetInstance().IsGameRunning()) return;
@@ -795,6 +822,11 @@ void Report(LogFn log)
 
 void Disable(char const* what, LogFn log)
 {
+    if (!std::strcmp(what, "forget")) {
+        forgetOff = true;
+        log("CONTAINERSYNCOFF ok=1 forget=0");
+        return;
+    }
     if (!std::strcmp(what, "trader")) {
         traderFillOff = true;
         log("CONTAINERSYNCOFF ok=1 trader_fill=0");

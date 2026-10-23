@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from bot import Bot, RUNS, emit, place_on_second_screen, post_key, snapshot  # noqa: E402
 from workspace import WORKSPACE  # noqa: E402
 from shot import screenshot  # noqa: E402
+import hangstack  # noqa: E402
 
 # Two pairs of test copies so that two agents can test in parallel (G3_PAIR=1 or 2; owner's approval 2026-10-18). Each pair
 # has its own copies, port and QA lock; pair 2 is created by runtime/make_pair2.py and checked by isolation/verify_pair2.py.
@@ -3952,6 +3953,75 @@ def stageU1(copies, report, negative=False):
     exactly_once(client, 'after_load')
 
 
+def stageBigTrade(copies, report, negative=False):
+    """A trader with more than 48 different goods (Codex review R4): the host stocks 45 more kinds into Hamlar; the
+    client must see every one. Before, contents of more than 48 entries were silently not sent. Negative control:
+    containersyncoff on the client (it takes no contents)."""
+    kinds = ['It_Spell_'+n for n in ('TimeBubble', 'Mist', 'DuskToDawn', 'FrostWave', 'Hailstorm', 'IceBomb', 'Sleep', 'Fear',
+             'Charm', 'WordOfControl', 'TameAnimal', 'Telekinesis', 'HeatWave', 'Bloodlust', 'SoulTravel', 'DestroyEvil', 'Icelance',
+             'AnimalForm', 'ArmyOfDarkness', 'BlessWeapon', 'CallAnimals', 'CureDisease', 'CurePoison', 'Disease', 'Fireball',
+             'Firerain', 'Flamesword', 'HealOther', 'Healing', 'Light', 'Lightningbolt', 'Meteor', 'OpenLocks', 'Poison',
+             'SummonDemon', 'SummonGoblin', 'SummonGolem', 'SummonLightning', 'SummonSkeleton')] +         ['It_Scroll_Fireball', 'It_Scroll_HealOther', 'It_Scroll_Light', 'It_Water', 'It_Bread', 'It_Booze']
+    host, client = join_both(copies)
+    if negative:
+        report_line(client.bot, 'containersyncoff', 'CONTAINERSYNCOFF ')
+    clear_raid(host, report)
+    time.sleep(5)
+    guid = next((g for g, n in npcs(host.bot).items() if n['name'] == 'Hamlar' and not n['dead']), None)
+    assert guid, 'Hamlar is not near the start'
+    wait_for(lambda: sum(goods(host.bot, guid).values()) > 0, 30, 'the host filled Hamlar')
+    for kind in kinds:
+        report_line(host.bot, f'stock {guid}_{kind}', ('STOCK ', 'REFUSED stock'))
+    # The host sends a trader's goods while a client stands within 15 m (or trades): the client walks up to Hamlar.
+    pos = npcs(host.bot)[guid]['pos']
+    move_hero(client.bot, (pos[0] + 250, pos[1] + 50, pos[2]))
+    host_goods = goods(host.bot, guid)
+    report['host_kinds'] = len(host_goods)
+    assert len(host_goods) > 48, f'only {len(host_goods)} kinds on the host'
+    report['client_kinds'] = len(wait_for(lambda: (lambda c: [c] if c == goods(host.bot, guid) else None)(goods(client.bot, guid)), 30,
+                                          f"the client shows all {len(host_goods)} kinds of Hamlar's goods")[0])
+    report['host_sync'] = containersync(host.bot)
+
+
+def stageReloadLoot(copies, report, negative=False):
+    """A load while a client loots (Codex review R5): the host saves; the client opens a corpse and takes a stack; the
+    host loads the save. Afterwards the corpse holds what the save holds on both machines, and stays so: the client
+    must not report the reloaded difference as a deposit. Negative control: containersyncoff forget on the client
+    (its container state survives the load, as before)."""
+    slot = 'G3T_R5'
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    time.sleep(5)
+    clear_slot(copies, slot)
+    found = containers(host.bot)
+    corpse = next((g for g, c in found.items() if c['kind'] == 'corpse' and c['items'] != '-'), None)
+    assert corpse, 'no corpse with plunder near the host'
+    report['corpse'] = found[corpse]['name']
+    saved = report['saved'] = contents(host.bot, corpse)
+    wait_for(lambda: contents(client.bot, corpse) == saved, 20, "the client shows the host's contents")
+    start = host.bot.send(f'nativesave {slot}', 60)
+    report['save'] = host.bot.line('NATIVESAVE ', 60, 'nativesave', start)
+    assert 'ok=1' in report['save'], report['save']
+    if negative:
+        report_line(client.bot, 'containersyncoff forget', 'CONTAINERSYNCOFF ')
+    report['open'] = report_line(client.bot, 'lootopen '+corpse, 'LOOTOPEN ')
+    report['take'] = loottake(client.bot, corpse)
+    wait_for(lambda: contents(host.bot, corpse) != saved, 15, 'the take reaches the host')
+    since = len(client.mod_log())
+    start = host.bot.send(f'nativeload {slot}', 60)
+    report['load'] = host.bot.wait(lambda t: next((l for l in t.splitlines() if l.startswith('NATIVELOAD') and 'ok=' in l), ''), 120,
+                                   'nativeload', start)
+    assert 'ok=1' in report['load'], report['load']
+    wait_running(host, 180, 'host world running after the load')
+    wait_mod_log(client, r'persist: loading G3T_host_'+slot+r'\b', 120, "the client loads the host's save", since)
+    wait_running(client, 180, 'client world running after the load')
+    time.sleep(15)  # several polls: a stale copy would have been reported by now
+    report['host_after'] = after = contents(host.bot, corpse)
+    report['client_after'] = contents(client.bot, corpse)
+    assert after == saved, f'the corpse on the host changed after the load: {after}, saved {saved}'
+    assert report['client_after'] == saved, f"the client's corpse differs: {report['client_after']}"
+
+
 def world_line(bot):
     line = report_line(bot, 'world', 'WORLD ')
     return line, dict(re.findall(r'(\w+)=(\S+)', line))
@@ -4274,11 +4344,13 @@ def stageA4(copies, report, negative=False):
     report['client_arm'] = report_line(client.bot, 'arm ' + WEAPON, 'ARM ')  # bare hands did no damage below 8 hit points
     for _ in range(60):
         report_line(client.bot, 'arm ' + WEAPON, 'ARM ')  # the duelist's blows knocked the sword out of the hand after two hits
-        hit_npc(client.bot, guid)
+        hit = hit_npc(client.bot, guid)
         line, a = arena_of(host.bot, fighter)
         if a.get('down') == '1' or a.get('dead') == '1':
             break
-        time.sleep(0.3)
+        # A hit on a stumbling or parrying duelist does no damage; hit again every 0.3 s and he never stood again
+        # (run 20261022-224400: two hits counted, then 56 in ZS_QuickStumble/ZS_ParadeStumble at 7 hit points).
+        time.sleep(1.5 if not hit.get('claim_sent') and 'Stumble' in hit['line'] else 0.3)
     time.sleep(3)
     report['end'], a = arena_of(host.bot, fighter)
     report['crime_after'] = report_line(host.bot, 'crime ' + fighter, 'CRIME ')
@@ -4397,7 +4469,14 @@ def stageF1(copies, report, negative=False):
     if negative:
         assert 'ok=1' in report_line(host.bot, 'contactsoff', 'CONTACTSOFF ')
     fighting = lambda: [r['name'] for r in near_rows(host.bot).values() if r['target_puppet'] == 2 and not r['dead']]
-    report['fighting_before_save'] = wait_for(fighting, 90, "host NPCs fight the client's puppet")
+    # The opening raid's orcs often fight only the villagers and companions (runs 20261022-221558, -231510: none took the
+    # puppet in 90 s); then two of them are set on it the way a dialog's Attack does (aggro).
+    try:
+        report['fighting_before_save'] = wait_for(fighting, 30, "host NPCs fight the client's puppet")
+    except AssertionError:
+        orcs = [r['name'] for r in near_rows(host.bot).values() if r['name'].startswith('Orc_') and not r['dead'] and not r['mirrored']][:2]
+        report['aggro'] = [report_line(host.bot, f'aggro {name}_12', ('AGGRO ', 'REFUSED aggro')) for name in orcs]
+        report['fighting_before_save'] = wait_for(fighting, 60, "host NPCs fight the client's puppet")
     clear_slot(copies, 'G3T_F1')
     since = len(host.mod_log())
     start = host.bot.send('nativesave G3T_F1', 60)
@@ -4417,6 +4496,202 @@ def stageF1(copies, report, negative=False):
     time.sleep(15)
     report['host_frames_after_leave'] = frames() - before
     assert report['host_frames_after_leave'] > 300, f"the host stopped after the client left: {report['host_frames_after_leave']} frames in 15 s"
+
+
+def stageW1(copies, report, negative=False):
+    """Stage W1, a player who leaves and joins again within one frame of the host's world bookkeeping is told the host's
+    world again (Codex review 22.10. R7): the host's state per player (world told, save sent) started over only when the
+    bookkeeping saw the slot empty, and a new connection in the same slot was never told the world; it waited outside.
+    The host's bookkeeping pauses for 5 s (persistpause) while the client reconnects, so that leaving and joining fall
+    into one of its frames. Negative control: generationoff on the host (a slot starts over only once it is empty)."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    if negative:
+        assert 'ok=1' in report_line(host.bot, 'generationoff', 'GENERATIONOFF ')
+    since_client, since_host = len(client.mod_log()), len(host.mod_log())
+    report['pause'] = report_line(host.bot, 'persistpause 5000', 'PERSISTPAUSE ')
+    assert 'ok=1' in report['pause'], report['pause']
+    report['reconnect'] = report_line(client.bot, 'reconnect', 'RECONNECT ')
+    assert 'ok=1' in report['reconnect'], report['reconnect']
+    report['rejoined'] = wait_mod_log(host, r'net: Client joined as player', 15, 'the client joins again', since_host)
+    report['client_in_world'] = wait_mod_log(client, r"persist: in the host's world", 30, "the client is in the host's world again",
+                                             since_client)
+    report['new_connection'] = wait_mod_log(host, r'persist: player \d+ is a new connection', 5, 'the host starts the new connection over',
+                                            since_host)
+    wait_for(lambda: remotes(host.bot).get(2, {}).get('puppet') and remotes(client.bot).get(1, {}).get('puppet'), 30,
+             'both see each other again')
+
+
+def stageW2(copies, report, negative=False):
+    """Stage W2, a player's hero record is replaced only once it is written completely, and a record that broke off is
+    refused before it changes the hero (Codex review 22.10. R1: one with only its first line wiped the inventory and set
+    level and experience to zero). On the client: a record is written (no .tmp left, its end line names its stacks); a
+    write that breaks off (recordwritefault) leaves the record before it; records cut in the middle of their stacks and
+    after their first line are refused and the hero stays as it was; the complete record loads, and the hero is the same.
+    Negative control: recordcheckoff on the client (records are applied as read)."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    folder = client.root/'isolated-profile/Documents/gothic3'
+    record = folder/'g3t-hero-G3TW2.txt'
+    record.unlink(missing_ok=True)
+    if negative:
+        assert 'ok=1' in report_line(client.bot, 'recordcheckoff', 'RECORDCHECKOFF ')
+    time.sleep(3)
+
+    def dump():
+        return report_line(client.bot, 'herodump', 'HERODUMP ')
+
+    report['before'] = before = dump()
+    report['save'] = report_line(client.bot, 'herosave G3TW2', 'HEROSAVE ')
+    assert 'ok=1' in report['save'], report['save']
+    text = record.read_text()
+    lines = text.splitlines()
+    stacks = sum(1 for line in lines if line.startswith('stack '))
+    report['record'] = {'lines': len(lines), 'stacks': stacks, 'first': lines[0], 'last': lines[-1]}
+    assert lines[0] == 'G3THERO 2' and lines[-1] == f'end {stacks}' and stacks > 1, report['record']
+    assert not list(folder.glob('*.tmp')), 'a .tmp file was left after the write'
+    report['fault'] = report_line(client.bot, 'recordwritefault', 'RECORDWRITEFAULT ')
+    report['save_fault'] = report_line(client.bot, 'herosave G3TW2', 'HEROSAVE ')
+    assert 'ok=0' in report['save_fault'], report['save_fault']
+    assert record.read_text() == text, 'the record changed although its write broke off'
+    assert not list(folder.glob('*.tmp')), 'a .tmp file was left after the broken write'
+    for kind in ('middle', 'header'):
+        record.write_text(text)
+        report['cut_'+kind] = cut = report_line(client.bot, 'herocut G3TW2' + ('_header' if kind == 'header' else ''), 'HEROCUT ')
+        assert 'ok=1' in cut, cut
+        report['load_cut_'+kind] = load = report_line(client.bot, 'heroload G3TW2', 'HEROLOAD ')
+        report['after_cut_'+kind] = after = dump()
+        assert after == before, f'the hero changed when a record cut ({kind}) was loaded: {before} -> {after}'
+        assert 'ok=0' in load, load
+    record.write_text(text)
+    report['load_whole'] = load = report_line(client.bot, 'heroload G3TW2', 'HEROLOAD ')
+    assert 'ok=1' in load, load
+    report['after_whole'] = after = dump()
+    assert after == before, f'the hero is not the same after loading its whole record: {before} -> {after}'
+
+
+def stageW3(copies, report, negative=False):
+    """Stage W3, while a client loads, its world gate is closed from the start of the load until its own hero is back
+    (Codex review 22.10. R6): during a load Evaluate returned before it closed the gate, so the host's messages came through
+    the world change, and the gate opened ~3 s before the player's hero record was applied. The host saves (the client
+    writes its hero record for that save) and loads the save: the client is loaded into it and its record is applied
+    before it is in the host's world. Then the client loads that save itself while in the host's world: the gate closes as
+    the load begins. Negative control: worldgatelate on the client."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    slot = 'G3T_W3'
+    clear_slot(copies, slot)
+    if negative:
+        assert 'ok=1' in report_line(client.bot, 'worldgatelate', 'WORLDGATELATE ')
+    since = len(client.mod_log())
+    start = host.bot.send(f'nativesave {slot}', 60)
+    report['save'] = host.bot.line('NATIVESAVE ', 60, 'nativesave', start)
+    assert 'ok=1' in report['save'], report['save']
+    report['record_written'] = wait_mod_log(client, r'persist: the host saved '+slot+r'; own hero record written', 20,
+                                            'the client writes its hero record for the save', since)
+    time.sleep(3)
+    since = len(client.mod_log())
+    start = host.bot.send(f'nativeload {slot}', 60)
+    report['load'] = host.bot.wait(lambda t: next((l for l in t.splitlines() if l.startswith('NATIVELOAD') and 'ok=' in l), ''), 120,
+                                   'nativeload', start)
+    assert 'ok=1' in report['load'], report['load']
+    wait_running(host, 180, 'host world running after the load')
+    wait_mod_log(client, r'persist: loading G3T_host_'+slot+r'\b', 120, "the client is loaded into the host's save", since)
+    wait_running(client, 180, 'client world running after the load')
+    report['applied'] = wait_mod_log(client, r'persist: own hero record .*G3T_host_'+slot+r'\.txt applied: 1', 30,
+                                     "the client's own hero record is applied", since)
+    report['in_world'] = wait_mod_log(client, r"persist: in the host's world", 30, "the client is in the host's world", since)
+    lines = client.mod_log()[since:].splitlines()
+    first = lambda pattern: next((i for i, l in enumerate(lines) if re.search(pattern, l)), None)
+    report['host_load_order'] = order = {'load_returned': first(r"persist: the game's load of G3T_host_.* returned"),
+                                         'record_applied': first(r'own hero record .* applied: 1'), 'in_world': first(r"persist: in the host's world")}
+    assert order['record_applied'] < order['in_world'], f"the gate opened before the client's hero record was applied: {order}"
+    # The game's load runs frames of its own, in which the mod ran on (C 22.10.): the gate opens only after it returned.
+    assert order['load_returned'] is not None and order['load_returned'] < order['in_world'], f'the gate opened inside the load: {order}'
+    time.sleep(5)
+    since = len(client.mod_log())
+    start = client.bot.send(f'nativeload G3T_host_{slot}', 60)
+    report['client_load'] = client.bot.wait(lambda t: next((l for l in t.splitlines() if l.startswith('NATIVELOAD') and 'ok=' in l), ''),
+                                            120, 'client nativeload', start)
+    assert 'ok=1' in report['client_load'], report['client_load']
+    wait_running(client, 180, 'client world running after its own load')
+    report['in_world_again'] = wait_mod_log(client, r"persist: in the host's world", 40, "the client is in the host's world again", since)
+    lines = client.mod_log()[since:].splitlines()
+    report['own_load_order'] = order = {'gate_closed': first(r"net: this player is out of the host's world"),
+                                        'loading': first(r'persist: loading G3T_host_'), 'load_returned': first(r"persist: the game's load of G3T_host_.* returned"),
+                                        'record_applied': first(r'own hero record .* applied: 1'), 'in_world': first(r"persist: in the host's world")}
+    assert order['gate_closed'] is not None and order['gate_closed'] < order['loading'], f'the gate stayed open into the load: {order}'
+    assert order['record_applied'] < order['in_world'], f"the gate opened before the client's hero record was applied: {order}"
+    assert order['load_returned'] is not None and order['load_returned'] < order['in_world'], f'the gate opened inside the load: {order}'
+    assert order['load_returned'] < order['record_applied'], f'the hero record was applied inside the load: {order}'
+
+
+def stageW4(copies, report, negative=False):
+    """Stage W4, a story event the host cleared after its save is cleared for a player who joins later (Codex review
+    22.10. R8): the full state for a joining client held only values other than 0, and the client had the event set from
+    the older save it was loaded into. The client leaves; the host sets an event, saves and clears the event; the client
+    joins again and is loaded into that save; after the full state the event is cleared on the client too. Negative
+    control: storyzerosoff on the host."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    slot, event = 'G3T_W4', 'G3T_W4_Event'
+    clear_slot(copies, slot)
+    if negative:
+        assert 'ok=1' in report_line(host.bot, 'storyzerosoff', 'STORYZEROSOFF ')
+    report['client_closed'] = close(client)
+    shutil.copy2(client.root/'g3together.log', client.run/'client-first-g3together.log')
+    report['set'] = report_line(host.bot, f'setevent {event}', 'EVENT ')
+    assert 'known=1' in report['set'], report['set']
+    time.sleep(2)  # the host's story poll (500 ms) sees it set
+    start = host.bot.send(f'nativesave {slot}', 60)
+    report['save'] = host.bot.line('NATIVESAVE ', 60, 'nativesave', start)
+    assert 'ok=1' in report['save'], report['save']
+    time.sleep(3)
+    report['clear'] = report_line(host.bot, f'clearevent {event}', 'EVENT ')
+    assert 'known=0' in report['clear'], report['clear']
+    time.sleep(2)
+    since_host = len(host.mod_log())
+    client = copies['client'].launch('client', 'Client')
+    report['join_load'] = wait_mod_log(client, r'persist: loading G3T_host_'+slot+r'\b', 180, "the joining client loads the host's save")
+    wait_running(client, 180, 'client world running after the join')
+    report['full_state'] = wait_mod_log(host, r'story: full events state', 60, 'the host sends the full event state', since_host)
+    time.sleep(5)
+    report['client_event'] = report_line(client.bot, f'event {event}', 'EVENT ')
+    assert 'known=0' in report['client_event'], f"the event the host cleared after its save is set on the client: {report['client_event']}"
+
+
+def stageW5(copies, report, negative=False):
+    """Stage W5, a kill earns its reward once, also when several lethal hits on the NPC reach the host within one network
+    tick (Codex review 22.10. R9): IsDead() turns true only when the death task sets its AI mode, so every hit of such a
+    burst killed and rewarded again, and the client's GiveXP had no check of its own. The client sends five lethal hit
+    claims on a living host NPC near it in one frame (hitnpcburst): the host kills it once, the client is rewarded once.
+    Negative control: killonceoff on both."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    if negative:
+        for copy in (host, client):
+            assert 'ok=1' in report_line(copy.bot, 'killonceoff', 'KILLONCEOFF ')
+    time.sleep(3)
+    host_npcs, client_npcs = npcs(host.bot), npcs(client.bot)
+    client_at = remotes(host.bot)[2]['pos']
+    alive = {g: client_npcs[g] for g in set(host_npcs) & set(client_npcs)
+             if client_npcs[g]['mirrored'] and not host_npcs[g]['dead'] and host_npcs[g]['hp'] > 0 and host_npcs[g]['name'] != 'PC_Hero'
+             and distance(client_npcs[g]['pos'], client_at) < 3000}
+    alive = {g: v for g, v in alive.items() if v['name'] not in ('Gorn', 'Diego', 'Milten', 'Lester')}  # companions do not die
+    victims = pick_victims(alive, client_at, 1)
+    assert victims, 'no living mirrored NPC near the client'
+    victim = report['victim'] = victims[0]
+    since_client, since_host = len(client.mod_log()), len(host.mod_log())
+    report['burst'] = report_line(client.bot, f"hitnpcburst {victim['guid']}_5", 'HITNPCBURST ')
+    assert 'sent=5' in report['burst'], report['burst']
+    wait_mod_log(client, r'combat: rewarded the kill of '+re.escape(victim['name']), 20, 'the client is rewarded for the kill', since_client)
+    time.sleep(5)
+    report['host_kills'] = kills = [l for l in host.mod_log()[since_host:].splitlines() if 'killed '+victim['name']+' (OnCheatKill)' in l]
+    report['client_rewards'] = rewards = [l for l in client.mod_log()[since_client:].splitlines() if 'rewarded the kill of '+victim['name'] in l]
+    report['host_killonce'] = report_line(host.bot, 'killreport', 'KILLONCE ')
+    report['client_killonce'] = report_line(client.bot, 'killreport', 'KILLONCE ')
+    assert len(rewards) == 1, f"the client was rewarded {len(rewards)} times for one kill: {rewards}"
+    assert len(kills) == 1, f"the host killed {victim['name']} {len(kills)} times: {kills}"
 
 
 def stageX1(copies, report, negative=False):
@@ -6726,8 +7001,8 @@ def parity(copies, report, negative=False):
     report['client_connect_attempts'] = client.mod_log().count('net: connecting to')
 
 
-SUITES = {'stageX1': stageX1, 'stageF1': stageF1, 'brentondiag': brentondiag, 'xpinfodiag': xpinfodiag, 'stageA4': stageA4, 'stageA3': stageA3, 'stageQ2': stageQ2, 'stageK1': stageK1, 'stageS1': stageS1, 'stageS2': stageS2, 'stageS3': stageS3, 'stageCallAnimals': stageCallAnimals, 'callanimals2diag': callanimals2diag, 'animalscandiag': animalscandiag, 'callanimalsdiag': callanimalsdiag, 'stageOpenLocks': stageOpenLocks, 'stageSelfSpell': stageSelfSpell, 'selfspelldiag': selfspelldiag, 'stageNetOutage': stageNetOutage, 'stageR2': stageR2, 'stageM2': stageM2, 'stageRaid': stageRaid, 'stageM1': stageM1, 'stageR1': stageR1, 'theftdiag': theftdiag, 'stageCreature': stageCreature, 'stageCreatureLife': stageCreatureLife, 'stageControl': stageControl, 'stageNpcSpell': stageNpcSpell, 'stagePoison': stagePoison, 'theftscan': theftscan, 'doorlatediag': doorlatediag, 'doordiag': doordiag, 'worldscan': worldscan, 'usediag': usediag, 'friendlydiag': friendlydiag, 'parity': parity, 'scriptfinddiag': scriptfinddiag, 'tracediag': tracediag, 'deaddiag': deaddiag, 'stageL': stageL, 'stageP3a': stageP3a, 'invariantself': invariantself, 'puppetposediag': puppetposediag, 'syncdiag': syncdiag, 'ownerdiag': ownerdiag, 'potiondiag': potiondiag, 'transformdiag': transformdiag, 'rangeddiag': rangeddiag, 'rangedbot': rangedbot, 'stageP1': stageP1, 'stageP2': stageP2, 'stageP2hit': stageP2hit, 'stageP2fire': stageP2fire, 'stageHealOther': stageHealOther, 'raiddiag': raiddiag, 'arrowtouchdiag': arrowtouchdiag, 'scriptdumpdiag': scriptdumpdiag, 'stageT': stageT, 'stageV5': stageV5, 'stageV4': stageV4, 'posediag': posediag, 'stageV3': stageV3, 'stageV1': stageV1, 'stageV2': stageV2, 'viewdiag': viewdiag, 'stageE5': stageE5, 'stageQ': stageQ, 'questdiag': questdiag, 'stageE4': stageE4, 'infodescdiag': infodescdiag, 'stageE3': stageE3, 'stageE2': stageE2, 'stageE1': stageE1, 'aggrodiag': aggrodiag, 'stageH3b': stageH3b, 'infoscandiag': infoscandiag, 'gotodiag2': gotodiag2, 'walkdiag': walkdiag, 'gotodiag': gotodiag, 'navdiag': navdiag, 'soak': soak, 'stageH2': stageH2, 'stageH1': stageH1, 'infodiag': infodiag, 'stageG2': stageG2, 'stageG': stageG, 'stageD3b': stageD3b, 'stageD3a': stageD3a, 'stageD2': stageD2, 'stageD1': stageD1, 'stageC': stageC, 'stageB': stageB, 'stageA2': stageA2, 'stageA': stageA, 'herodeathdiag': herodeathdiag, 'herodiag': herodiag, 'givexpdiag': givexpdiag, 'stage3c': stage3c, 'farwritediag': farwritediag, 'stage1': stage1, 'stage2': stage2, 'animdiag': animdiag, 'stage3a': stage3a, 'scriptdiag': scriptdiag,
-          'stage3b': stage3b, 'combatdiag': combatdiag, 'stackdiag': stackdiag, 'stage4': stage4, 'stage4b': stage4b, 'talkdiag': talkdiag, 'namesdiag': namesdiag, 'talkdiag2': talkdiag2, 'stage4c': stage4c, 'itemdiag': itemdiag, 'stage5': stage5, 'lootdiag': lootdiag, 'stage5b': stage5b, 'stage5c': stage5c, 'chestdiag': chestdiag, 'stageChest': stageChest, 'quicklootdiag': quicklootdiag, 'radiusdiag': radiusdiag, 'pausediag': pausediag, 'savediag': savediag, 'stageQuickLoot': stageQuickLoot, 'tradediag': tradediag, 'stageTrade': stageTrade, 'spellfuncdiag': spellfuncdiag, 'stageDialogAudio': stageDialogAudio, 'listendiag': listendiag, 'stageU1': stageU1}
+SUITES = {'stageW1': stageW1, 'stageW2': stageW2, 'stageW3': stageW3, 'stageW4': stageW4, 'stageW5': stageW5, 'stageX1': stageX1, 'stageF1': stageF1, 'brentondiag': brentondiag, 'xpinfodiag': xpinfodiag, 'stageA4': stageA4, 'stageA3': stageA3, 'stageQ2': stageQ2, 'stageK1': stageK1, 'stageS1': stageS1, 'stageS2': stageS2, 'stageS3': stageS3, 'stageCallAnimals': stageCallAnimals, 'callanimals2diag': callanimals2diag, 'animalscandiag': animalscandiag, 'callanimalsdiag': callanimalsdiag, 'stageOpenLocks': stageOpenLocks, 'stageSelfSpell': stageSelfSpell, 'selfspelldiag': selfspelldiag, 'stageNetOutage': stageNetOutage, 'stageR2': stageR2, 'stageM2': stageM2, 'stageRaid': stageRaid, 'stageM1': stageM1, 'stageR1': stageR1, 'theftdiag': theftdiag, 'stageCreature': stageCreature, 'stageCreatureLife': stageCreatureLife, 'stageControl': stageControl, 'stageNpcSpell': stageNpcSpell, 'stagePoison': stagePoison, 'theftscan': theftscan, 'doorlatediag': doorlatediag, 'doordiag': doordiag, 'worldscan': worldscan, 'usediag': usediag, 'friendlydiag': friendlydiag, 'parity': parity, 'scriptfinddiag': scriptfinddiag, 'tracediag': tracediag, 'deaddiag': deaddiag, 'stageL': stageL, 'stageP3a': stageP3a, 'invariantself': invariantself, 'puppetposediag': puppetposediag, 'syncdiag': syncdiag, 'ownerdiag': ownerdiag, 'potiondiag': potiondiag, 'transformdiag': transformdiag, 'rangeddiag': rangeddiag, 'rangedbot': rangedbot, 'stageP1': stageP1, 'stageP2': stageP2, 'stageP2hit': stageP2hit, 'stageP2fire': stageP2fire, 'stageHealOther': stageHealOther, 'raiddiag': raiddiag, 'arrowtouchdiag': arrowtouchdiag, 'scriptdumpdiag': scriptdumpdiag, 'stageT': stageT, 'stageV5': stageV5, 'stageV4': stageV4, 'posediag': posediag, 'stageV3': stageV3, 'stageV1': stageV1, 'stageV2': stageV2, 'viewdiag': viewdiag, 'stageE5': stageE5, 'stageQ': stageQ, 'questdiag': questdiag, 'stageE4': stageE4, 'infodescdiag': infodescdiag, 'stageE3': stageE3, 'stageE2': stageE2, 'stageE1': stageE1, 'aggrodiag': aggrodiag, 'stageH3b': stageH3b, 'infoscandiag': infoscandiag, 'gotodiag2': gotodiag2, 'walkdiag': walkdiag, 'gotodiag': gotodiag, 'navdiag': navdiag, 'soak': soak, 'stageH2': stageH2, 'stageH1': stageH1, 'infodiag': infodiag, 'stageG2': stageG2, 'stageG': stageG, 'stageD3b': stageD3b, 'stageD3a': stageD3a, 'stageD2': stageD2, 'stageD1': stageD1, 'stageC': stageC, 'stageB': stageB, 'stageA2': stageA2, 'stageA': stageA, 'herodeathdiag': herodeathdiag, 'herodiag': herodiag, 'givexpdiag': givexpdiag, 'stage3c': stage3c, 'farwritediag': farwritediag, 'stage1': stage1, 'stage2': stage2, 'animdiag': animdiag, 'stage3a': stage3a, 'scriptdiag': scriptdiag,
+          'stage3b': stage3b, 'combatdiag': combatdiag, 'stackdiag': stackdiag, 'stage4': stage4, 'stage4b': stage4b, 'talkdiag': talkdiag, 'namesdiag': namesdiag, 'talkdiag2': talkdiag2, 'stage4c': stage4c, 'itemdiag': itemdiag, 'stage5': stage5, 'lootdiag': lootdiag, 'stage5b': stage5b, 'stage5c': stage5c, 'chestdiag': chestdiag, 'stageChest': stageChest, 'quicklootdiag': quicklootdiag, 'radiusdiag': radiusdiag, 'pausediag': pausediag, 'savediag': savediag, 'stageQuickLoot': stageQuickLoot, 'tradediag': tradediag, 'stageTrade': stageTrade, 'spellfuncdiag': spellfuncdiag, 'stageDialogAudio': stageDialogAudio, 'listendiag': listendiag, 'stageU1': stageU1, 'stageBigTrade': stageBigTrade, 'stageReloadLoot': stageReloadLoot}
 
 
 IDLE_TASKS = ('ZS_HangAround_DoNothing', '')
@@ -6799,6 +7074,17 @@ def invariants(copies, report, samples=3, pause=3.0, radius=3000.0):
         summary.setdefault(rule, []).append(name)
     report['invariants'] = {'checked_npcs': len(set(rounds[-1][0]) & set(rounds[-1][1])), 'violations': summary,
                             'count': sum(len(v) for v in summary.values())}
+
+
+def hang_stacks(copy, report):
+    """Before a game that does not close is killed: where its threads are (qa/hangstack.py), into <tag>-hang-stacks.txt and
+    the first lines of its main thread into the report (22.10.: hangs without a crash line or a GPU reset)."""
+    try:
+        text = hangstack.sample(copy.process.pid)
+        (copy.run/f'{copy.tag}-hang-stacks.txt').write_text(text, encoding='utf-8')
+        report.setdefault('processes', {})[copy.tag+'_hang_main_thread'] = text.splitlines()[1:12]
+    except Exception as error:  # noqa: BLE001 - the kill goes on either way
+        report.setdefault('processes', {})[copy.tag+'_hang_stacks_error'] = f'{type(error).__name__}: {error}'
 
 
 def close(copy):
@@ -6878,6 +7164,7 @@ def main():
             report[tag+'_closed_normally'] = close(copy)
             if copy.process.poll() is None:
                 report['processes'][tag+'_forced_cleanup'] = True
+                hang_stacks(copy, report)
                 copy.process.kill()
                 copy.process.wait(timeout=10)
             report['processes'][tag+'_exit_code'] = copy.process.returncode

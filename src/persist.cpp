@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "persist.h"
 
+#include "containers.h"
+#include "dialogaudio.h"
 #include "hero.h"
 #include "hud.h"
 #include "i18n.h"
@@ -14,6 +16,7 @@
 #include <Game.h>
 #include <Windows.h>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <algorithm>
 #include <string>
@@ -114,9 +117,17 @@ bool syncing = true;             // host: false after the QA negative control `w
 unsigned worldChanges = 0;
 // Host
 uint32_t epoch = 0, epochs = 0;
-struct Client { uint32_t told = 0; std::string toldCampaign; uint32_t ready = 0; uint32_t sent = 0; unsigned resends = 0; uint32_t hinted = 0; bool wants = false; };
+struct Client { uint32_t told = 0; std::string toldCampaign; uint32_t ready = 0; uint32_t sent = 0; unsigned resends = 0; uint32_t hinted = 0; bool wants = false;
+                uint32_t generation = 0; };  // net::PeerGeneration of the connection this is about
 uint32_t savedAt = 0;            // GetTickCount() of the host's last save: the game writes the files after SaveGame returns
 Client clients[net::MaxPlayers];
+bool byGeneration = true;        // host: false after the QA negative control `generationoff` (a slot is reset only once empty)
+uint32_t pausedUntil = 0;        // host, QA (stage W1): HostTick waits until then (`persistpause <ms>`), as if leave and join fell in one frame
+bool earlyGate = true;           // client: false after the QA negative control `worldgatelate` (the gate as before 23.10.)
+// The game's own load runs (LoadDetour). It is reentrant: its Session::Start runs twelve frames of its own, in which
+// persist::Tick and the network handlers run again before it returns (C 22.10., re/findings/load-worldactivate-hero-r6-
+// 20261022-codex.md). Settling, the hero restore, an autoload and opening the gate wait until it returned.
+unsigned nativeLoadDepth = 0;
 // Client
 net::WorldNote hostWorld;        // the host's last WorldHost
 uint32_t synced = 0;             // the host epoch this machine plays, 0: none
@@ -337,6 +348,9 @@ void Evaluate()
         return;
     }
     if (!loading.empty() || newWorld) return;  // this machine's world is not up yet
+    // The player's own hero comes back first (Codex review 22.10. R6): opened before the record was applied, a reward in
+    // those ~3 s was overwritten, and a host save then kept the host's hero as this player's record.
+    if (earlyGate && (!pendingRecord.empty() || nativeLoadDepth)) return;
     if (synced == hostWorld.epoch || (hostWorld.kind == net::KindNew && localKind == net::KindNew)) {
         synced = hostWorld.epoch;
         everIn = true;
@@ -393,6 +407,9 @@ void Changing(uint8_t kind)
         return;
     }
     synced = 0;
+    // Closed at once (Codex review 22.10. R6): during a load Evaluate returns before it closes the gate, so it stayed open
+    // through the world change, and the first frame of the new world handled the host's messages before persist::Tick.
+    if (earlyGate) net::SetInWorld(net::LocalId(), false);
     Evaluate();
 }
 
@@ -429,6 +446,10 @@ void OnWorld(uint8_t from, net::WorldNote const& note)
     Client& c = clients[from];
     if (note.op == net::WorldReady) {
         c.ready = epoch;
+        if (nativeLoadDepth) {  // the host's own load still runs (its frames handle the network): HostTick opens afterwards
+            Logf("persist: player %u is ready for world %08x; the gate opens once this load returned", from, epoch);
+            return;
+        }
         net::SetInWorld(from, true);
         Logf("persist: player %u (%s) is in the host's world %08x", from, net::PeerName(from), epoch);
     } else if (note.op == net::WorldOther) {
@@ -451,10 +472,22 @@ void OnWorld(uint8_t from, net::WorldNote const& note)
 void HostTick()
 {
     if (!epoch) NewEpoch();
+    if (static_cast<int32_t>(pausedUntil - GetTickCount()) > 0) return;
     for (uint8_t i = 2; i < net::MaxPlayers; ++i) {
         Client& c = clients[i];
         if (!net::PeerJoined(i)) { c = Client{}; continue; }
+        // A new connection in this slot, also one that came within the frame the last one left in (R7): told and sent
+        // were about the old one, and the new player waited for a world it was never told.
+        if (byGeneration && c.generation != net::PeerGeneration(i)) {
+            if (c.generation) Logf("persist: player %u is a new connection; its state starts over", i);
+            c = Client{};
+            c.generation = net::PeerGeneration(i);
+        }
         if (c.told != epoch || c.toldCampaign != campaign) Tell(i);
+        if (syncing && c.ready == epoch && !net::InWorld(i)) {  // its WorldReady came during the host's own load
+            net::SetInWorld(i, true);
+            Logf("persist: player %u (%s) is in the host's world %08x", i, net::PeerName(i), epoch);
+        }
         static uint32_t lastTry = 0;
         if (c.wants && !campaign.empty() && GetTickCount() - savedAt >= 2000 && GetTickCount() - lastTry >= 1000) {
             lastTry = GetTickCount();
@@ -473,6 +506,8 @@ void HostTick()
 bool __stdcall LoadDetour(void* self, bCString const* name)
 {
     ++loads;
+    pendingRecord.clear();  // a new load: the restore order of the one before is void (C 22.10.)
+    pendingSince = 0;
     lastLoad = name ? name->GetText() : "";
     if (net::IsHost()) campaign = lastLoad;
     loading = lastLoad;  // world activations from here until it runs belong to this load
@@ -500,10 +535,16 @@ bool __stdcall LoadDetour(void* self, bCString const* name)
         if (GetFileAttributesA(record.c_str()) != INVALID_FILE_ATTRIBUTES) { pendingRecord = record; pendingSince = 0; }
     }
     Logf("persist: loading %s, %s (%u journal entries)", lastLoad.c_str(), found ? "sidecar read" : "no sidecar", entries);
+    dialogaudio::OnWorldChange();  // nothing of the old world plays on into the load (B, with R6); idempotent
+    containers::OnWorldChange();   // and no container state of it is compared with the reloaded containers (R5)
+    ++nativeLoadDepth;
     const bool ok = originalLoad(self, name);
+    --nativeLoadDepth;
+    Logf("persist: the game's load of %s returned (%d)", lastLoad.c_str(), ok ? 1 : 0);
     if (!ok) {
         Logf("persist: loading %s failed", lastLoad.c_str());
         loading.clear();
+        pendingRecord.clear();  // it belonged to that save; kept, it held the gate shut (R6)
         newWorld = true;  // if a world runs after all, it counts as one of this machine's own
     }
     return ok;
@@ -539,6 +580,9 @@ void OnWorldDeactivate()
 
 void Tick()
 {
+    // Inside the game's load (one of its own frames): a hero may run already, but the load has not returned. Settling
+    // here opened the gate and began the restore within it; an autoload here would start a load inside the load.
+    if (earlyGate && nativeLoadDepth) return;
     gCSession& game = gCSession::GetInstance();
     if (game.GetHero() && game.IsGameRunning()) {
         if (!loading.empty()) {
@@ -570,6 +614,7 @@ void Tick()
     recordsApplied += ok ? 1 : 0;
     Logf("persist: own hero record %s applied: %d", pendingRecord.c_str(), ok ? 1 : 0);
     pendingRecord.clear();
+    Evaluate();  // the gate opens now that the hero is this player's own (R6)
 }
 
 void Install()
@@ -626,6 +671,28 @@ void WorldSyncOff(LogFn log)
 {
     syncing = false;
     log(net::IsHost() ? "WORLDSYNCOFF ok=1" : "WORLDSYNCOFF ok=0 (host only)");
+}
+
+void GenerationOff(LogFn log)
+{
+    byGeneration = false;
+    log(net::IsHost() ? "GENERATIONOFF ok=1" : "GENERATIONOFF ok=0 (host only)");
+}
+
+void Pause(char const* argument, LogFn log)
+{
+    const int ms = std::atoi(argument);
+    if (!net::IsHost() || ms <= 0 || ms > 30000) { log("REFUSED persistpause: host only, 1 to 30000 ms"); return; }
+    pausedUntil = GetTickCount() + static_cast<uint32_t>(ms);
+    char line[80];
+    sprintf_s(line, "PERSISTPAUSE ok=1 ms=%d", ms);
+    log(line);
+}
+
+void WorldGateLate(LogFn log)
+{
+    earlyGate = false;
+    log(net::IsHost() ? "WORLDGATELATE ok=0 (client only)" : "WORLDGATELATE ok=1");
 }
 
 void WorldReport(LogFn log)

@@ -104,12 +104,14 @@ class Module : public eCEngineComponentBase
     {
         g3t::remote::OnWorldDeactivate();
         g3t::npcs::OnWorldDeactivate();
+        g3t::combat::OnWorldChange();
         g3t::talk::OnWorldChange();
         g3t::journal::OnWorldChange();
         g3t::infocmd::OnWorldChange();
         g3t::doors::OnWorldChange();
         g3t::enclaves::OnWorldChange();
         g3t::dialogaudio::OnWorldChange();
+        g3t::containers::OnWorldChange();
     }
     bEResult WorldActivate() override
     {
@@ -127,6 +129,7 @@ class Module : public eCEngineComponentBase
     }
     bEResult PreShutdown() override
     {
+        g3t::dialogaudio::OnWorldChange();  // no channel of ours outlives the audio system, whichever way the game ends
         g3t::net::Stop();
         const GEBool removed = eCModuleAdmin::GetInstance().UnregisterModule(*this);
         g3t::Logf("pre-shutdown: module unregistered=%d", removed);

@@ -68,7 +68,8 @@ class Session:
 
     def clear_raid(self, host, report):
         if self.raid_cleared:
-            report['raid_kills'] = 'cleared earlier in this session'
+            report['raid_kills'] = []  # a list, as clear_raid gives it (stage3c sums it)
+            report['raid_note'] = 'cleared earlier in this session'
             return
         ORIGINAL_RAID(host, report)
         self.raid_cleared = True
@@ -98,6 +99,7 @@ class Session:
                 continue
             closed = T.close(copy)
             if copy.process.poll() is None:
+                T.hang_stacks(copy, self.report)
                 copy.process.kill()
                 copy.process.wait(timeout=10)
             copy.collect()

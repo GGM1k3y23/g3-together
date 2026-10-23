@@ -54,6 +54,7 @@ struct Remote
 
 bool Start(bool host, char const* address, unsigned short port, char const* name);
 void Stop();  // at shutdown: disconnect now so the others notice at once
+void Reconnect(void (*log)(char const*));  // QA, client (stage W1): leave the host and connect again at once
 // Service the socket and, at most every 50 ms, send the local state. Call once per frame.
 void Tick(PlayerState const& local, bool haveLocal);
 uint8_t LocalId();
@@ -74,6 +75,9 @@ void SetInWorld(uint8_t id, bool in);  // host: that client entered (left) the h
 bool InWorld(uint8_t id);
 bool Joined();                   // client: welcomed by the host, in its world or not
 bool PeerJoined(uint8_t id);     // host: a client with this id is connected, in the host's world or not
+// Host: which connection holds slot id, counted up at every hello it accepts there. A player who leaves and joins again
+// within one frame keeps its slot, so PeerJoined never turns false in between (Codex review 22.10. R7).
+uint32_t PeerGeneration(uint8_t id);
 char const* PeerName(uint8_t id);
 void GateCounts(unsigned& in, unsigned& out);  // gameplay messages dropped at the gate so far
 // World identity, reliable. Host -> one client: WorldHost, the world the host plays (epoch changes with every load, new
@@ -209,9 +213,11 @@ struct ContentEntry {
     char name[28];   // for logs
     int32_t amount;
 };
-constexpr int MaxContentEntries = 48;
-void SendContents(uint8_t const guid[16], ContentEntry const* entries, int count);
-void SendContainerTx(uint8_t const guid[16], uint32_t seq, ContentEntry const* entries, int count);
+// The count goes as one byte. 48 was too few for a big trader: the contents were silently not sent (Codex review R4,
+// 22.10.). One message, up to 250 * 48 bytes; ENet splits a reliable packet that size itself and it arrives whole.
+constexpr int MaxContentEntries = 250;
+bool SendContents(uint8_t const guid[16], ContentEntry const* entries, int count);  // false: not sent
+bool SendContainerTx(uint8_t const guid[16], uint32_t seq, ContentEntry const* entries, int count);  // false: not sent
 void SendContainerTxResult(uint8_t to, uint8_t const guid[16], uint32_t seq, bool ok);
 void SendWatch(uint8_t const guid[16]);
 using ContentsHandler = void (*)(uint8_t const guid[16], ContentEntry const* entries, int count);

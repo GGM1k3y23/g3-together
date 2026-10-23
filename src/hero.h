@@ -14,5 +14,8 @@ void Dump(LogFn log);                   // QA: HERODUMP line, a canonical summar
 void SaveCommand(char const* name, LogFn log);  // QA: <save folder>/g3t-hero-<name>.txt
 void LoadCommand(char const* name, LogFn log);
 void RestoreOff(LogFn log);             // QA negative control: LoadRecord changes nothing
+void CutCommand(char const* argument, LogFn log);  // QA (stage W2): "<name>" or "<name>_header" cuts that record as a broken write
+void CheckOff(LogFn log);               // QA negative control (stage W2): records are applied unchecked
+void WriteFault(LogFn log);             // QA (stage W2): the next record write breaks off before it replaces the record
 std::string RecordPath(char const* name);  // <save folder>/g3t-hero-<name>.txt
 }

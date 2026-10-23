@@ -35,6 +35,7 @@
 #include "social.h"
 #include "enclaves.h"
 #include "doors.h"
+#include "net.h"
 
 #include <Game.h>
 #include <Windows.h>
@@ -228,6 +229,29 @@ void Quest(gCSession& session, const char* action)
     Log(line);
 }
 
+// Codex review 22.10. (R1, R8, R9): a third chain, the other two are at MSVC's limit of nested blocks (C1061).
+bool RunReviewAction(const char* action)
+{
+    if (!std::strcmp(action, "herocut")) {
+        g3t::hero::CutCommand(argument, &Log);
+    } else if (!std::strcmp(action, "recordcheckoff")) {
+        g3t::hero::CheckOff(&Log);
+    } else if (!std::strcmp(action, "recordwritefault")) {
+        g3t::hero::WriteFault(&Log);
+    } else if (!std::strcmp(action, "storyzerosoff")) {
+        g3t::story::ZerosOff(&Log);
+    } else if (!std::strcmp(action, "hitnpcburst")) {
+        g3t::combat::HitNpcBurst(argument, &Log);
+    } else if (!std::strcmp(action, "killonceoff")) {
+        g3t::combat::KillOnceOff(&Log);
+    } else if (!std::strcmp(action, "killreport")) {
+        g3t::combat::KillReport(&Log);
+    } else {
+        return false;
+    }
+    return true;
+}
+
 // Commands added after the chain below reached MSVC's limit of nested blocks (C1061).
 bool RunLaterAction(const char* action)
 {
@@ -235,6 +259,14 @@ bool RunLaterAction(const char* action)
         g3t::persist::WorldReport(&Log);
     } else if (!std::strcmp(action, "worldsyncoff")) {
         g3t::persist::WorldSyncOff(&Log);
+    } else if (!std::strcmp(action, "reconnect")) {
+        g3t::net::Reconnect(&Log);
+    } else if (!std::strcmp(action, "generationoff")) {
+        g3t::persist::GenerationOff(&Log);
+    } else if (!std::strcmp(action, "persistpause")) {
+        g3t::persist::Pause(argument, &Log);
+    } else if (!std::strcmp(action, "worldgatelate")) {
+        g3t::persist::WorldGateLate(&Log);
     } else if (!std::strcmp(action, "dialogxpoff")) {
         g3t::infocmd::DialogXpOff(&Log);
     } else if (!std::strcmp(action, "duelhero")) {
@@ -441,7 +473,7 @@ void RunAction(const char* action)
 {
     gCSession& session = gCSession::GetInstance();
     char line[256] = {};
-    if (RunLaterAction(action)) return;
+    if (RunLaterAction(action) || RunReviewAction(action)) return;
     if (!std::strcmp(action, "state")) {
         State(session);
     } else if (!std::strcmp(action, "menu")) {

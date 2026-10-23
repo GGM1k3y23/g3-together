@@ -299,7 +299,9 @@ void TickPlaying()
         return;
     }
     for (auto it = playing.begin(); it != playing.end();) {
-        eCEntity* speaker = SpeakerOf(it->from, it->speakerKind, it->speaker);
+        // A sender that left: its line ends here too (a host stays connected when a client goes; C 22.10.).
+        eCEntity* speaker = it->from < net::MaxPlayers && net::Remotes()[it->from].connected
+                                ? SpeakerOf(it->from, it->speakerKind, it->speaker) : nullptr;
         const float distance = speaker ? Distance(hero, speaker) : FadeRange + 1.0f;
         if (!speaker || distance > FadeRange || !it->audio->channel->IsPlaying()) {
             if (speaker && distance > FadeRange) ++stoppedFar;

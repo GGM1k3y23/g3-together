@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <unordered_set>
 
 namespace g3t::combat {
 eCEntity* DamageSource(eCDynamicEntity* hero, char const** name);  // below
@@ -40,6 +41,13 @@ bool reactHits = true;  // QA negative control: ReactHitsOff
 unsigned reactionsStarted = 0;  // host: client hits that made the NPC judge its attacker (AssessTarget)
 bool npcHits = true;  // QA negative control: NpcHitsOff
 unsigned forwardedJudged = 0, forwardedBare = 0;  // client: forwarded hits judged here / applied as bare hit points
+// A kill counts once per victim and world (Codex review 22.10. R9): IsDead() turns true only once the death task sets its
+// AI mode, so a second lethal hit in the same network tick passed and was rewarded again; the client's GiveXP had no check.
+std::unordered_set<std::string> killedHere;  // host: victims killed here for a client's hit or its companion's
+std::unordered_set<std::string> rewarded;    // client: victims this player was rewarded for
+bool killOnce = true;  // QA negative control: killonceoff
+unsigned killsRepeated = 0, rewardsRepeated = 0;
+std::string KillKey(uint8_t const guid[16]) { return std::string(reinterpret_cast<char const*>(guid), 16); }
 // Arena and duel (owner's decision 22.10., variant b; re/findings/defeat-arena-c.md): an NPC fighting a duel or an arena
 // bout (attack reason Duel or Arena) takes hits only from its opponent there; a second player's hits do not count. Its
 // opponent's last hit ends the bout as the game does, with a knock-out (Defeat), never with the kill cheat: a client's
@@ -198,13 +206,14 @@ void OnNpcHit(uint8_t from, Entity& target, int32_t delta, uint8_t const npc[16]
         CallScript("AddHitPoints", victim, attacker.GetInstance() ? attacker.GetInstance() : victim, delta);
         return;
     }
+    uint8_t guid[16];
+    Guid(victim, guid);
+    killedHere.insert(KillKey(guid));  // before the death call: OnHitNpc drops further hits on it (R9)
     target.NPC.DefeatedByPlayer = GETrue;
     CallScript("AddHitPoints", victim, victim, -HitPoints(target));
     CallScript("OnCheatKill", victim, victim, 0);
     ++npcKills;
     if (party) {  // the sender's companion or summon killed it: the sender's hero earns the experience
-        uint8_t guid[16];
-        Guid(victim, guid);
         net::SendKilled(from, guid);
         ++partyKills;
     }
@@ -216,6 +225,10 @@ void OnHitNpc(uint8_t from, uint8_t const guid[16], int32_t delta, uint8_t const
 {
     Entity target(npcs::NpcByGuid(guid));  // an NPC only: no chest, door, hero or puppet (Fable 1.7)
     if (!target.GetInstance() || target.IsDead() || delta >= 0 || delta < -1000000) return;
+    if (killOnce && killedHere.count(KillKey(guid))) {  // killed already, its death task not running yet (R9)
+        ++killsRepeated;
+        return;
+    }
     static const uint8_t zeros[16] = {};
     if (std::memcmp(npc, zeros, 16)) {
         OnNpcHit(from, target, delta, npc, weapon[0] == 1);
@@ -264,6 +277,7 @@ void OnHitNpc(uint8_t from, uint8_t const guid[16], int32_t delta, uint8_t const
     // right after (its player left) made them use a deleted entity (eCEntity::QueryEntityProxyInternal crash on a
     // client in stage E2). The real killer is rewarded on its own machine (SendKilled).
     eCEntity* victim = target.GetInstance();
+    killedHere.insert(KillKey(guid));  // before the death call (R9)
     target.NPC.DefeatedByPlayer = GETrue;
     CallScript("AddHitPoints", victim, victim, -HitPoints(target));
     CallScript("OnCheatKill", victim, victim, 0);  // like the console: self = the one who kills, other = the target
@@ -280,6 +294,11 @@ void OnKilled(uint8_t const guid[16])
     std::memcpy(&raw, guid, 16);
     Entity victim = Entity(bCPropertyID(bCGuid(raw)));
     if (!hero || !victim.GetInstance()) return;
+    if (killOnce && !rewarded.insert(KillKey(guid)).second) {  // R9: once per victim, whatever the host sends
+        ++rewardsRepeated;
+        Logf("combat: the kill of %s was rewarded already; not again", victim.GetName().GetText());
+        return;
+    }
     Entity self(hero);
     const int before = static_cast<int>(self.PlayerMemory.XP);
     const GEInt result = CallScript("GiveXP", victim.GetInstance(), hero, -1);  // like the death script: self = the NPC, other = who earns it
@@ -383,6 +402,50 @@ void HitNpc(char const* guid, LogFn log)
               result, filterCalls - callsBefore, pending, target.Routine.GetCurrentTask().GetText(), before, HitPoints(target),
               target.IsDead() ? 1 : 0, claimsSent != sentBefore);
     log(line);
+}
+
+// QA, client (stage W5): "<guid>_<count>": that many lethal hit claims on a host NPC in one frame, as a burst of valid hits
+// that reaches the host within one network tick (the bot's arguments hold no spaces).
+void HitNpcBurst(char const* argument, LogFn log)
+{
+    char guid[64] = {};
+    char const* cut = std::strrchr(argument, '_');
+    const int count = cut ? std::atoi(cut + 1) : 0;
+    if (cut && cut - argument < static_cast<ptrdiff_t>(sizeof(guid))) std::memcpy(guid, argument, cut - argument);
+    _GUID raw;
+    if (net::IsHost() || count < 1 || count > 10 || !ParseGuid(guid, raw)) {
+        log("REFUSED hitnpcburst: client only, \"<guid>_<1-10>\"");
+        return;
+    }
+    uint8_t bytes[16];
+    std::memcpy(bytes, &raw, 16);
+    static const uint8_t none[16] = {};
+    for (int i = 0; i < count; ++i) net::SendHitNpc(1, bytes, -100000, none);
+    claimsSent += count;
+    char line[160];
+    sprintf_s(line, "HITNPCBURST guid=%s sent=%d", guid, count);
+    log(line);
+}
+
+void KillOnceOff(LogFn log)
+{
+    killOnce = false;
+    log("KILLONCEOFF ok=1 (kills and rewards are not counted per victim, as before 23.10.)");
+}
+
+void KillReport(LogFn log)
+{
+    char line[200];
+    sprintf_s(line, "KILLONCE killed=%zu rewarded=%zu repeated_kills=%u repeated_rewards=%u xp_awarded=%u kills=%u", killedHere.size(),
+              rewarded.size(), killsRepeated, rewardsRepeated, xpAwarded, kills);
+    log(line);
+}
+
+// A load brings the dead back as they were saved: they can die once more (R9).
+void OnWorldChange()
+{
+    killedHere.clear();
+    rewarded.clear();
 }
 
 // QA: the local hero hits another player's puppet through the game's hit path (judgement and stumble included).

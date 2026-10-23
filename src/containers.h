@@ -11,6 +11,7 @@
 namespace g3t::containers {
 void Start();
 void Tick();
+void OnWorldChange();  // forget every container state of the world before (load, world change)
 using LogFn = void (*)(char const*);
 void Contents(char const* guid, LogFn log);  // QA: CONTENTS line for a container
 void Open(char const* guid, LogFn log);      // QA: open a container the player's way (PlayerOpenLoot)

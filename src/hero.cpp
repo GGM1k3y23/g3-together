@@ -5,6 +5,7 @@
 
 #include <Game.h>
 #include <Script.h>
+#include <Windows.h>
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
@@ -18,6 +19,8 @@ namespace {
 // checked against the named getters by the QA dump.
 char const* const Tags[] = {"STR", "DEX", "INT", "ALC", "SMT", "THF", "HP", "MP", "SP"};
 bool restoring = true;
+bool checking = true;     // QA negative control: recordcheckoff (a record is applied as read, as before 22.10.)
+bool writeFault = false;  // QA (stage W2): recordwritefault breaks off the next write before it replaces the record
 
 struct Stack
 {
@@ -69,21 +72,35 @@ std::vector<Stack> Stacks(Entity& self)
 eCDynamicEntity* Hero() { return gCSession::GetInstance().GetHero(); }
 }
 
+// Written to <path>.tmp and moved over the old record only once every line and the close went through, with an end line
+// that names the number of stacks (Codex review 22.10. R1: "w" emptied the record at once, and a write that broke off left
+// a record whose next load wiped the inventory and set level and experience to zero).
 bool SaveRecord(char const* path)
 {
     eCDynamicEntity* hero = Hero();
+    if (!hero) return false;
+    const std::string temp = std::string(path) + ".tmp";
     FILE* file = nullptr;
-    if (!hero || fopen_s(&file, path, "w") || !file) return false;
+    if (fopen_s(&file, temp.c_str(), "w") || !file) return false;
     Entity self(hero);
-    fprintf(file, "G3THERO 1\n");
-    fprintf(file, "level %u %u\n", static_cast<unsigned>(self.NPC.Level), static_cast<unsigned>(self.NPC.LevelMax));
-    fprintf(file, "xp %d\nlp %d %d\n", static_cast<int>(self.PlayerMemory.XP), static_cast<int>(self.PlayerMemory.LPAttribs),
-            static_cast<int>(self.PlayerMemory.LPPerks));
+    const std::vector<Stack> stacks = Stacks(self);
+    bool ok = fprintf(file, "G3THERO 2\n") > 0;
+    ok = ok && fprintf(file, "level %u %u\n", static_cast<unsigned>(self.NPC.Level), static_cast<unsigned>(self.NPC.LevelMax)) > 0;
+    ok = ok && fprintf(file, "xp %d\nlp %d %d\n", static_cast<int>(self.PlayerMemory.XP), static_cast<int>(self.PlayerMemory.LPAttribs),
+                       static_cast<int>(self.PlayerMemory.LPPerks)) > 0;
     for (char const* tag : Tags)
-        fprintf(file, "attr %s %d %d\n", tag, self.PlayerMemory.GetBaseValue(bCString(tag)), self.PlayerMemory.GetMaximum(bCString(tag)));
-    for (Stack const& s : Stacks(self)) fprintf(file, "stack %s %d %u %d %d\n", s.id.c_str(), s.amount, s.quality, s.slot, s.category);
-    fclose(file);
-    return true;
+        ok = ok && fprintf(file, "attr %s %d %d\n", tag, self.PlayerMemory.GetBaseValue(bCString(tag)), self.PlayerMemory.GetMaximum(bCString(tag))) > 0;
+    for (Stack const& s : stacks) ok = ok && fprintf(file, "stack %s %d %u %d %d\n", s.id.c_str(), s.amount, s.quality, s.slot, s.category) > 0;
+    ok = ok && fprintf(file, "end %zu\n", stacks.size()) > 0;
+    ok = fflush(file) == 0 && ok;
+    ok = fclose(file) == 0 && ok;
+    if (ok && writeFault) ok = writeFault = false;  // QA (stage W2): the write breaks off before the record is replaced
+    if (ok) ok = MoveFileExA(temp.c_str(), path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+    if (!ok) {
+        DeleteFileA(temp.c_str());
+        Logf("hero: record %s not written; the one before stays", path);
+    }
+    return ok;
 }
 
 bool LoadRecord(char const* path)
@@ -92,28 +109,64 @@ bool LoadRecord(char const* path)
     FILE* file = nullptr;
     if (!hero || fopen_s(&file, path, "r") || !file) return false;
     char line[256];
-    if (!fgets(line, sizeof(line), file) || std::strncmp(line, "G3THERO 1", 9)) { fclose(file); return false; }
+    if (!fgets(line, sizeof(line), file) || std::strncmp(line, "G3THERO ", 8) || (line[8] != '1' && line[8] != '2')) { fclose(file); return false; }
+    const int version = line[8] - '0';
     if (!restoring) { fclose(file); return true; }
-    Entity self(hero);
+    // The whole record is read and checked before the hero changes (R1): a record that broke off, a line that is no
+    // record line, a missing field or a value out of range leaves the hero as it is. Version 1 records (before 22.10.)
+    // have no end line; they pass when every field is there.
     std::vector<Stack> wanted;
     unsigned level = 0, levelMax = 0;
     int xp = 0, lpa = 0, lpp = 0;
     struct Attr { std::string tag; int base, max; };
     std::vector<Attr> attrs;
-    while (fgets(line, sizeof(line), file)) {
+    bool haveLevel = false, haveXp = false, haveLp = false, ended = false;
+    char const* refused = nullptr;
+    size_t declared = 0;
+    while (!refused && fgets(line, sizeof(line), file)) {
         char a[64] = {};
         Stack s;
         int b = 0, c = 0;
-        if (sscanf_s(line, "level %u %u", &level, &levelMax) == 2) continue;
-        if (sscanf_s(line, "xp %d", &xp) == 1) continue;
-        if (sscanf_s(line, "lp %d %d", &lpa, &lpp) == 2) continue;
-        if (sscanf_s(line, "attr %63s %d %d", a, 64u, &b, &c) == 3) { attrs.push_back({a, b, c}); continue; }
-        if (sscanf_s(line, "stack %63s %d %u %d %d", a, 64u, &s.amount, &s.quality, &s.slot, &s.category) == 5) {
+        if (ended) refused = "a line after the end line";
+        else if (sscanf_s(line, "level %u %u", &level, &levelMax) == 2) haveLevel = true;
+        else if (sscanf_s(line, "xp %d", &xp) == 1) haveXp = true;
+        else if (sscanf_s(line, "lp %d %d", &lpa, &lpp) == 2) haveLp = true;
+        else if (sscanf_s(line, "attr %63s %d %d", a, 64u, &b, &c) == 3) attrs.push_back({a, b, c});
+        else if (sscanf_s(line, "stack %63s %d %u %d %d", a, 64u, &s.amount, &s.quality, &s.slot, &s.category) == 5) {
             s.id = a;
             wanted.push_back(s);
-        }
+        } else if (sscanf_s(line, "end %zu", &declared) == 1) ended = true;
+        else refused = "a line that is no record line";
     }
     fclose(file);
+    if (!refused && checking) {
+        if (!haveLevel || !haveXp || !haveLp) refused = "level, experience or learn points missing";
+        else if (version >= 2 && !ended) refused = "no end line (the write broke off)";
+        else if (ended && declared != wanted.size()) refused = "fewer stacks than the end line names";
+        else if (level > 1000 || levelMax > 1000 || xp < 0 || xp > 100000000 || lpa < 0 || lpa > 100000 || lpp < 0 || lpp > 100000)
+            refused = "level, experience or learn points out of range";
+        for (char const* tag : Tags) {
+            if (refused) break;
+            if (std::count_if(attrs.begin(), attrs.end(), [tag](Attr const& at) { return at.tag == tag; }) != 1) refused = "an attribute missing or twice";
+        }
+        if (!refused && attrs.size() != sizeof(Tags) / sizeof(Tags[0])) refused = "an attribute this record does not know";
+        for (Attr const& at : attrs)
+            if (!refused && (at.base < -1000000 || at.base > 1000000 || at.max < -1000000 || at.max > 1000000)) refused = "an attribute out of range";
+        for (Stack const& s : wanted) {
+            if (refused) break;
+            if (s.id.size() != 32 || s.id.find_first_not_of("0123456789abcdef") != std::string::npos || !FromHex(s.id).IsValid())
+                refused = "a stack whose item does not exist";
+            else if (s.amount < 1 || s.amount > 1000000 || s.quality >= 1024 || s.slot < gESlot_None || s.slot > gESlot_Helmet ||
+                     s.category < 0 || s.category >= gEItemCategory_Count)
+                refused = "a stack out of range";
+        }
+    }
+    if (refused) {
+        Logf("hero: record %s refused (%s); the hero stays as it is", path, refused);
+        return false;
+    }
+    if (version < 2 && checking) Logf("hero: record %s is of version 1 (no end line); every field is there", path);
+    Entity self(hero);
     // Inventory first: equipment modifies attributes, so the base values go on afterwards.
     self.Inventory.HoldStacks(-1, -1);
     for (int i = self.Inventory.GetStackCount() - 1; i >= 0; --i) {
@@ -198,5 +251,46 @@ void RestoreOff(LogFn log)
 {
     restoring = false;
     log("HERORESTOREOFF ok=1");
+}
+
+// QA (stage W2): the record <name> as a write that broke off leaves it: cut in the middle of its stack lines, or with
+// "<name>_header" after its first line (the bot's arguments hold no spaces).
+void CutCommand(char const* argument, LogFn log)
+{
+    std::string name = argument;
+    const bool header = name.size() > 7 && !name.compare(name.size() - 7, 7, "_header");
+    if (header) name.resize(name.size() - 7);
+    const std::string path = RecordPath(name.c_str());
+    std::vector<std::string> lines;
+    FILE* file = nullptr;
+    if (!fopen_s(&file, path.c_str(), "r") && file) {
+        char text[256];
+        while (fgets(text, sizeof(text), file)) lines.emplace_back(text);
+        fclose(file);
+    }
+    size_t first = 0, stacks = 0;
+    for (size_t i = 0; i < lines.size(); ++i)
+        if (!lines[i].compare(0, 6, "stack ")) { if (!stacks++) first = i; }
+    const size_t keep = header ? 1 : stacks ? first + stacks / 2 : lines.size() > 1 ? lines.size() - 1 : 0;
+    bool ok = !lines.empty() && !fopen_s(&file, path.c_str(), "w") && file;
+    if (ok) {
+        for (size_t i = 0; i < keep && i < lines.size(); ++i) fputs(lines[i].c_str(), file);
+        ok = fclose(file) == 0;
+    }
+    char line[300];
+    sprintf_s(line, "HEROCUT name=%s ok=%d kept=%zu of=%zu", name.substr(0, 64).c_str(), ok ? 1 : 0, keep, lines.size());
+    log(line);
+}
+
+void CheckOff(LogFn log)
+{
+    checking = false;
+    log("RECORDCHECKOFF ok=1 (records are applied as read)");
+}
+
+void WriteFault(LogFn log)
+{
+    writeFault = true;
+    log("RECORDWRITEFAULT ok=1 (the next record write breaks off)");
 }
 }

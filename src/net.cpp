@@ -12,7 +12,7 @@
 
 namespace g3t::net {
 namespace {
-constexpr uint16_t ProtocolVersion = 43;  // 36: MsgSummon; 37: MsgShot; 38: spell projectiles, MsgPlayerSpell; 39: MsgNpcSpell; 40: creatures; 41: town reputation (MsgEnclave); 42: world gate (MsgWorld); 43: MsgDialogLine
+constexpr uint16_t ProtocolVersion = 44;  // 36: MsgSummon; 37: MsgShot; 38: spell projectiles, MsgPlayerSpell; 39: MsgNpcSpell; 40: creatures; 41: town reputation (MsgEnclave); 42: world gate (MsgWorld); 43: MsgDialogLine; 44: up to 250 container entries
 enum : uint8_t { MsgHello = 1, MsgWelcome = 2, MsgState = 3, MsgLeave = 4, MsgNpcs = 5, MsgMotionName = 6, MsgHitNpc = 7, MsgHitPlayer = 8, MsgStates = 9, MsgTalk = 10, MsgItem = 11, MsgContents = 12, MsgContainerTx = 13, MsgTxResult = 14, MsgWatch = 15, MsgKilled = 16, MsgRefused = 17, MsgDeath = 18, MsgCampaign = 19, MsgFileChunk = 20, MsgFileDone = 21, MsgClock = 22, MsgWorldState = 23, MsgSummon = 24, MsgShot = 25, MsgPlayerSpell = 26, MsgNpcSpell = 27, MsgEnclave = 28, MsgWorld = 29, MsgDialogLine = 30 };
 // UDP payload per datagram (ENet default 1392 = up to 1420-byte IP packets): VPNs such as Hamachi carry about 1400, so
 // stay well below (C, re/findings/hamachi-net-c.md, 21.10.). ENet splits larger messages into fragments of this size.
@@ -95,6 +95,7 @@ EnclaveHandler enclaveHandler = nullptr;
 WorldHandler worldHandler = nullptr;
 bool inWorld = false;                  // client side: this machine is in the host's world (persist.cpp)
 bool clientInWorld[MaxPlayers] = {};   // host side: that client is in the host's world
+uint32_t generations[MaxPlayers] = {}; // host side: counts the connections a slot was given (PeerGeneration)
 unsigned gatedIn = 0, gatedOut = 0;
 
 // What passes the world gate: joining, the save transfer and the world messages. Motion names wait for the world too
@@ -189,6 +190,7 @@ void OnReceive(ENetPeer* peer, ENetPacket* packet)
         for (uint8_t i = 2; i < MaxPlayers && !id; ++i) if (!peers[i]) id = i;
         if (!id) { enet_peer_disconnect(peer, 2); return; }
         peers[id] = peer;
+        ++generations[id];
         peer->data = reinterpret_cast<void*>(static_cast<uintptr_t>(id));
         remotes[id].connected = false;  // until it is in the host's world (SetInWorld)
         clientInWorld[id] = false;
@@ -474,6 +476,7 @@ void SetInWorld(uint8_t id, bool in)
 bool InWorld(uint8_t id) { return isHost ? (id == 1 || (id < MaxPlayers && clientInWorld[id])) : inWorld; }
 bool Joined() { return connected; }
 bool PeerJoined(uint8_t id) { return isHost && id > 1 && id < MaxPlayers && peers[id]; }
+uint32_t PeerGeneration(uint8_t id) { return id < MaxPlayers ? generations[id] : 0; }
 char const* PeerName(uint8_t id) { return id < MaxPlayers ? remotes[id].latest.name : ""; }
 void GateCounts(unsigned& in, unsigned& out) { in = gatedIn; out = gatedOut; }
 void SetWorldHandler(WorldHandler handler) { worldHandler = handler; }
@@ -652,9 +655,9 @@ void SetContainerHandlers(ContentsHandler contents, ContainerTxHandler tx, TxRes
     watchHandler = watch;
 }
 
-void SendContents(uint8_t const guid[16], ContentEntry const* entries, int count)
+bool SendContents(uint8_t const guid[16], ContentEntry const* entries, int count)
 {
-    if (!host || !isHost || count < 0 || count > MaxContentEntries) return;
+    if (!host || !isHost || count < 0 || count > MaxContentEntries) return false;
     uint8_t buffer[sizeof(ContentsHeader) + MaxContentEntries * sizeof(ContentEntry)];
     ContentsHeader header{MsgContents, {}, static_cast<uint8_t>(count)};
     std::memcpy(header.guid, guid, 16);
@@ -662,17 +665,19 @@ void SendContents(uint8_t const guid[16], ContentEntry const* entries, int count
     if (count) std::memcpy(buffer + sizeof(header), entries, count * sizeof(ContentEntry));
     for (uint8_t i = 2; i < MaxPlayers; ++i)
         if (peers[i]) Send(peers[i], buffer, sizeof(header) + count * sizeof(ContentEntry), ChannelReliable, true);
+    return true;
 }
 
-void SendContainerTx(uint8_t const guid[16], uint32_t seq, ContentEntry const* entries, int count)
+bool SendContainerTx(uint8_t const guid[16], uint32_t seq, ContentEntry const* entries, int count)
 {
-    if (!host || isHost || !server || !connected || count < 0 || count > MaxContentEntries) return;
+    if (!host || isHost || !server || !connected || count < 0 || count > MaxContentEntries) return false;
     uint8_t buffer[sizeof(TxHeader) + MaxContentEntries * sizeof(ContentEntry)];
     TxHeader header{MsgContainerTx, {}, seq, static_cast<uint8_t>(count)};
     std::memcpy(header.guid, guid, 16);
     std::memcpy(buffer, &header, sizeof(header));
     if (count) std::memcpy(buffer + sizeof(header), entries, count * sizeof(ContentEntry));
     Send(server, buffer, sizeof(header) + count * sizeof(ContentEntry), ChannelReliable, true);
+    return true;
 }
 
 void SendContainerTxResult(uint8_t to, uint8_t const guid[16], uint32_t seq, bool ok)
@@ -920,5 +925,19 @@ void Tick(PlayerState const& local, bool haveLocal)
         Send(server, &message, sizeof(message), ChannelState, false);
     }
     enet_host_flush(host);
+}
+
+// QA, client (stage W1): leave the host and connect again at once, as a player whose connection dropped and came back.
+void Reconnect(void (*log)(char const*))
+{
+    if (isHost || !server || !connected) { log("REFUSED reconnect: a connected client only"); return; }
+    enet_peer_disconnect_now(server, 0);
+    connected = false;
+    inWorld = false;
+    for (uint8_t i = 0; i < MaxPlayers; ++i) Drop(i);
+    server = enet_host_connect(host, &target, ChannelCount, 0);
+    lastConnectAttempt = enet_time_get();
+    Log("net: QA reconnect: left the host and connecting again");
+    log(server ? "RECONNECT ok=1" : "RECONNECT ok=0");
 }
 }

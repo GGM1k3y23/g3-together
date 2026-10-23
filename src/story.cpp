@@ -13,6 +13,7 @@
 #include <cstring>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace g3t::story {
@@ -27,13 +28,25 @@ struct Domain {
     void (*snapshot)(States&);
     bool (*apply)(char const* name, uint8_t value);  // true if the game's own function did it, false if set directly
     States known;  // host: values last sent; client: the host's values as far as this client knows them
+    // Host: names that went back to 0 while the game ran here. The full state sends their zeros: a client that loads the
+    // host's save got them as set, since the save is older (Codex review 22.10. R8). All zeros would be thousands of infos.
+    std::unordered_set<std::string> zeroed;
     bool primed = false;
     bool wasConnected = false;
     unsigned sent = 0, received = 0, applied = 0, forced = 0, claims = 0, requests = 0, skipped = 0;
 };
 
 bool disabled = false;
+bool fullZeros = true;  // QA negative control (host, stage W4): storyzerosoff (the full state without zeros, as before 23.10.)
 DWORD lastPoll = 0;
+
+void Track(Domain& d, std::string const& name, uint8_t value)
+{
+    if (!net::IsHost()) return;
+    auto it = d.known.find(name);
+    if (value) d.zeroed.erase(name);
+    else if (it != d.known.end() && it->second) d.zeroed.insert(name);
+}
 bool Running() { return gCSession::GetInstance().IsGameRunning(); }
 
 // --- quests ---
@@ -161,10 +174,13 @@ void OnStates(uint8_t from, uint8_t kind, net::StateEntry const* entries, int co
         States current;
         d->snapshot(current);
         std::vector<net::StateEntry> all;
-        for (auto const& [name, value] : current)
+        size_t zeros = 0;
+        for (auto const& [name, value] : current) {
             if (value != 0) Entry(*d, name, value, all);
+            else if (fullZeros && d->zeroed.count(name) && Entry(*d, name, 0, all)) ++zeros;
+        }
         Send(*d, all);
-        Logf("story: full %s state (%zu entries) for player %u", d->label, all.size(), from);
+        Logf("story: full %s state (%zu entries, %zu of them cleared here) for player %u", d->label, all.size(), zeros, from);
         return;
     }
     if (net::IsHost()) {
@@ -176,6 +192,7 @@ void OnStates(uint8_t from, uint8_t kind, net::StateEntry const* entries, int co
         for (int i = 0; i < count; ++i) {
             auto it = current.find(entries[i].name);
             if (it == current.end()) continue;
+            Track(*d, it->first, it->second);
             d->known[it->first] = it->second;
             Entry(*d, it->first, it->second, result);
         }
@@ -211,6 +228,7 @@ void Poll(Domain& d)
         auto it = d.known.find(name);
         if (it != d.known.end() && it->second == value) continue;
         Logf("story: local %s %s=%d", d.label, name.c_str(), static_cast<int>(value));
+        Track(d, name, value);
         d.known[name] = value;
         Entry(d, name, value, changes);
     }
@@ -250,8 +268,9 @@ void Report(LogFn log)
     for (Domain const& d : domains) {
         size_t longest = 0;
         for (auto const& entry : d.known) longest = entry.first.size() > longest ? entry.first.size() : longest;
-        sprintf_s(line, "STORY kind=%s longest=%zu disabled=%d primed=%d known=%zu sent=%u received=%u applied=%u forced=%u claims=%u requests=%u skipped=%u",
-                  d.label, longest, disabled, d.primed, d.known.size(), d.sent, d.received, d.applied, d.forced, d.claims, d.requests, d.skipped);
+        sprintf_s(line, "STORY kind=%s longest=%zu disabled=%d primed=%d known=%zu sent=%u received=%u applied=%u forced=%u claims=%u requests=%u skipped=%u zeroed=%zu",
+                  d.label, longest, disabled, d.primed, d.known.size(), d.sent, d.received, d.applied, d.forced, d.claims, d.requests, d.skipped,
+                  d.zeroed.size());
         log(line);
     }
     log("STORY end");
@@ -261,6 +280,12 @@ void Disable(LogFn log)
 {
     disabled = true;
     log("STORYOFF ok=1");
+}
+
+void ZerosOff(LogFn log)
+{
+    fullZeros = false;
+    log("STORYZEROSOFF ok=1 (the full state leaves out what was cleared)");
 }
 
 void Info(char const* name, bool give, LogFn log)

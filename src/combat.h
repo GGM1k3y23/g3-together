@@ -14,6 +14,10 @@ void Tick();  // installs the filter once the game's scripts are registered
 using LogFn = void (*)(char const*);
 void HitPuppet(char const* id, LogFn log);  // QA: hit player <id>'s puppet the same way (its stumble, stumblediag)
 void HitNpc(char const* guid, LogFn log);  // QA: hit the NPC (GUID as the npcs report prints it) the way gCEntity::DoDamage does
+void HitNpcBurst(char const* argument, LogFn log);  // QA, client (stage W5): "<guid>_<count>" lethal hit claims in one frame
+void KillOnceOff(LogFn log);   // QA negative control (stage W5): kills and rewards not counted per victim (as before 23.10.)
+void KillReport(LogFn log);    // QA: KILLONCE line
+void OnWorldChange();          // a load or another world: the dead of the last one are forgotten
 void GameString(char const* rva, LogFn log);  // QA: text of a bCString global in Game.dll
 void HitPuppet(int playerId, LogFn log);  // QA: host hits a player's puppet the same way
 void GiveXp(char const* guid, LogFn log);   // QA: GiveXP(hero, NPC, -1) and the result

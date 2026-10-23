@@ -16,6 +16,7 @@ using LogFn = void (*)(char const*);
 void Event(char const* action, char const* name, LogFn log);  // QA: event | setevent | clearevent <name>
 void Report(LogFn log);   // QA: one STORY line per kind, then "STORY end"
 void Disable(LogFn log);  // QA negative control: stop sending and applying story state
+void ZerosOff(LogFn log); // QA negative control (host, stage W4): the full state without the values cleared since
 void Info(char const* name, bool give, LogFn log);  // QA: show (or mark as told) one dialog option
 void InfoCandidates(LogFn log);                      // QA: dialog options not told yet, then "INFOS end"
 void Talk(char const* npcName, LogFn log);  // QA diagnostic: start a dialog between the hero and this NPC
