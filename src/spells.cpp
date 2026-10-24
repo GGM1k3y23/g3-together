@@ -37,7 +37,9 @@ struct Spec {
 const Spec Specs[] = {{"MagicHealOther", OnPlayer},  {"MagicSleep", OnNpc},           {"MagicFear", OnNpc},
                       {"MagicCharm", OnNpc},         {"MagicStun", AroundCaster},     {"MagicHypnosis", AroundCaster},
                       {"MagicWordOfControl", TakeOver}, {"MagicTameAnimal", TakeOver}, {"MagicPoison", OnNpc, "It_Spell_Poison"},
-                      {"MagicDisease", OnNpc, "It_Spell_Disease"}, {"MagicCallAnimals", AroundCasterAt}};
+                      {"MagicDisease", OnNpc, "It_Spell_Disease"}, {"MagicCallAnimals", AroundCasterAt},
+                      // P6: bloodlust sets the target on someone near it (AssessTarget, duel), or on the caster (re/out/p6-bloodlust.c)
+                      {"MagicBloodlust", OnNpc}};
 constexpr int Count = sizeof(Specs) / sizeof(Specs[0]);
 gFScript originals[Count] = {};
 bool installed = false, mirror = true;
@@ -141,7 +143,9 @@ GEInt GE_STDCALL Wrap(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid other
     return result;
 }
 
-const gFScript wrappers[Count] = {&Wrap<0>, &Wrap<1>, &Wrap<2>, &Wrap<3>, &Wrap<4>, &Wrap<5>, &Wrap<6>, &Wrap<7>, &Wrap<8>, &Wrap<9>, &Wrap<10>};
+const gFScript wrappers[] = {&Wrap<0>, &Wrap<1>, &Wrap<2>, &Wrap<3>, &Wrap<4>, &Wrap<5>, &Wrap<6>, &Wrap<7>, &Wrap<8>, &Wrap<9>, &Wrap<10>, &Wrap<11>};
+// One wrapper per spec: a missing one put a null function into the script table (a client crashed casting bloodlust, 24.10.).
+static_assert(sizeof(wrappers) / sizeof(wrappers[0]) == Count, "one Wrap<I> per entry of Specs");
 
 // Jump from `target` to `detour`; the returned trampoline runs the 6 stolen bytes and continues in the original.
 void* JumpTo(unsigned char* target, void* detour)
@@ -272,7 +276,7 @@ void Tick()
     }
     installed = true;
     Log("spells: wrappers installed (MagicHealOther; MagicSleep, MagicFear, MagicCharm, MagicStun, MagicHypnosis; MagicWordOfControl, "
-        "MagicTameAnimal; MagicPoison, MagicDisease; MagicCallAnimals)");
+        "MagicTameAnimal; MagicPoison, MagicDisease; MagicCallAnimals; MagicBloodlust)");
     if (!tickTried) InstallTick();
 }
 

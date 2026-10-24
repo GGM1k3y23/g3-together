@@ -7,6 +7,10 @@
 // someone else (the game counts before _AI_TakeItem) is taken back. personal: every machine keeps its own counters.
 #pragma once
 
+#include <cstdint>
+
+class eCEntity;
+
 namespace g3t::enclaves {
 using LogFn = void (*)(char const*);
 void Start();
@@ -18,4 +22,17 @@ void KeepLocalOff(LogFn log);                      // QA negative control: host 
 void PauseScan(char const* ms, LogFn log);         // QA: no scan for ms milliseconds
 void AddCrime(char const* argument, LogFn log);    // QA: "<enclave>-<crime>-<n>", a deed counted here
 bool Together();  // reputation = together (the host's mode): what a witness holds against one player, it holds against all
+// P7 (plan to 90 %; C re/findings/notify-enclave-murder-followup-20261024-c.md): the game counts a murder in NotifyEnclave
+// (mode 0, from the victim's Kill) only when the killer is this machine's hero or one of its party. A lethal claim of
+// another machine's player (combat.cpp) kills with OnCheatKill, whose Kill names no player: no town counted it
+// (murderdiag 24.10.: the host's hero +1 at Ishtar, the client's kill +0). NoteRemoteKill marks such a victim before its
+// death; the wrapped NotifyEnclave then counts that murder once, under the game's own conditions (town, not Flee, Faring's
+// three orcs, GetPoliticalAttitude(victim, town) == 1, the killer not Montera_Orc_02..05), before the game's own steps.
+// shared/together: into this machine's counters (the sync carries it); personal: to the killer's machine (EnclaveCredit).
+void NoteRemoteKill(uint8_t const victim[16], uint8_t player, eCEntity* actor);
+void RemoteMurdersOff(LogFn log);  // QA negative control: such murders count nowhere (as before 24.10.)
+// QA murdercand "<enclave>": its members with the game's own murder conditions. QA cheatkill "<NPC>": this machine's hero
+// kills it with OnCheatKill (which names no killer: it counted nothing, murderdiag 24.10.).
+void MurderCandidates(char const* enclave, LogFn log);
+void CheatKill(char const* name, LogFn log);
 }

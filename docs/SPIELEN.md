@@ -109,13 +109,17 @@ beschriebenen Tests liefen auf einem PC mit zwei Spielkopien; Spielen über das 
   Host, weit weg von ihm bei dem Mitspieler, der zuerst dort war. Kommt der andere dazu, sieht er dieselbe Gegend.
 - Schaden: Einen Treffer auf ein NPC entscheidet der Rechner, bei dem dieses NPC läuft. Erfahrung bekommt, wer
   tötet. Tötet ein Begleiter oder eine Beschwörung eines Spielers ein NPC, bekommt dieser Spieler die Erfahrung;
-  tötet ein anderes NPC es, bekommt niemand Erfahrung.
+  tötet ein anderes NPC es, bekommt niemand Erfahrung. Einen Menschen oder Ork schlägt dein letzter Treffer wie im
+  Einzelspiel nieder (Erfahrung, kein Mord); erst ein Schlag auf den am Boden Liegenden tötet ihn.
 - Gefolgsleute folgen dem Spieler, der sie angeworben hat, auch weit weg vom Host. Entlässt er sie, gehören sie
   wieder dem Host.
 - Quests und bereits geführte Dialoge sind gemeinsam; Quest-Belohnungen bekommen alle. Kill-Aufträge zählen auch Gegner, die
   der Mitspieler weit weg vom Host erledigt. Gibt einer eine Quest ab, bekommen **alle** die Erfahrung dafür, das **Gold** nur der,
   der abgibt.
-- Gegenstände, Truhen, Leichen und Handel: Was einer nimmt, ist für alle weg.
+- Ein Hocker, eine Bank, ein Lagerfeuer oder ein anderer Platz hat einen Benutzer: Solange dein Mitspieler ihn benutzt,
+  kommst du nicht dran („<Name> benutzt das gerade.“), und NPCs nehmen ihn auch nicht.
+- Gegenstände, Truhen, Leichen und Handel: Was einer nimmt, ist für alle weg. Wem einer die Taschen geleert hat, den kann
+  auch der andere nicht mehr bestehlen.
 - Uhrzeit: Es ist für alle dieselbe Tageszeit; wer schläft, stellt die Zeit für alle vor.
 - Tote NPCs liegen bei allen am Boden, auch wenn sie weit weg vom Host gestorben sind und man erst später hinkommt.
 - Niederschlag wie im Einzelspiel: Schlägt dich eine Wache, ein Duell- oder Arenagegner bewusstlos (ohne dass du sterben
@@ -162,8 +166,8 @@ beschriebenen Tests liefen auf einem PC mit zwei Spielkopien; Spielen über das 
 | Das Spiel kann während eines Kampfes oder kurz nach dem Tod eines Gegners abstürzen. Der bekannte Absturz im Ork-Überfall ist abgesichert, andere sind nicht ausgeschlossen. | Vor schwierigen Kämpfen speichert der Host. Bei einem Absturz Uhrzeit und Gegner notieren, beide Logs vor dem nächsten Start sichern. Danach lädt der Host den letzten guten Spielstand; der Mitspieler wird automatisch mitgeladen (ist sein eigenes Spiel abgestürzt, startet er es neu und wartet im Hauptmenü) und tritt wieder bei. |
 | Die Figur des Partners läuft unter Treffern kurz hinterher oder zeigt eine Bewegung ungenau. | Kurz zusammenkommen und abwarten. Wenn nötig bringt euch **Bild ab** wieder zusammen. Bleiben Gegner, Lebenspunkte oder die Position deutlich verschieden, den Kampf unterbrechen und den Fehler notieren. |
 | Nach dem Beitritt können Gegner oder Begleiter bei euch unterschiedlich handeln. | Erst kurz in der Nähe des Hosts prüfen, ob ihr dieselben Figuren und Bewegungen seht. Bei anhaltenden Unterschieden gemeinsam vom letzten guten Spielstand neu beginnen; Logs vorher sichern. |
-| Gleichzeitiges Benutzen eines Lagerfeuers, Sitzplatzes oder anderen festen Arbeitsplatzes kann einen Spieler festhalten. | Solche Plätze nacheinander benutzen. Bleibt jemand hängen, keine weiteren Aktionen darauf starten; Fehler notieren und gemeinsam neu laden. |
-| Kämpfen oder Speichern in Tiergestalt ist noch nicht ausreichend geprüft. | Vor Kämpfen und vor dem Speichern zurückverwandeln. |
+| „<Name> benutzt das gerade.“, wenn du dich setzen oder ein Lagerfeuer, einen Amboss oder einen anderen Platz benutzen willst | Dein Mitspieler benutzt ihn gerade; warte, bis er aufsteht. Mit Bots geprüft sind nur Hocker; bleibt doch jemand an so einem Platz hängen, den Fehler notieren und gemeinsam neu laden. |
+| Speichern in Tiergestalt ist noch nicht geprüft. | Vor dem Speichern zurückverwandeln. |
 | Ein beherrschter oder gezähmter NPC (Wort der Kontrolle, Tierzähmung) folgt nicht zuverlässig oder verlässt die Gruppe. | Verlasst euch vorerst nicht darauf. Bei einem Fehler NPC und Uhrzeit notieren; erneutes Zaubern ist kein gesicherter Ersatz. |
 | Betäubung und Hypnose, vom Mitspieler gezaubert, wirken nur über den Host. | Wirkt es nicht, notieren; der Host kann den Zauber selbst sprechen. |
 | Eine beschworene Kreatur bleibt beim anderen Spieler stehen, wenn ihr euch weit entfernt. | Beschwörungen nur nutzen, wenn ihr zusammen seid. Passiert es doch, Ort und Kreatur notieren. |
@@ -205,8 +209,11 @@ beschriebenen Tests liefen auf einem PC mit zwei Spielkopien; Spielen über das 
 - Schlafen: Wer schläft, stellt die Uhr für alle vor (die Heilung durch den Schlaf gilt nur für den Schläfer).
 - Verwandlungen (z. B. in einen Wolf oder eine Blutfliege): Der andere Spieler sieht das Tier, wie es läuft und sich
   bewegt, und nach der Rückverwandlung wieder den Helden. Getestet mit Wolf und Blutfliege, ausgelöst wie der
-  Verwandlungszauber des Spiels. Noch nicht getestet: Kämpfe in Tiergestalt (Treffer auf das Tier, Schläge des Tiers)
-  und Speichern während einer Verwandlung; dabei kann es noch Fehler geben.
+  Verwandlungszauber des Spiels. In Tiergestalt kämpfst du als du selbst: Deine Treffer zählen als deine (Niederschlag,
+  Tötung, Erfahrung, Mord), und Treffer von Gegnern verletzen das Tier, nicht deinen versteckten Menschenkörper (mit Bots
+  geprüft: Wolf). Noch nicht getestet: Speichern während einer Verwandlung.
+- Zaubert dein Mitspieler Hagelsturm, zeigt dein Rechner den Hagel um deinen eigenen Helden; Schaden macht er dort keinen
+  (nur der Hagel des Zaubernden trifft, wie im Einzelspiel).
 - Gegner greifen beide Spieler an. Wie ein NPC zum Mitspieler steht, richtet sich nach dem Helden des Rechners, der dieses
   NPC gerade berechnet: Hat der Host bei den Orks einen schlechten Ruf, gilt der beim Host auch für den Mitspieler.
 - Ruf bei Städten und Lagern, einzustellen mit `reputation` in der INI des Hosts:
@@ -215,8 +222,9 @@ beschriebenen Tests liefen auf einem PC mit zwei Spielkopien; Spielen über das 
   - `together`: wie `shared`, und ein NPC, der einen von euch bei einer Tat gesehen hat, hält sie euch beiden vor (er
     weist beide ab).
   - `personal`: jeder hat seinen eigenen Ruf; was dein Mitspieler tut, ändert deinen nie.
-  Noch nicht gezählt: ein Mord an einem NPC, den der Rechner des anderen Spielers berechnet (im Test gesehen: der
-  Mitspieler tötete einen NPC nahe beim Host, und keine Stadt zählte ihn).
+  Ein Mord zählt wie im Einzelspiel für die Stadt des Opfers, auch wenn der Rechner des anderen Spielers das Opfer
+  berechnet (`personal`: im eigenen Ruf des Mörders). Einen Menschen oder Ork schlägst du zuerst nieder; erst ein Schlag
+  auf den am Boden Liegenden tötet ihn.
 - Nicht getestet: Monster, die auf einen am Boden liegenden Helden weiter einschlagen; Spielen über das echte Internet (getestet wurde auf einem PC mit zwei Spielkopien);
   mehr als zwei Spieler. Alles hier wurde mit Bots getestet. Ein erster kurzer Test mit Menschen (zwei Fenster auf einem
   PC) fand zwei Fehler: Gegner ignorierten den Mitspieler, und Kämpfe waren beim Mitspieler nicht zu sehen. Beide sind

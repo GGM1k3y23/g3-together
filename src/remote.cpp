@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "remote.h"
+#include "occupancy.h"
 
 #include "ai.h"
 #include "body.h"
@@ -134,6 +135,7 @@ Entity ByKey(std::string const& key)
 void Forget(int id, eCEntity* entity)
 {
     if (!entity) return;
+    occupancy::Forget(id, entity);  // a stool or bench it sat on (the object's user)
     std::vector<Entity> candidates;
     if (byContacts) {
         for (auto const& key : contacts[id]) {

@@ -12,7 +12,7 @@
 
 namespace g3t::net {
 namespace {
-constexpr uint16_t ProtocolVersion = 47;  // 47: robbery (MsgRansack 34, gold and flag bit 4 in PlayerState), witnesses (MsgWitness 35), subtitles (DialogLineNote.text); 46: item quality in goods and offers; 45: send times in PlayerState and NpcsHeader (glide), armor/helmet/look, MsgGoods (31) and A's offers (32, 33); 36: MsgSummon; 37: MsgShot; 38: spell projectiles, MsgPlayerSpell; 39: MsgNpcSpell; 40: creatures; 41: town reputation (MsgEnclave); 42: world gate (MsgWorld); 43: MsgDialogLine; 44: up to 250 container entries
+constexpr uint16_t ProtocolVersion = 48;  // 48: HitNpcMsg.outcome (knock-outs by another machine's player), EnclaveCredit; 47: robbery (MsgRansack 34, gold and flag bit 4 in PlayerState), witnesses (MsgWitness 35), subtitles (DialogLineNote.text); 46: item quality in goods and offers; 45: send times in PlayerState and NpcsHeader (glide), armor/helmet/look, MsgGoods (31) and A's offers (32, 33); 36: MsgSummon; 37: MsgShot; 38: spell projectiles, MsgPlayerSpell; 39: MsgNpcSpell; 40: creatures; 41: town reputation (MsgEnclave); 42: world gate (MsgWorld); 43: MsgDialogLine; 44: up to 250 container entries
 enum : uint8_t { MsgHello = 1, MsgWelcome = 2, MsgState = 3, MsgLeave = 4, MsgNpcs = 5, MsgMotionName = 6, MsgHitNpc = 7, MsgHitPlayer = 8, MsgStates = 9, MsgTalk = 10, MsgItem = 11, MsgContents = 12, MsgContainerTx = 13, MsgTxResult = 14, MsgWatch = 15, MsgKilled = 16, MsgRefused = 17, MsgDeath = 18, MsgCampaign = 19, MsgFileChunk = 20, MsgFileDone = 21, MsgClock = 22, MsgWorldState = 23, MsgSummon = 24, MsgShot = 25, MsgPlayerSpell = 26, MsgNpcSpell = 27, MsgEnclave = 28, MsgWorld = 29, MsgDialogLine = 30, MsgGoods = 31 };
 // UDP payload per datagram (ENet default 1392 = up to 1420-byte IP packets): VPNs such as Hamachi carry about 1400, so
 // stay well below (C, re/findings/hamachi-net-c.md, 21.10.). ENet splits larger messages into fragments of this size.
@@ -33,7 +33,7 @@ struct Leave { uint8_t type; uint8_t id; };
 struct NpcsHeader { uint8_t type; uint32_t sequence; uint32_t sent; uint8_t count; uint8_t owner; };
 struct MotionNameMsg { uint8_t type; uint32_t hash; char name[96]; };
 // to: the player who applies it (the NPC's owner, the hit player); from: who sent it (set by the host).
-struct HitNpcMsg { uint8_t type; uint8_t guid[16]; int32_t delta; uint8_t weapon[16]; uint8_t to; uint8_t from; uint8_t npc[16]; };
+struct HitNpcMsg { uint8_t type; uint8_t guid[16]; int32_t delta; uint8_t weapon[16]; uint8_t to; uint8_t from; uint8_t npc[16]; uint8_t outcome; };
 struct HitPlayerMsg { uint8_t type; int32_t delta; uint8_t attacker[16]; uint8_t attackerPlayer; uint8_t to; };
 struct StatesHeader { uint8_t type; uint8_t kind; uint8_t count; };
 struct TalkMsg { uint8_t type; uint8_t begin; uint8_t guid[16]; };
@@ -285,7 +285,8 @@ void OnReceive(ENetPeer* peer, ENetPacket* packet)
                 return;
             }
         }
-        if (hitNpcHandler && message.from) hitNpcHandler(message.from, message.guid, message.delta, message.weapon, message.npc);
+        if (hitNpcHandler && message.from)
+            hitNpcHandler(message.from, message.guid, message.delta, message.weapon, message.npc, message.outcome);
     } else if (type == MsgHitPlayer && packet->dataLength == sizeof(HitPlayerMsg)) {
         HitPlayerMsg message;
         std::memcpy(&message, packet->data, sizeof(message));
@@ -632,10 +633,10 @@ void SetHitHandlers(HitNpcHandler npc, HitPlayerHandler player)
     hitPlayerHandler = player;
 }
 
-void SendHitNpc(uint8_t to, uint8_t const guid[16], int32_t delta, uint8_t const weapon[16], uint8_t const npc[16])
+void SendHitNpc(uint8_t to, uint8_t const guid[16], int32_t delta, uint8_t const weapon[16], uint8_t const npc[16], uint8_t outcome)
 {
     if (!host || to == localId) return;
-    HitNpcMsg message{MsgHitNpc, {}, delta, {}, to, localId, {}};
+    HitNpcMsg message{MsgHitNpc, {}, delta, {}, to, localId, {}, outcome};
     std::memcpy(message.guid, guid, 16);
     std::memcpy(message.weapon, weapon, 16);
     if (npc) std::memcpy(message.npc, npc, 16);

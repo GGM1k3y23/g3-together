@@ -15,6 +15,8 @@ Ein Ablauf für den ersten Abend zu zweit (ein Host, ein Mitspieler): Beitritt, 
 - [ ] Vorher den Gothic-3-Spielstandordner beider Personen sichern. Während des Abends einen klar benannten Test-Spielstand verwenden.
 - [ ] Verbindung wählen: gleiches LAN oder privates VPN. Host-IP/VPN-Adresse und Firewall-Regel nur dem Mitspieler geben. Der Host braucht eingehendes UDP auf Port 34567. Die Verbindung über echtes Internet gilt noch nicht als von Menschen getestet.
 - [ ] Beide notieren ihre Rolle und lokale Uhrzeit/Zeitzone für spätere Fehlerberichte.
+- [ ] Optional: statt von Hand mit `Einrichten.cmd` aus dem Paket einrichten und notieren, was dabei schiefging. Es ist bisher
+  nur an Testordnern ausprobiert.
 
 ### INI und Kompatibilität
 
@@ -62,6 +64,26 @@ Die Beispiel-INIs verwenden `language = de`, passend zu den unten zitierten Meld
 | 82–90 min | Wiederbeitritt und Fehlerpaket | Falls noch Zeit ist, einen sauberen Leave und Wiederbeitritt im selben Prozess oder nach Neustart prüfen. Kampagne, Heldenaufzeichnung, NPC-Besitz und Begleiterzustand notieren. Bei Fehlern beide Logpakete nach der folgenden Anleitung erstellen und privat an den Host geben. |
 
 Wenn nur 60 Minuten verfügbar sind: zuerst Beitritt, Kampf, Aufhelfen, Gefolgsmann anwerben/entlassen und Host-Speichern durchführen. Getrennte Regionen und Wiederbeitritt als eigene Folgerunde planen.
+
+### Optional: 30 Minuten mehr für die Neuheiten von 0.3.0
+
+| Abschnitt | Schritte und Beobachtungen |
+|---|---|
+| Host nicht erreichbar | Vor dem Abend startet der Mitspieler einmal mit falscher Adresse in der INI: Nach etwa 15 Sekunden steht in der obersten Zeile des Hauptmenüs, dass der Host nicht erreichbar ist, mit dieser Adresse und dem Port. |
+| Mitgehörter Dialog | Einer spricht mit einem NPC, der andere steht höchstens 20 m entfernt und hat die Untertitel des Spiels an: Er hört die Zeilen und liest sie oben im Bild, in seiner eigenen Spielsprache. |
+| Diebstahl vor Zeugen | Der Mitspieler nimmt einen Gegenstand, der einer Stadt gehört, während eine Wache oder ein Bürger aus dem Gebiet des Hosts zusieht: Dieser NPC geht auf den Mitspieler los, wie er es beim Host täte. |
+| Ausgeraubt nach Niederschlag | Eine Wache schlägt den Mitspieler bewusstlos (nicht tot): Er steht nach einer Weile von selbst auf, die Wache nimmt die Hälfte seines Goldes, und er sieht „<Name> hat dir N Gold abgenommen.“. Der Host kann ihn währenddessen nicht ausplündern. |
+| Ruf `together` | Nur wenn der Host `reputation = together` einstellt: Nach dem Diebstahl oben weist derselbe NPC auch den Host ab. |
+### Optional: 20 Minuten mehr für die Neuheiten von 0.4.0
+
+| Abschnitt | Schritte und Beobachtungen |
+|---|---|
+| Prügelei | Der Mitspieler verprügelt einen Bürger aus dem Gebiet des Hosts, bis er fällt: Der Bürger ist bewusstlos, nicht tot, der Mitspieler bekommt die Erfahrung, der Mordzähler der Stadt bleibt gleich. Ein Schlag auf den am Boden Liegenden tötet ihn. |
+| Mord | Nach so einer Tötung in einer Stadt, die nicht flieht, gilt sie als Mord (Wachen reagieren, die Tat taucht im Ruf-Gespräch auf), egal welcher Spieler getötet hat. |
+| Taschendiebstahl | Einer bestiehlt einen Bürger (braucht das Talent): Der andere kann denselben Bürger nicht mehr bestehlen. |
+| Sitzplatz | Einer setzt sich auf einen Hocker oder eine Bank, der andere versucht denselben Platz: „<Name> benutzt das gerade.“, und er setzt sich nicht. Steht der Erste auf, kann der andere sich setzen. |
+| Tiergestalt | Ein Spieler in Wolfsgestalt (Zauber oder Trank) kämpft gegen einen Gegner: Treffer und Kill zählen für diesen Spieler, Treffer des Gegners verletzen den Wolf. |
+| Seltene Orte | Wer auf einen Orkfelsen zum Heben, eine Innos- oder Beliar-Statue zum Beten oder einen Piratenschatz zum Ausgraben stößt: Einer benutzt ihn, der andere schaut zu, dann versucht es der andere. Notieren, was jeder sieht (Lage des Felsens, Wirkung, Beute). Die Bots haben diese Orte noch nicht gefunden. |
 
 ## Bei einem Fehler
 

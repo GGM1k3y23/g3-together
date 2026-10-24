@@ -17,8 +17,11 @@ copies the mod and writes `g3together.ini`.
 - Playing the campaign together: you see each other move, fight, cast spells and use the world. Armor and helmet show on
   the other player, and each player can choose their own look (`look = Diego` in their INI).
 - Fighting together: hits, kills and deaths count on both PCs; experience goes to whoever earned it, quest rewards to everyone.
+- Beating people as in single-player: a human or orc you beat is knocked out, a blow on them lying there kills them, and
+  a murder counts for their town whichever PC simulates them.
 - Quests and dialogs are shared; a player standing nearby hears the other player's conversation.
 - Looting corpses and chests, Quick Loot and trading with NPCs: both players see the same contents, nothing is duplicated.
+  A pocket one player picked is picked for both.
 - Trading with your partner: talk to their character and choose "Show me your wares!". The game's own trade window opens
   with their goods and gold; your partner confirms every trade.
 - Your partner on the map and the compass: an arrow with their name on the map, an arrow at the compass's edge.
@@ -35,7 +38,6 @@ copies the mod and writes `g3together.ini`.
 
 ## Known limitations
 
-- A murder of an NPC that the other player's PC simulates is not counted for the town yet.
 - Trading was tested by bots through the game's own trade functions; dragging items with the mouse in the trade window has
   not been tried by a person yet.
 - Only two players have been tested; more may work but are untested.

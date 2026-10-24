@@ -44,8 +44,11 @@ void DeadPoseReport(LogFn log);  // QA: DEADPOSE line
 void LayDownCorpse(eCEntity* entity);  // a death applied here outside mirroring (journal.cpp): lay the body down like a dead mirror
 unsigned HoldChanges();  // QA: weapons put into mirrors' hands so far  // QA negative control: mirrors hold no weapons and keep their stance  // QA negative control: saved companions are not handed over
 bool Claimed(eCEntity const* entity);  // client: taken over by this player
-void SendInfo(char const* name, LogFn log);  // QA: NPCSEND line, why this machine last did not send the named NPC (or sent)
+void SendInfo(char const* name, LogFn log);  // QA: NPCSEND line, why this machine last did not send the NPC (name or GUID), or sent
 void JoinGraceOff(LogFn log);  // QA negative control (host): take a joining client's snapshots of NPCs near the host
+void ContestOff(LogFn log);    // QA negative control (host): take a client's NPC that this machine still processes just outside its range
+void ClaimRecord(char const* guid, LogFn log);  // QA (client): one snapshot of that host NPC as this machine's, at its hero
+void EdgeReport(LogFn log);    // QA (host): EDGENPC lines, the NPCs processed here 40-60 m from the nearest player
 void HostWinsOff(LogFn log);  // QA negative control (client): keep simulating an NPC itself although the host sends it
 void OwnOff(LogFn log);      // QA negative control (client): send none of its own NPCs
 uint8_t OwnerOf(eCEntity const* entity);  // player simulating this mirrored NPC, 0 if simulated here

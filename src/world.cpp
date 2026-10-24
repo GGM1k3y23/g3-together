@@ -140,10 +140,12 @@ void UseInfo(char const* name, LogFn log)
     float at[3] = {};
     if (hero) PositionOf(hero, at);
     Entity focus = hero ? self.Focus.GetFocusEntity() : Entity();
-    sprintf_s(line, "USEINFO %s hero_task=%s hero_state=%s hero_pos=%.0f_%.0f_%.0f hero_ani=%d focus=%s focus_is_it=%d", text,
+    // The game's own rule for what the hero may choose (-1: never; an interact object with a user, re/out/p1-focus.c).
+    const GEInt priority = hero ? GetScriptAdminExt().CallScript(bCString("GetFocusEntityPriority"), hero, target, 0) : -2;
+    sprintf_s(line, "USEINFO %s hero_task=%s hero_state=%s hero_pos=%.0f_%.0f_%.0f hero_ani=%d focus=%s focus_is_it=%d focus_priority=%d", text,
               self.Routine.GetCurrentTask().GetText(), self.Routine.GetCurrentState().GetText(), at[0], at[1], at[2],
               hero ? static_cast<int>(self.Routine.AniState) : -1, focus.GetInstance() ? focus.GetName().GetText() : "-",
-              focus.GetInstance() == target ? 1 : 0);
+              focus.GetInstance() == target ? 1 : 0, priority);
     log(line);
 }
 

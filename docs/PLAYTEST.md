@@ -21,6 +21,8 @@ This checklist also covers recording bugs and collecting logs with `tools\collec
 - [ ] Choose a LAN or private VPN connection. Share the host's address and firewall details privately with the other
   player. The host needs incoming UDP on port 34567. Human play over the real internet remains unverified.
 - [ ] Both players record their role and local time zone for later bug reports.
+- [ ] Optional: set up with `Setup.cmd` (German: `Einrichten.cmd`) from the package instead of copying by hand, and note
+  anything it got wrong. It has only been tried on test folders.
 
 ### INI and compatibility
 
@@ -77,6 +79,26 @@ can choose independently; the setting changes only mod messages.
 With only 60 minutes, prioritize joining, combat, helping up, recruiting and dismissing a companion,
 and saving on the host. Test separate regions and rejoining in a follow-up session.
 
+### Optional: 30 more minutes for the features of 0.3.0
+
+| Stage | Steps and observations |
+|---|---|
+| Host not reachable | Before the session, the joining player starts once with a wrong address in the INI: after about 15 seconds the top line of the main menu says the host is not reachable, with that address and port. |
+| Overheard dialog | One player talks to an NPC, the other stands within 20 m with the game's subtitles on: they hear the lines and read them at the top of the screen, in their own game language. |
+| Theft in front of a witness | The joining player takes an item that belongs to a town while a guard or citizen of the host's region watches: that NPC goes after the joining player, as it would after the host. |
+| Robbed when knocked out | Let a guard knock the joining player out (not kill): they stand up by themselves after a while, the guard takes half their gold, and they see "<Name> robbed you of N gold.". The host cannot loot them meanwhile. |
+| Reputation `together` | Only if the host sets `reputation = together`: after the theft above, the same NPC refuses to talk to the host too. |
+### Optional: 20 more minutes for the features of 0.4.0
+
+| Stage | Steps and observations |
+|---|---|
+| Brawl | The joining player beats a citizen of the host's region until they fall: they are knocked out, not dead, and the joining player gets the experience; the town's murder count does not change. A blow on the one lying there kills them. |
+| Murder | After such a kill in a town that is not fleeing, the town treats it as a murder (guards react, the crime shows in the reputation dialog), with either player as the killer. |
+| Pickpocketing | One player picks a citizen's pocket (needs the skill): the other can no longer pick the same citizen. |
+| Seat | One player sits on a stool or bench; the other tries the same seat: "<Name> is using this." and they do not sit down. When the first stands up, the other can sit. |
+| Animal form | A player turned into a wolf (spell or potion) fights an enemy: hits and kills count for that player, and enemy hits hurt the wolf. |
+| Rare places | If you come across an orc boulder you can lift, an Innos or Beliar statue to pray at, or a pirate treasure to dig up: one player uses it while the other watches, then the other tries the same. Note what each of you sees (the boulder's position, the effect, the loot). Bots have not found these places yet. |
+
 ## Recording a bug
 
 Each player records a separate entry for each problem:
@@ -124,6 +146,6 @@ share unredacted INI files, saves, campaign sidecars or a complete Documents fol
   two bugs, both fixed and checked with bots. Real internet play remains untested.
 - Only two players were tested.
 - Companions are restored after loading by player name. Changing your name loses that association.
-- If the host loads another save during a session, the other player must disconnect and rejoin.
+- If the host loads another save during a session, the other player is loaded into it automatically.
 - Untested: monsters attacking downed heroes, the actual bed dialog, and the
   mouse controls of the trade window (dragging items, its buttons). Bots trade through the game's own trade functions.

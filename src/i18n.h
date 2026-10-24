@@ -56,6 +56,7 @@ enum Message
     HostReached,
     RobbedBy,
     Robbed,
+    PlaceInUse,
     MessageCount
 };
 

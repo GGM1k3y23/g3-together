@@ -17,6 +17,8 @@
 #include "mapmarks.h"
 #include "ransack.h"
 #include "witness.h"
+#include "pickpocket.h"
+#include "occupancy.h"
 #include "dialogaudio.h"
 #include "explore.h"
 #include "npcs.h"
@@ -337,6 +339,37 @@ bool RunPlayerAction(const char* action)
         g3t::trade::CloseCommand(&Log);
     } else if (!std::strcmp(action, "tradeholdoff")) {
         g3t::trade::HoldOff(&Log);
+    } else if (!std::strcmp(action, "murdercand")) {
+        g3t::enclaves::MurderCandidates(argument, &Log);
+    } else if (!std::strcmp(action, "cheatkill")) {
+        g3t::enclaves::CheatKill(argument, &Log);
+    } else if (!std::strcmp(action, "occupancy")) {
+        g3t::occupancy::Report(&Log);
+    } else if (!std::strcmp(action, "usesyncoff")) {
+        g3t::occupancy::Off(&Log);
+    } else if (!std::strcmp(action, "unuse")) {
+        g3t::occupancy::StandUp(&Log);
+    } else if (!std::strcmp(action, "pickcands")) {
+        g3t::pickpocket::Candidates(&Log);
+    } else if (!std::strcmp(action, "pickinfo")) {
+        g3t::pickpocket::Info(argument, &Log);
+    } else if (!std::strcmp(action, "pickpocket")) {
+        g3t::pickpocket::Pick(argument, &Log);
+    } else if (!std::strcmp(action, "thiefprep")) {
+        g3t::pickpocket::ThiefPrep(&Log);
+    } else if (!std::strcmp(action, "pickpocketoff")) {
+        g3t::pickpocket::Off(&Log);
+    } else if (!std::strcmp(action, "picksync")) {
+        g3t::pickpocket::Report(&Log);
+    } else if (!std::strcmp(action, "remotemurdersoff")) {
+        g3t::enclaves::RemoteMurdersOff(&Log);
+    } else if (!std::strcmp(action, "shapehitsoff")) {
+        g3t::combat::ShapeHitsOff(&Log);
+    } else if (!std::strcmp(action, "remotekooff")) {
+        g3t::combat::RemoteKnockOutsOff(&Log);
+    } else if (!std::strcmp(action, "questdump")) {
+        char path[MAX_PATH] = {};
+        if (Path(path, "quests.tsv")) g3t::explore::QuestDump(path, &Log);
     } else if (!std::strcmp(action, "ransack")) {
         g3t::ransack::Report(&Log);
     } else if (!std::strcmp(action, "ransackoff")) {
@@ -435,6 +468,12 @@ bool RunLaterAction(const char* action)
         g3t::npcs::SendInfo(argument, &Log);
     } else if (!std::strcmp(action, "joingraceoff")) {
         g3t::npcs::JoinGraceOff(&Log);
+    } else if (!std::strcmp(action, "contestoff")) {
+        g3t::npcs::ContestOff(&Log);
+    } else if (!std::strcmp(action, "claimrecord")) {
+        g3t::npcs::ClaimRecord(argument, &Log);
+    } else if (!std::strcmp(action, "edgenpcs")) {
+        g3t::npcs::EdgeReport(&Log);
     } else if (!std::strcmp(action, "hostwinsoff")) {
         g3t::npcs::HostWinsOff(&Log);
     } else if (!std::strcmp(action, "doors")) {

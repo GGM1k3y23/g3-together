@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "doors.h"
+#include "pickpocket.h"
+#include "occupancy.h"
 #include "infocmd.h"
 
 #include "body.h"
@@ -133,6 +135,14 @@ void Apply(net::WorldState const& s, uint8_t from)
 {
     if (s.kind == 10) {  // a door or lock state (doors.cpp)
         doors::OnState(from, s);
+        return;
+    }
+    if (s.kind == 12) {  // a picked pocket (pickpocket.cpp)
+        pickpocket::OnState(from, s);
+        return;
+    }
+    if (s.kind == 13) {  // an object in use (occupancy.cpp)
+        occupancy::OnState(from, s);
         return;
     }
     if (s.kind == DialogXp) {  // another player's dialog gave experience: the same reward for this player's hero

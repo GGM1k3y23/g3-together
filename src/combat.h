@@ -29,6 +29,8 @@ void FleeFrom(char const* guid, LogFn log);     // QA stage V5: an NPC flees fro
 void Report(LogFn log);                    // QA: HP of the local hero and counters
 void Uninstall(LogFn log);                  // QA negative control: let every hit through
 void NpcHitsOff(LogFn log);
+void RemoteKnockOutsOff(LogFn log);
+void ShapeHitsOff(LogFn log);  // QA negative control (P6): an animal form's hits go out as one of our NPCs' (as before 24.10.)  // QA negative control (P7): a client's lethal claim kills, never knocks out (as before 24.10.)
 void ReactHitsOff(LogFn log);
 void ArenaRuleOff(LogFn log);  // QA negative control: hits on an NPC in a duel or arena bout count from anyone (as before)
 void ArenaReport(char const* name, LogFn log);

@@ -129,11 +129,15 @@ void SetNpcHandlers(NpcHandler npcs, MotionNameHandler names);
 // Damage, reliable. Client -> host: this client hit an NPC (by GUID) for delta (negative) hit points.
 // Host -> one client: an NPC hit that player's puppet for delta.
 // Any machine -> the NPC's owner `to` (through the host): this player hit it. weapon: template ID, zeros = none.
-// npc: the GUID of one of the sender's NPCs that hit it (zeros or null: the sender's hero).
-void SendHitNpc(uint8_t to, uint8_t const guid[16], int32_t delta, uint8_t const weapon[16], uint8_t const npc[16] = nullptr);
+// npc: the GUID of one of the sender's NPCs that hit it (zeros or null: the sender's hero). outcome: what the game decided
+// for this hit of the sender's hero on the sender's machine (its hit judgement runs before AddHitPoints), see HitOutcome.
+enum HitOutcome : uint8_t { HitUnjudged = 0, HitKnockOut = 1, HitDeath = 2 };
+void SendHitNpc(uint8_t to, uint8_t const guid[16], int32_t delta, uint8_t const weapon[16], uint8_t const npc[16] = nullptr,
+                uint8_t outcome = HitUnjudged);
 // attacker: the hitting NPC (GUID), or zeros with attackerPlayer = the player whose hero hit.
 void SendHitPlayer(uint8_t playerId, int32_t delta, uint8_t const attacker[16], uint8_t attackerPlayer);
-using HitNpcHandler = void (*)(uint8_t from, uint8_t const guid[16], int32_t delta, uint8_t const weapon[16], uint8_t const npc[16]);
+using HitNpcHandler = void (*)(uint8_t from, uint8_t const guid[16], int32_t delta, uint8_t const weapon[16], uint8_t const npc[16],
+                               uint8_t outcome);
 using HitPlayerHandler = void (*)(int32_t delta, uint8_t const attacker[16], uint8_t attackerPlayer);
 void SetHitHandlers(HitNpcHandler npc, HitPlayerHandler player);
 // Host -> one client: your hit killed the NPC with this GUID (the killer earns the experience).
@@ -350,8 +354,10 @@ using WitnessHandler = void (*)(uint8_t from, WitnessNote const& note);
 void SetWitnessHandler(WitnessHandler handler);
 // Town reputation (enclaves.cpp), reliable. Host -> clients (`to`, 0 = all): EnclaveState, the host's counters of one
 // enclave, and the host's reputation mode. Client -> host: EnclaveDelta (what this player's own deeds added to the
-// counters; suspect/known: the new values) or EnclaveRequest (send me every enclave).
-enum : uint8_t { EnclaveState = 1, EnclaveDelta = 2, EnclaveRequest = 3 };
+// counters; suspect/known: the new values) or EnclaveRequest (send me every enclave). Personal mode, the machine that
+// simulates a victim -> the killer's machine (client -> host, host -> that client): EnclaveCredit, a murder by that player
+// for its own counters (crime: added).
+enum : uint8_t { EnclaveState = 1, EnclaveDelta = 2, EnclaveRequest = 3, EnclaveCredit = 4 };
 #pragma pack(push, 1)
 struct EnclaveNote {
     uint8_t op = 0;

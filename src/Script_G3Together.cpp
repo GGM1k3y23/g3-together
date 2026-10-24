@@ -21,6 +21,8 @@
 #include "mapmarks.h"
 #include "ransack.h"
 #include "witness.h"
+#include "pickpocket.h"
+#include "occupancy.h"
 #include "dialogaudio.h"
 #include "config.h"
 #include "trace.h"
@@ -124,6 +126,7 @@ class Module : public eCEngineComponentBase
         g3t::infocmd::OnWorldChange();
         g3t::doors::OnWorldChange();
         g3t::enclaves::OnWorldChange();
+        g3t::occupancy::OnWorldChange();
         g3t::dialogaudio::OnWorldChange();
         g3t::containers::OnWorldChange();
         g3t::ransack::OnWorldChange();
@@ -185,6 +188,8 @@ class Module : public eCEngineComponentBase
         g3t::mapmarks::Tick();
         g3t::ransack::Tick();
         g3t::witness::Tick();
+        g3t::pickpocket::Tick();
+        g3t::occupancy::Tick();
         g3t::dialogaudio::Tick();
         g3t::offer::Tick();
         g3t::qa::Tick();

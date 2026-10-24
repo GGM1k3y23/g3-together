@@ -14,19 +14,28 @@ namespace g3t::transform {
 namespace {
 Entity original;  // the hero's own body while it is transformed (QA bookkeeping)
 
+int HitPoints(Entity& e)
+{
+    eCEntity* instance = e.GetInstance();
+    if (!instance) return -1;
+    if (instance->GetPropertySet(eEPropertySetType_PlayerMemory)) return e.PlayerMemory.GetHitPoints();
+    return instance->GetPropertySet(eEPropertySetType_DamageReceiver) ? static_cast<int>(e.DamageReceiver.HitPoints) : -1;
+}
+
 void Line(char const* prefix, LogFn log)
 {
-    char line[400], motion[96] = "-";
+    char line[460], motion[96] = "-";
     eCDynamicEntity* hero = gCSession::GetInstance().GetHero();
     Entity player = Entity::GetPlayer();
     if (hero) body::CurrentMotion(hero, motion, sizeof(motion));
     Entity self(hero);
-    sprintf_s(line, "%s hero=%s player=%s same=%d original=%s original_shown=%d transformed=%d remain=%.0f motion=%s", prefix,
+    sprintf_s(line, "%s hero=%s player=%s same=%d original=%s original_shown=%d transformed=%d remain=%.0f hero_hp=%d player_hp=%d motion=%s", prefix,
               hero ? self.GetName().GetText() : "-", player.GetInstance() ? player.GetName().GetText() : "-",
               hero && player.GetInstance() == hero ? 1 : 0, original.GetInstance() ? original.GetName().GetText() : "-",
               original.GetInstance() && original.GetInstance()->IsEnabled() ? 1 : 0,
               hero && hero->GetPropertySet(eEPropertySetType_NPC) ? (self.NPC.IsTransformed() ? 1 : 0) : -1,
-              original.GetInstance() ? static_cast<float>(original.PlayerMemory.SecondsTransformRemain) : -1.0f, motion);
+              original.GetInstance() ? static_cast<float>(original.PlayerMemory.SecondsTransformRemain) : -1.0f, HitPoints(self),
+              HitPoints(player), motion);
     log(line);
 }
 }

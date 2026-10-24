@@ -108,12 +108,16 @@ these guides used two game copies on one PC; play over the real internet remains
   near the host, or the first player to arrive in a distant region. Another player entering that
   region sees the same simulation.
 - The PC simulating an NPC decides damage to it. The player who kills it earns the experience.
-  Kills by a player's companions or summons reward that player; kills by other NPCs reward nobody.
+  Kills by a player's companions or summons reward that player; kills by other NPCs reward nobody. As in single-player,
+  your last hit on a human or orc knocks them out (experience, no murder); only a blow on them lying there kills them.
 - Companions follow the player who recruited them, even far from the host. Dismissing them returns
   their ownership to the host.
 - Quest state and previously completed dialogs are shared. Quest rewards go to everyone. Kill
   quests also count enemies killed in the joining player's region.
-- Items, chests, corpses and trading are shared: what one player takes is gone for everyone.
+- A stool, bench, campfire or other place has one user: while your partner uses it, you are kept off ("<Name> is
+  using this."), and NPCs do not take it either.
+- Items, chests, corpses and trading are shared: what one player takes is gone for everyone. An NPC whose pocket one
+  player picked cannot be picked again by the other.
 - Everyone uses the same time of day. Sleeping advances time for all players.
 - Helping up a downed player costs one healing potion. A player who would die stays down while a
   connected partner in the same world, who is not downed, can help. Talk to the downed player's
@@ -157,8 +161,8 @@ these guides used two game copies on one PC; play over the real internet remains
 | The game may crash during combat or shortly after an enemy dies. The known orc-raid crash has a guard, but other crashes remain possible. | The host should save before difficult fights. Record the time and enemy, and preserve both players' logs before restarting. The host loads the last good save; the other player is loaded into it automatically (if their own game crashed, they restart it and wait in the main menu). |
 | The other player's character briefly lags behind while being hit, or shows a movement inaccurately. | Regroup and wait briefly; use **Page Down** if needed. If enemies, health or positions remain clearly different, stop the fight and record the problem. |
 | Enemies or companions behave differently on the two PCs after joining. | Check that both players see the same characters and movements near the host. If the difference persists, preserve the logs and restart together from the last good save. |
-| Using a campfire, seat or other fixed interaction point simultaneously can leave a player stuck. | Use these places one at a time. If someone gets stuck, stop interacting with that object, record the bug and reload together. |
-| Combat and saving while transformed into a creature have not been checked sufficiently. | Transform back before fighting or saving. |
+| "<Name> is using this." when you want to sit down or use a campfire, anvil or other place | Your partner uses it right now; wait until they get up. Only stools were tested by bots; if someone still gets stuck at such a place, record the bug and reload together. |
+| Saving while transformed into a creature has not been checked. | Transform back before saving. |
 | A controlled or tamed NPC does not follow reliably or leaves the party. | Do not rely on these abilities yet. Record the NPC and time; casting the spell again is not a verified workaround. |
 | Stun and hypnosis cast by the joining player only take effect through the host. | Record failures; the host can cast the spell instead. |
 | A summoned creature stops moving on the other PC when players move far apart. | Use summons while together. Record the location and creature if this occurs. |
@@ -198,8 +202,11 @@ these guides used two game copies on one PC; play over the real internet remains
 - Sleep advances the clock for everyone, but only heals the player who sleeps.
 - Transformations: the other player sees the creature moving, then sees the hero again after the
   transformation ends. Wolf and Bloodfly were tested using the same setup as the game's spell.
-  Combat in creature form, including hits to and from it, and saving while transformed remain
-  untested and may have bugs.
+  In creature form you fight as yourself: your hits count as yours (knock-outs, kills, experience, murders), and an
+  enemy's hits hurt the creature, not your hidden human body (Wolf tested by bots). Saving while transformed remains
+  untested.
+- A partner's hailstorm shows its hail around your own hero on your PC; it does no damage there (only the caster's
+  hailstorm does, as in single-player).
 - Enemies attack both players. Their attitude toward a joining player comes from the hero on the
   PC currently simulating the NPC. For example, the host's poor standing with orcs also applies
   to the other player for NPCs simulated by the host.
@@ -209,8 +216,9 @@ these guides used two game copies on one PC; play over the real internet remains
   - `together`: as `shared`, and an NPC that saw one of you commit a crime holds it against both of you (both are
     refused).
   - `personal`: each player keeps their own record; what your partner does never changes yours.
-  Not counted yet: a murder of an NPC that the other player's PC simulates (seen in a test: the joining player killed an
-  NPC near the host, and no town counted it).
+  A murder counts for the victim's town as in single-player, also when the other player's PC simulates the victim
+  (`personal`: in the murderer's own record). Beating a human or orc knocks them out first; only a blow on them lying
+  there kills them.
 - Untested: monsters continuing to attack a downed hero, real internet
   play, and more than two players. The features above were checked with bots. A first short human
   test with two windows on one PC found two bugs: enemies ignored the joining player, and combat

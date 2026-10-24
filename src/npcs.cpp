@@ -11,6 +11,7 @@
 #include <Game.h>
 #include <Script.h>
 #include <Windows.h>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -38,6 +39,18 @@ constexpr uint32_t JoinGrace = 10000;   // ms after a client joined in which the
 uint32_t joinedAt[net::MaxPlayers] = {};  // host: when each client was first seen connected (net::Now), 0 = not now
 unsigned joinRefused = 0;               // host: a joining client's snapshots of NPCs near the host, refused
 bool joinGraceRule = true;              // QA negative control: JoinGraceOff
+// The edge of the host's range (stageM2 24.10.): an NPC the host's game still processes just outside the host's 40 m, which
+// the client's own copy puts just inside, went to the client (Orc_GameStartRaider_Scout_07: 47 m here, 37.7 m there), so two
+// machines simulated it, and from the client it fought the host and killed Slave_03 next to it. Whoever simulates an NPC
+// first keeps it: such a contested NPC stays the host's while it is within KeepRadius of a player here; the host refuses the
+// client's snapshots of it and sends its own, and the client's copy becomes a mirror again. NPCs the host does not process
+// (a client's region far from the host, stage E) are not touched.
+constexpr float KeepRadius = InterestRadius + 2000.0f;  // cm
+std::unordered_set<std::string> contested;  // host: NPCs a client sent that this machine processes in the band
+unsigned contestedRefused = 0;
+bool contestRule = true;                    // QA negative control: ContestOff
+float lastPlayers[net::MaxPlayers][3] = {};  // host: the players of the last SendOwned
+int lastPlayerCount = 0;
 // Companions: a client that recruits one of the host's NPCs takes it over for good (it follows that player, and
 // the game's follow state follows the local hero, GetPlayer()); the host then only mirrors it.
 std::unordered_map<std::string, uint8_t> claimedBy;  // host: NPC -> the client that took it over
@@ -154,6 +167,48 @@ bool IsNpc(eCEntity* instance)
            !remote::IsPuppet(instance);
 }
 
+// QA (NPCSEND): why SendOwned last left an NPC out, or "sent", and when (net::Now()).
+struct SendNote { char const* reason = "never"; uint32_t at = 0; };
+std::unordered_map<std::string, SendNote> sendNotes;
+
+// Host: a client's NPC becomes a mirror here (stageM2 24.10.: Orc_GameStartRaider_Scout_07 ran on the client 12 s after a
+// join, 1 run in 3): where it is here and there, and why this machine last left it out of its own snapshots.
+void NoteTakeover(std::string const& key, net::NpcRecord const& record, uint8_t owner)
+{
+    static unsigned noted = 0;
+    if (noted >= 60) return;
+    ++noted;
+    Entity npc = Resolve(reinterpret_cast<uint8_t const*>(key.data()));
+    eCEntity* body = remote::ControlledBody();
+    if (!npc.GetInstance() || !body) return;
+    const bCVector& h = body->GetWorldPosition();
+    const bCVector& p = npc.GetInstance()->GetWorldPosition();
+    const float hero[3] = {h.GetX(), h.GetY(), h.GetZ()}, here[3] = {p.GetX(), p.GetY(), p.GetZ()};
+    const auto sent = sendNotes.find(key);
+    Logf("npcs: host mirrors %s of player %u: here %.1f m from the host's hero, there %.1f m; last left out here: %s, %d ms ago",
+         npc.GetName().GetText(), owner, body::Distance(here, hero) / 100.0f, body::Distance(record.position, hero) / 100.0f,
+         sent == sendNotes.end() ? "never seen" : sent->second.reason, sent == sendNotes.end() ? -1 : static_cast<int>(net::Now() - sent->second.at));
+}
+
+// Host: is this client's NPC one this machine processes in the band (left out of its last snapshots for range only, within
+// KeepRadius of a player)? Then it stays here (see KeepRadius).
+bool Contested(std::string const& key, uint8_t owner)
+{
+    const auto sent = sendNotes.find(key);
+    if (sent == sendNotes.end() || std::strcmp(sent->second.reason, "range") || static_cast<int32_t>(net::Now() - sent->second.at) > 1000) return false;
+    Entity npc = Resolve(reinterpret_cast<uint8_t const*>(key.data()));
+    if (!npc.GetInstance() || npc.IsDead() || !lastPlayerCount) return false;
+    const bCVector& p = npc.GetInstance()->GetWorldPosition();
+    const float here[3] = {p.GetX(), p.GetY(), p.GetZ()};
+    float nearest = 1e30f;
+    for (int k = 0; k < lastPlayerCount; ++k) nearest = std::min(nearest, body::Distance(here, lastPlayers[k]));
+    if (nearest > KeepRadius) return false;
+    if (contested.insert(key).second && contested.size() < 200)
+        Logf("npcs: %s of player %u refused: here %.1f m from the nearest player, in this machine's band; sent from here now",
+             npc.GetName().GetText(), owner, nearest / 100.0f);
+    return true;
+}
+
 bool receiving = true;  // QA (invariant self-test): RecvOff drops all NPC snapshots, so both machines simulate
 
 void OnNpcs(net::NpcRecord const* records, int count, uint32_t now, uint32_t sent, uint8_t owner)
@@ -189,6 +244,10 @@ void OnNpcs(net::NpcRecord const* records, int count, uint32_t now, uint32_t sen
         }
         if (claim != claimedBy.end()) claimSeen[key] = now;
         givenBack.erase(key);  // the host sends it again: mirror it
+        if (net::IsHost() && owner > 1 && claim == claimedBy.end() && !mirrors.count(key)) {
+            if (contestRule && Contested(key, owner)) { ++contestedRefused; continue; }
+            NoteTakeover(key, records[i], owner);
+        }
         Mirror& m = mirrors[key];
         if (!m.firstSeen) m.firstSeen = now ? now : 1;
         m.owner = owner;
@@ -206,14 +265,12 @@ void OnMotionName(uint32_t hash, char const* name)
     if (motionNames.size() < 50000 || motionNames.count(hash)) motionNames[hash] = name;  // the game has some 20000 motions
 }
 
-// QA (NPCSEND): why SendOwned last left an NPC out, or "sent", and when (net::Now()).
-struct SendNote { char const* reason = "never"; uint32_t at = 0; };
-std::unordered_map<std::string, SendNote> sendNotes;
-
 // Every NPC this machine processes and nobody else simulates, near a player: one snapshot each.
 void SendOwned(eCEntity* hero, float const players[][3], int playerCount)
 {
     owned.clear();
+    lastPlayerCount = playerCount;
+    for (int k = 0; k < playerCount; ++k) std::memcpy(lastPlayers[k], players[k], sizeof(float) * 3);
     eCEntity* controlled = remote::ControlledBody();
     const bTObjArray<Entity> all = Entity::GetNPCs();
     net::NpcRecord batch[net::MaxNpcsPerMessage];
@@ -234,8 +291,14 @@ void SendOwned(eCEntity* hero, float const players[][3], int playerCount)
         if (back != givenBack.end() && static_cast<int32_t>(net::Now() - back->second) < 0) { note.reason = "givenback"; continue; }  // handed back
         const bCVector& p = instance->GetWorldPosition();
         const float at[3] = {p.GetX(), p.GetY(), p.GetZ()};
-        bool inRange = false;
-        for (int k = 0; k < playerCount && !inRange; ++k) inRange = body::Distance(at, players[k]) <= InterestRadius;
+        float nearest = 1e30f;
+        for (int k = 0; k < playerCount; ++k) nearest = std::min(nearest, body::Distance(at, players[k]));
+        bool inRange = nearest <= InterestRadius;
+        if (!inRange) {
+            const auto held = contested.find(Key(guid));
+            if (held != contested.end() && nearest <= KeepRadius) inRange = true;  // contested: kept here in the band
+            else if (held != contested.end()) contested.erase(held);
+        }
         if (!inRange) { note.reason = "range"; continue; }
         note.reason = "sent";
         net::NpcRecord& r = batch[n];
@@ -678,6 +741,38 @@ void BadRecord(LogFn log)
     log("BADRECORD sent=1");
 }
 
+// QA (client, stage EdgeClaim): one snapshot of the host NPC with this GUID as if this machine simulated it, where this
+// player's hero stands: the state of stageM2, where the client's own copy of a raid scout was near the players while the
+// host's was just outside its range.
+void ClaimRecord(char const* text, LogFn log)
+{
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    unsigned d1, d2, d3, b[8];
+    if (!hero || net::IsHost() || !text ||
+        sscanf_s(text, "%8X-%4X-%4X-%2X%2X-%2X%2X%2X%2X%2X%2X", &d1, &d2, &d3, &b[0], &b[1], &b[2], &b[3], &b[4], &b[5], &b[6], &b[7]) != 11) {
+        log("REFUSED claimrecord: client with a hero, <GUID>");
+        return;
+    }
+    _GUID raw;
+    raw.Data1 = d1;
+    raw.Data2 = static_cast<unsigned short>(d2);
+    raw.Data3 = static_cast<unsigned short>(d3);
+    for (int i = 0; i < 8; ++i) raw.Data4[i] = static_cast<unsigned char>(b[i]);
+    net::NpcRecord record{};
+    std::memcpy(record.guid, &raw, 16);
+    const bCVector& p = hero->GetWorldPosition();
+    record.position[0] = p.GetX() + 200.0f;
+    record.position[1] = p.GetY();
+    record.position[2] = p.GetZ();
+    record.rotation[3] = 1.0f;
+    Entity copy = Resolve(record.guid);
+    record.hitPoints = copy.GetInstance() ? copy.DamageReceiver.HitPoints : 100;
+    net::SendNpcs(&record, 1);
+    char line[120];
+    sprintf_s(line, "CLAIMRECORD sent=1 known_here=%d", copy.GetInstance() ? 1 : 0);
+    log(line);
+}
+
 eCEntity* NpcByGuid(uint8_t const guid[16])
 {
     eCEntity* instance = Resolve(guid).GetInstance();
@@ -702,6 +797,7 @@ void OnWorldDeactivate()
     claimSeen.clear();
     myClaims.clear();
     givenBack.clear();
+    contested.clear();
 }
 
 void CorpseTick(uint32_t now)
@@ -882,14 +978,57 @@ void Report(LogFn log)
                   mirror != mirrors.end() ? mirror->second.owner : 0);
         log(line);
     }
-    sprintf_s(line, "NPCSYNC claims_refused=%u host_wins=%u host_wins_rule=%d join_refused=%u join_grace=%d", claimsRefused, hostWins,
-              hostWinsRule ? 1 : 0, joinRefused, joinGraceRule ? 1 : 0);
+    sprintf_s(line, "NPCSYNC claims_refused=%u host_wins=%u host_wins_rule=%d join_refused=%u join_grace=%d contested_refused=%u contested=%zu contest_rule=%d",
+              claimsRefused, hostWins, hostWinsRule ? 1 : 0, joinRefused, joinGraceRule ? 1 : 0, contestedRefused, contested.size(), contestRule ? 1 : 0);
     log(line);
+}
+
+// QA (host, stage EdgeClaim): the NPCs this machine processes in its band, between InterestRadius and KeepRadius of the
+// nearest player, with why its last snapshots left them out.
+void EdgeReport(LogFn log)
+{
+    const bTObjArray<Entity> all = Entity::GetNPCs();
+    char line[300];
+    for (int i = 0; i < all.GetCount(); ++i) {
+        Entity npc = all.GetAt(i);
+        eCEntity* instance = npc.GetInstance();
+        if (!instance || instance == gCSession::GetInstance().GetHero() || remote::IsPuppet(instance) || npc.IsDead()) continue;
+        const bCVector& p = instance->GetWorldPosition();
+        const float at[3] = {p.GetX(), p.GetY(), p.GetZ()};
+        float nearest = 1e30f;
+        for (int k = 0; k < lastPlayerCount; ++k) nearest = std::min(nearest, body::Distance(at, lastPlayers[k]));
+        if (nearest <= InterestRadius || nearest > KeepRadius) continue;
+        uint8_t guid[16];
+        Guid(instance, guid);
+        char text[48];
+        FormatGuid(guid, text, sizeof(text));
+        const auto note = sendNotes.find(Key(guid));
+        sprintf_s(line, "EDGENPC guid=%s name=%s nearest_m=%.1f reason=%s age_ms=%d mirror=%d", text, npc.GetName().GetText(), nearest / 100.0f,
+                  note != sendNotes.end() ? note->second.reason : "never", note != sendNotes.end() ? static_cast<int>(net::Now() - note->second.at) : -1,
+                  mirrors.count(Key(guid)) ? 1 : 0);
+        log(line);
+    }
+    log("EDGENPC end");
 }
 
 void SendInfo(char const* name, LogFn log)
 {
-    Entity npc = Entity::GetEntity(bCString(name));
+    // A GUID too (stage EdgeClaim: scavengers share one name).
+    unsigned d1, d2, d3, b[8];
+    Entity npc;
+    if (std::strlen(name) == 36 &&
+        sscanf_s(name, "%8X-%4X-%4X-%2X%2X-%2X%2X%2X%2X%2X%2X", &d1, &d2, &d3, &b[0], &b[1], &b[2], &b[3], &b[4], &b[5], &b[6], &b[7]) == 11) {
+        _GUID raw;
+        raw.Data1 = d1;
+        raw.Data2 = static_cast<unsigned short>(d2);
+        raw.Data3 = static_cast<unsigned short>(d3);
+        for (int i = 0; i < 8; ++i) raw.Data4[i] = static_cast<unsigned char>(b[i]);
+        uint8_t bytes[16];
+        std::memcpy(bytes, &raw, 16);
+        npc = Resolve(bytes);
+    } else {
+        npc = Entity::GetEntity(bCString(name));
+    }
     char line[300];
     if (!npc.GetInstance()) { log("REFUSED npcsend: no such NPC"); return; }
     uint8_t guid[16];
@@ -910,6 +1049,12 @@ void JoinGraceOff(LogFn log)
 {
     joinGraceRule = false;
     log("JOINGRACEOFF ok=1");
+}
+
+void ContestOff(LogFn log)
+{
+    contestRule = false;
+    log("CONTESTOFF ok=1");
 }
 
 void HostWinsOff(LogFn log)

@@ -470,6 +470,54 @@ void Aggro(char const* argument, LogFn log)
     log(line);
 }
 
+namespace {
+// One TSV field: UTF-8, without tabs or line breaks.
+std::string Field(wchar_t const* text)
+{
+    char utf8[512] = {};
+    if (text) WideCharToMultiByte(CP_UTF8, 0, text, -1, utf8, sizeof(utf8) - 1, nullptr, nullptr);
+    std::string s(utf8);
+    for (char& c : s)
+        if (c == '\t' || c == '\r' || c == '\n') c = ' ';
+    return s;
+}
+
+std::string Join(bTObjArray<bCString> const& list)
+{
+    std::string out;
+    for (int i = 0; i < list.GetCount(); ++i) out += std::string(out.empty() ? "" : "|") + list.GetAt(i).GetText();
+    return out.empty() ? "-" : out;
+}
+}
+
+// Plan P0 (24.10.): every quest the game knows, with its journal folder (region or town), title in this game's language,
+// type, status, experience, prerequisites and delivery targets: the base of the chapter checklist.
+void QuestDump(char const* path, LogFn log)
+{
+    gCQuestManager_PS* manager = gCSession::GetInstance().IsGameRunning() ? gCQuestManager_PS::GetInstance() : nullptr;
+    if (!manager) { log("QUESTDUMP refused no game running"); return; }
+    FILE* file = nullptr;
+    if (fopen_s(&file, path, "wb") || !file) { log("QUESTDUMP refused cannot write the file"); return; }
+    std::fputs("name\tfolder\ttopic\ttype\tstatus\txp\tenclave_success\tdestination\tfinished_quests\tdelivery\r\n", file);
+    auto const& quests = manager->GetQuests();
+    int count = 0;
+    for (GEInt qi = 0; qi < quests.GetCount(); ++qi) {
+        gCQuest_PS const* quest = quests.GetAt(qi).operator->();
+        if (!quest) continue;
+        const bCUnicodeString topic = quest->GetLogTopic();
+        std::fprintf(file, "%s\t%s\t%s\t%d\t%d\t%u\t%s\t%s\t%s\t%s\r\n", quest->GetName().GetText(), quest->GetFolder().GetText(),
+                     Field(reinterpret_cast<wchar_t const*>(topic.GetText())).c_str(), static_cast<int>(quest->GetType().GetValue()),
+                     static_cast<int>(quest->GetStatus().GetValue()), static_cast<unsigned>(quest->GetExperiencePoints()),
+                     quest->GetEnclaveSuccess().GetText(), quest->GetDestinationEntity().GetText(), Join(quest->GetFinishedQuests()).c_str(),
+                     Join(quest->GetDeliveryEntities()).c_str());
+        ++count;
+    }
+    std::fclose(file);
+    char line[120];
+    sprintf_s(line, "QUESTDUMP quests=%d", count);
+    log(line);
+}
+
 // The same against this machine's own hero (stage Ransack: the host's baseline of a robbery).
 void AssessHero(char const* argument, LogFn log)
 {

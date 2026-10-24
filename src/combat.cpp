@@ -2,6 +2,7 @@
 #include "combat.h"
 #include "body.h"
 
+#include "enclaves.h"
 #include "log.h"
 #include "net.h"
 #include "npcs.h"
@@ -14,6 +15,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace g3t::combat {
@@ -54,6 +56,15 @@ std::string KillKey(uint8_t const guid[16]) { return std::string(reinterpret_cas
 // transferred hit at 0 hit points went to OnCheatKill and counted as murder (spieltest 21.10., Reddock, twice).
 bool arenaRule = true;  // QA negative control: arenaruleoff
 unsigned duelHitsRefused = 0, duelKnockouts = 0;
+// P7 (24.10., murderdiag): the game knocks a human or orc out where a player's hit takes its last hit points, and only a
+// blow on the one lying there kills it (the host's hero: Muntasir down for five hits, the sixth killed). A client's lethal
+// claim went straight to OnCheatKill: every fight the joining player won was a death. The claim now carries what the
+// game decided for that hit on the sender's machine (HitOutcome), and the owner knocks out where the game did.
+bool knockOuts = true;  // QA negative control: remotekooff (a lethal claim kills, as before)
+bool shapeHits = true;  // QA negative control: shapehitsoff (an animal form's hits go out as one of our NPCs', as before)
+unsigned knockedOut = 0, finishRefused = 0;
+uint8_t lastOutcome = 0;  // client: the outcome of the last claim sent (QA HITNPC line)
+std::unordered_map<std::string, DWORD> knockedAt;  // owner: when a claim knocked the victim out (IsDown follows a frame later)
 
 bool InBout(Entity& npc)
 {
@@ -93,6 +104,24 @@ GEInt CallScript(char const* name, eCEntity* self, eCEntity* other, GEInt args)
     return GetScriptAdminExt().CallScript(bCString(name), self, other, args);
 }
 
+// What the game's hit judgement (AssessHit, before AddHitPoints) decided for the victim: the task it set.
+uint8_t Outcome(Entity& victim)
+{
+    const bCString task = victim.Routine.GetCurrentTask();
+    for (char const* ko : {"ZS_Unconscious", "ZS_LieKnockDown", "ZS_PiercedKO"})
+        if (task == bCString(ko)) return net::HitKnockOut;
+    for (char const* dead : {"ZS_RagDollDead", "ZS_PiercedDead", "ZS_Dead"})
+        if (task == bCString(dead)) return net::HitDeath;
+    return net::HitUnjudged;
+}
+
+// The species the game knocks out instead of killing (OnCheatDefeat: human and orc go to ZS_Unconscious).
+bool KnocksOut(Entity& npc)
+{
+    const gESpecies species = npc.NPC.Species;
+    return species == gESpecies_Human || species == gESpecies_Orc;
+}
+
 void Guid(eCEntity* entity, uint8_t out[16])
 {
     const eCEntityProxy proxy(entity);
@@ -116,6 +145,10 @@ GEInt GE_STDCALL Filter(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid oth
     eCEntity* instance = victim.GetInstance();
     eCEntity* hero = gCSession::GetInstance().GetHero();
     eCEntity* attacker = Attacker(spu, other);
+    // P6, an animal form: the player fights as the creature it controls (Entity::GetPlayer), the human body (GetHero) stays
+    // hidden; the creature's hits are the player's, as the game counts them, not those of one of our NPCs (no experience,
+    // no knock-out judgement, no murder for the player before).
+    if (attacker && attacker != hero && shapeHits && attacker == remote::ControlledBody()) attacker = hero;
     // Every NPC is simulated on one machine, its owner (the host near the host, a client in its own region); the
     // others mirror it. Same rules on every machine:
     // 1. A hit by a body simulated elsewhere (another player's puppet, a mirrored NPC) is decided where that body
@@ -150,7 +183,8 @@ GEInt GE_STDCALL Filter(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid oth
             bCPropertyID const& id = item;
             std::memcpy(weapon, &id.GetCore(), 16);
         }
-        net::SendHitNpc(owner, guid, args, weapon);
+        lastOutcome = Outcome(victim);
+        net::SendHitNpc(owner, guid, args, weapon, nullptr, lastOutcome);
         ++claimsSent;
         return GETrue;
     }
@@ -209,6 +243,7 @@ void OnNpcHit(uint8_t from, Entity& target, int32_t delta, uint8_t const npc[16]
     uint8_t guid[16];
     Guid(victim, guid);
     killedHere.insert(KillKey(guid));  // before the death call: OnHitNpc drops further hits on it (R9)
+    if (party) enclaves::NoteRemoteKill(guid, from, attacker.GetInstance());  // a murder by the sender's party counts (P7)
     target.NPC.DefeatedByPlayer = GETrue;
     CallScript("AddHitPoints", victim, victim, -HitPoints(target));
     CallScript("OnCheatKill", victim, victim, 0);
@@ -221,7 +256,7 @@ void OnNpcHit(uint8_t from, Entity& target, int32_t delta, uint8_t const npc[16]
 }
 
 // Host: a client's hit on one of the host's NPCs.
-void OnHitNpc(uint8_t from, uint8_t const guid[16], int32_t delta, uint8_t const weapon[16], uint8_t const npc[16])
+void OnHitNpc(uint8_t from, uint8_t const guid[16], int32_t delta, uint8_t const weapon[16], uint8_t const npc[16], uint8_t outcome)
 {
     Entity target(npcs::NpcByGuid(guid));  // an NPC only: no chest, door, hero or puppet (Fable 1.7)
     if (!target.GetInstance() || target.IsDead() || delta >= 0 || delta < -1000000) return;
@@ -244,7 +279,22 @@ void OnHitNpc(uint8_t from, uint8_t const guid[16], int32_t delta, uint8_t const
     ++claimsApplied;
     // Applied with the sender's puppet as attacker; the filter's rule for hits by puppets must not drop it.
     struct Pass { Pass() { forwarded = true; } ~Pass() { forwarded = false; } } pass;
-    if (HitPoints(target) + delta > 0 || !attacker) {
+    // P7: a blow on one lying knocked out is the game's finishing blow, whatever its hit points (the host's hero: five blows
+    // without effect while it fell, then dead). Judged here: the sender's copy is not down there, so its game judged every
+    // such blow a new knock-out (stageMurder 24.10.). The fall is timed for our own knock-outs only (2 s).
+    bool finishing = false;
+    if (knockOuts && attacker) {
+        const auto at = knockedAt.find(KillKey(guid));
+        const DWORD since = at != knockedAt.end() ? GetTickCount() - at->second : 0xffffffff;
+        if (target.IsDown() || since < 3000) {
+            if (since < 2000 || (arenaRule && InBout(target))) {
+                ++finishRefused;  // still falling, or the end of a bout (never a murder there)
+                return;
+            }
+            finishing = true;
+        }
+    }
+    if (!finishing && (HitPoints(target) + delta > 0 || !attacker)) {
         CallScript("AddHitPoints", target.GetInstance(), attacker, delta);
         // The game's hit path (DoLogicalDamage) also decides how the NPC reacts; AddHitPoints alone left a friendly NPC
         // talking on while the client struck it (friendlydiag 20.10.). Let it judge the attacker as the game does when an
@@ -268,6 +318,25 @@ void OnHitNpc(uint8_t from, uint8_t const guid[16], int32_t delta, uint8_t const
         Logf("combat: player %u won the duel or arena bout against %s (knocked out, not killed)", from, target.GetName().GetText());
         return;
     }
+    if (knockOuts && !finishing) {
+        // As the game decided on the sender's machine; a hit judged there as neither (that machine's copy had more hit points
+        // left) by the species rule.
+        if (outcome == net::HitKnockOut || (outcome == net::HitUnjudged && KnocksOut(target))) {
+            // The game's way, as in the bout above: ZS_Unconscious runs Defeat(CurrentAttacker, victim). The puppet as attacker;
+            // remote.cpp lets go of it when the puppet goes. The experience on the sender's machine, once per victim (OnKilled).
+            eCEntity* victim = target.GetInstance();
+            target.NPC.SetCurrentAttacker(Entity(attacker));
+            target.NPC.DefeatedByPlayer = GETrue;
+            CallScript("AddHitPoints", victim, attacker, -HitPoints(target));
+            target.Routine.FullStop();
+            target.Routine.SetTask(bCString("ZS_Unconscious"));
+            knockedAt[KillKey(guid)] = GetTickCount();
+            ++knockedOut;
+            net::SendKilled(from, guid);
+            Logf("combat: player %u knocked %s out (outcome %u)", from, target.GetName().GetText(), outcome);
+            return;
+        }
+    }
     // Lethal. Not a hit judged by the game: for any attacker but the local player the hit judgement caps the
     // damage and never kills (the puppet's hit left the NPC standing at 0 hit points). Not the death task set
     // by hand either (a raider killed that way in mid-fight crashed the host in GetCombatMoveLength the next
@@ -278,12 +347,14 @@ void OnHitNpc(uint8_t from, uint8_t const guid[16], int32_t delta, uint8_t const
     // client in stage E2). The real killer is rewarded on its own machine (SendKilled).
     eCEntity* victim = target.GetInstance();
     killedHere.insert(KillKey(guid));  // before the death call (R9)
+    knockedAt.erase(KillKey(guid));
+    enclaves::NoteRemoteKill(guid, from, attacker);  // its Kill counts the murder for the sender (P7)
     target.NPC.DefeatedByPlayer = GETrue;
     CallScript("AddHitPoints", victim, victim, -HitPoints(target));
     CallScript("OnCheatKill", victim, victim, 0);  // like the console: self = the one who kills, other = the target
     ++kills;
     net::SendKilled(from, guid);  // the killer earns the experience on its own machine
-    Logf("combat: player %u killed %s (OnCheatKill)", from, target.GetName().GetText());  // ZS_RagDollDead takes effect next frame
+    Logf("combat: player %u killed %s (OnCheatKill%s)", from, target.GetName().GetText(), finishing ? ", finishing blow" : "");  // ZS_RagDollDead takes effect next frame
 }
 
 // Client: this player's hit killed a host NPC: the game's own reward (GiveXP computes it from the NPC's level).
@@ -311,7 +382,8 @@ void OnKilled(uint8_t const guid[16])
 // Client: something on the host hit this player's puppet; the real hero takes the damage.
 void OnHitPlayer(int32_t delta, uint8_t const attacker[16], uint8_t attackerPlayer)
 {
-    eCDynamicEntity* hero = gCSession::GetInstance().GetHero();
+    // P6: in an animal form the creature the player controls takes it, not the hidden human body (GetHero).
+    eCEntity* hero = gCSession::GetInstance().GetHero() ? (shapeHits ? remote::ControlledBody() : gCSession::GetInstance().GetHero()) : nullptr;
     if (!hero || delta >= 0) return;
     ++playerHitsTaken;
     eCEntity* by = nullptr;
@@ -392,15 +464,17 @@ void HitNpc(char const* guid, LogFn log)
     Entity target = Entity(bCPropertyID(bCGuid(raw)));
     if (!hero || !target.GetInstance()) { log("REFUSED hitnpc: no hero or no such NPC"); return; }
     char const* kind = "";
-    eCEntity* source = DamageSource(hero, &kind);
+    eCEntity* body = remote::ControlledBody();
+    eCEntity* source = body && body != hero ? body : DamageSource(hero, &kind);  // an animal form strikes itself
+    if (source == body && body != hero) kind = "shape";
     const int before = HitPoints(target);
     const unsigned sentBefore = claimsSent, callsBefore = filterCalls;
     int pending = 0;
     const GEInt result = GameHit(target, source, &pending);
-    sprintf_s(line, "HITNPC guid=%s name=%s source=%s:%s owner=%s result=%#x filtered=%u pending=%d task=%s before=%d after=%d dead=%d claim_sent=%d", guid,
+    sprintf_s(line, "HITNPC guid=%s name=%s source=%s:%s owner=%s result=%#x filtered=%u pending=%d task=%s before=%d after=%d dead=%d claim_sent=%d outcome=%u", guid,
               target.GetName().GetText(), kind, Entity(source).GetName().GetText(), Entity(source).Interaction.GetOwner().GetName().GetText(),
               result, filterCalls - callsBefore, pending, target.Routine.GetCurrentTask().GetText(), before, HitPoints(target),
-              target.IsDead() ? 1 : 0, claimsSent != sentBefore);
+              target.IsDead() ? 1 : 0, claimsSent != sentBefore, claimsSent != sentBefore ? lastOutcome : 0u);
     log(line);
 }
 
@@ -420,7 +494,7 @@ void HitNpcBurst(char const* argument, LogFn log)
     uint8_t bytes[16];
     std::memcpy(bytes, &raw, 16);
     static const uint8_t none[16] = {};
-    for (int i = 0; i < count; ++i) net::SendHitNpc(1, bytes, -100000, none);
+    for (int i = 0; i < count; ++i) net::SendHitNpc(1, bytes, -100000, none, nullptr, net::HitDeath);  // hits the game judged deaths
     claimsSent += count;
     char line[160];
     sprintf_s(line, "HITNPCBURST guid=%s sent=%d", guid, count);
@@ -446,6 +520,7 @@ void OnWorldChange()
 {
     killedHere.clear();
     rewarded.clear();
+    knockedAt.clear();
 }
 
 // QA: the local hero hits another player's puppet through the game's hit path (judgement and stumble included).
@@ -530,11 +605,24 @@ void Report(LogFn log)
     char line[400];
     eCDynamicEntity* hero = gCSession::GetInstance().GetHero();
     Entity self(hero);
-    sprintf_s(line, "HP hero=%d max=%d installed=%d bypass=%d filter_calls=%u dropped=%u kills=%u xp_awarded=%u xp=%d claims_sent=%u claims_applied=%u player_hits_sent=%u player_hits_taken=%u forwarded_judged=%u forwarded_bare=%u npc_hits_sent=%u npc_hits_applied=%u npc_kills=%u npc_hits_unresolved=%u party_kills=%u reactions=%u",
+    sprintf_s(line, "HP hero=%d max=%d installed=%d bypass=%d filter_calls=%u dropped=%u kills=%u xp_awarded=%u xp=%d claims_sent=%u claims_applied=%u player_hits_sent=%u player_hits_taken=%u forwarded_judged=%u forwarded_bare=%u npc_hits_sent=%u npc_hits_applied=%u npc_kills=%u npc_hits_unresolved=%u party_kills=%u reactions=%u knocked_out=%u finish_refused=%u knockouts=%d",
               hero ? self.PlayerMemory.GetHitPoints() : -1, hero ? self.PlayerMemory.GetHitPointsMax() : -1, installed, bypass,
               filterCalls, dropped, kills, xpAwarded, hero ? static_cast<int>(self.PlayerMemory.XP) : -1, claimsSent, claimsApplied, playerHitsSent, playerHitsTaken,
-              forwardedJudged, forwardedBare, npcHitsSent, npcHitsApplied, npcKills, npcHitsUnresolved, partyKills, reactionsStarted);
+              forwardedJudged, forwardedBare, npcHitsSent, npcHitsApplied, npcKills, npcHitsUnresolved, partyKills, reactionsStarted,
+              knockedOut, finishRefused, knockOuts ? 1 : 0);
     log(line);
+}
+
+void ShapeHitsOff(LogFn log)
+{
+    shapeHits = false;
+    log("SHAPEHITSOFF ok=1 (an animal form's hits count as one of our NPCs', as before 24.10.)");
+}
+
+void RemoteKnockOutsOff(LogFn log)
+{
+    knockOuts = false;
+    log("REMOTEKOOFF ok=1 (a lethal claim kills, as before 24.10.)");
 }
 
 void NpcHitsOff(LogFn log)

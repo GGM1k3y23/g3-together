@@ -82,6 +82,7 @@ constexpr Translation Messages[] = {
     {L"Connected to the host.", L"Mit dem Host verbunden."},
     {L"%s robbed you of %d gold.", L"%s hat dir %d Gold abgenommen."},
     {L"You were robbed of %d gold.", L"Dir wurden %d Gold abgenommen."},
+    {L"%s is using this.", L"%s benutzt das gerade."},
 };
 static_assert(sizeof(Messages) / sizeof(Messages[0]) == MessageCount, "Missing HUD translation");
 }

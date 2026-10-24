@@ -569,6 +569,302 @@ def scriptdumpdiag(copies, report, negative=False):
     shutil.move(host.root/'scripts.tsv', host.run/'scripts.tsv')  # the install must hold only its own files (isolation check)
 
 
+def murder_counts(bot, town):
+    counts = enclave_counts(bot, town)
+    return counts[4] if counts else None
+
+
+def use_field(line, key):
+    m = re.search(rf' {key}=(\S+)', line)
+    return m[1] if m else None
+
+
+def hp_counters(bot):
+    line = report_line(bot, 'hp', 'HP ')
+    return {k: int(v) for k, v in re.findall(r' (claims_sent|npc_hits_sent|xp_awarded|xp)=(-?\d+)', line)}
+
+
+def stageShapeFight(copies, report, negative=False):
+    """P6, a player in an animal form fights as the player (the game counts the creature it controls as Entity::GetPlayer;
+    GetHero stays the hidden human body): the client turns into a wolf and strikes a villager the host simulates; its hits
+    go to the host as the player's claims (before: as hits of one of the client's NPCs, no experience, no knock-out
+    judgement, no murder), and the client earns the experience of the knock-out or kill. Negative control: shapehitsoff on
+    the client."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    if negative:
+        report['negative'] = report_line(client.bot, 'shapehitsoff', 'SHAPEHITSOFF ')
+    keep = ('Diego', 'Gorn', 'Milten', 'Lester')
+    calm = [g for g, v in npcs(host.bot).items() if not v['dead'] and not v['mirrored'] and 'Orc' not in v['name']
+            and v['name'] not in keep and v['name'] != 'PC_Hero' and v['hp'] > 0]
+    assert calm, 'no villager near the host'
+    target = next((g for g in calm if npcs(host.bot)[g]['name'].startswith('Slave')), calm[0])
+    report['target'] = npcs(host.bot)[target]['name']
+    goal = npcs(host.bot)[target]['pos']
+    move_hero(client.bot, (goal[0] + 150, goal[1], goal[2]))
+    time.sleep(2)
+    report['transform'] = report_line(client.bot, 'transform Wolf', ('TRANSFORM ',))
+    time.sleep(4)
+    before = report['before'] = hp_counters(client.bot)
+    report_line(host.bot, f"npchp {report['target']}_30", 'NPCHP ')
+    report['hits'] = []
+    for _ in range(25):
+        hit = hit_npc(client.bot, target)
+        report['hits'].append(hit['line'][-100:])
+        time.sleep(0.8)
+        state = npcs(host.bot).get(target, {})
+        if state.get('dead') or state.get('task') in KO_TASKS:
+            break
+    time.sleep(3)
+    after = report['after'] = hp_counters(client.bot)
+    report['host_state'] = npcs(host.bot).get(target, {})
+    report['back'] = report_line(client.bot, 'transformback', ('TRANSFORM',))
+    assert after['claims_sent'] > before['claims_sent'], f'the wolf\'s hits did not go out as the player\'s: {before} -> {after}'
+    # Rewarded the player's way (GiveXP for this hero); a slave is worth no experience (24.10.: xp 750 -> 750).
+    assert after['xp_awarded'] > before['xp_awarded'], f"the wolf's kill was not rewarded to the player: {before} -> {after}"
+    # The other way round: an NPC of the host strikes the wolf; the creature takes it, not the hidden human body.
+    report['retransform'] = report_line(client.bot, 'transform Wolf', ('TRANSFORM ',))
+    time.sleep(3)
+    shape_before = report['shape_before'] = report_line(client.bot, 'transformstate', ('TRANSFORMSTATE ',))
+    striker = next((g for g, v in npcs(host.bot).items() if not v['dead'] and not v['mirrored'] and g != target and 'Orc' not in v['name']
+                    and v['name'] not in keep and v['name'] != 'PC_Hero'), None)
+    assert striker, 'no NPC of the host to strike the wolf'
+    report['struck'] = [report_line(host.bot, 'hitpuppetby ' + striker, ('HITPUPPETBY ', 'REFUSED hitpuppetby')) for _ in range(3)]
+    time.sleep(3)
+    shape_after = report['shape_after'] = report_line(client.bot, 'transformstate', ('TRANSFORMSTATE ',))
+    report_line(client.bot, 'transformback', ('TRANSFORM',))
+    hp = lambda l, k: int(re.search(rf' {k}=(-?\d+)', l)[1])
+    assert hp(shape_after, 'player_hp') < hp(shape_before, 'player_hp'), f'the wolf took nothing: {shape_before} -> {shape_after}'
+    assert hp(shape_after, 'hero_hp') == hp(shape_before, 'hero_hp'), f'the hidden human body took it: {shape_before} -> {shape_after}'
+
+
+def seated(line):
+    """The hero uses the object (USEINFO): its user is this machine's hero, in one of the game's interaction states (the
+    seated ones: PS_Interact_SitStool, then PS_Interact_WaitForExit)."""
+    return use_field(line, 'user') == 'PC_Hero' and (use_field(line, 'hero_state') or '').startswith('PS_Interact_')
+
+
+def stageSharedUse(copies, report, negative=False):
+    """P1 (plan to 90 %), one user per object as in single-player: the game sets an object's user (Interaction.User) on the
+    machine where its user acts, so two heroes sat on one stool and at a campfire the second stayed in PS_Interact (A,
+    usediag 20.10.). The host sits on a free stool near the start; the client sees the host's puppet as its user; the
+    client sets out to use the same stool (QA use: PS_Interact, as the use key): it is stopped before it sits ("<Name> is
+    using this."); the host stands up: the client sees the stool free, uses it and sits. Negative control: usesyncoff on
+    both (the client sits on the host's stool)."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    if negative:
+        report['negative'] = [report_line(c.bot, 'usesyncoff', 'USESYNCOFF ') for c in (host, client)]
+    stools = sorted((u for u in usables(host.bot, 'all4000') if u['usetype'] == '83' and u['user'] == '-'), key=lambda u: float(u['distance']))
+    assert stools, 'no free stool within 40 m of the host'
+    stool = report['stool'] = stools[0]['name']
+    report['host_use'] = report_line(host.bot, 'use ' + stool, ('USE ', 'REFUSED use'))
+    report['host_sits'] = wait_for(lambda: (lambda l: seated(l) and l)(use_info(host.bot, stool)), 15,
+                                   'the host sits down')
+    move_hero(client.bot, hero_pos(host.bot))
+    time.sleep(3)
+    report['client_sees'] = use_info(client.bot, stool)
+    report['client_use'] = report_line(client.bot, 'use ' + stool, ('USE ', 'REFUSED use'))
+    samples = []
+    for _ in range(6):
+        time.sleep(1)
+        samples.append(use_info(client.bot, stool))
+    states = report['client_states'] = [use_field(l, 'hero_state') for l in samples]
+    report['occupancy'] = {c.tag: report_line(c.bot, 'occupancy', 'OCCUPANCY ') for c in (host, client)}
+    assert not any(seated(l) for l in samples), f"the client sat on the host's stool: {states}"
+    assert not (states[-1] or '').startswith('PS_Interact'), f'the client hangs at the stool: {states}'
+    report['unuse'] = report_line(host.bot, 'unuse', ('UNUSE ', 'REFUSED unuse'))
+    report['client_freed'] = wait_for(lambda: (lambda l: use_field(l, 'user') == '-' and l)(use_info(client.bot, stool)), 10,
+                                      'the client sees the stool free')
+    report['client_use_free'] = report_line(client.bot, 'use ' + stool, ('USE ', 'REFUSED use'))
+    report['client_sits'] = wait_for(lambda: (lambda l: seated(l) and l)(use_info(client.bot, stool)), 15,
+                                     'the client sits on the free stool')
+
+
+def pick_cands(bot):
+    start = bot.send('pickcands', 20)
+    bot.line('PICKCANDS end', 10, 'pickcands', start)
+    return [dict(re.findall(r'(\w+)=(\S+)', l)) for l in bot.log()[start:].splitlines() if l.startswith('PICKCAND guid=')]
+
+
+def stagePickPocket(copies, report, negative=False):
+    """P1 (plan to 90 %), a picked pocket is picked for everyone: the game decides it on the thief's machine (PickPocket:
+    loot from the NPC's treasure sets for the thief, a theft for its town, the mark Dialog.PickedPocket so that nobody picks
+    it again), and the mark stayed on the thief's copy. The client picks the pocket of an NPC the host simulates (the
+    client's hero has learned it, thiefprep: Perk_PickPocket_3, theft 150): the host's NPC is marked too.
+    Negative control: pickpocketoff on the client (the host's NPC stays unmarked)."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    if negative:
+        report['negative'] = report_line(client.bot, 'pickpocketoff', 'PICKPOCKETOFF ')
+    report['thief'] = report_line(client.bot, 'thiefprep', ('THIEFPREP ', 'REFUSED thiefprep'))  # as a hero who learned it
+    time.sleep(3)
+    cands = [c for c in pick_cands(client.bot) if c['mirrored'] == '1' and c['picked'] == '0' and c['down'] == '0' and not c['name'].startswith('G3T_')]
+    cands.sort(key=lambda c: (int(c['level']), float(c['dist'])))
+    report['candidates'] = [(c['name'], c['level'], c['dist']) for c in cands[:8]]
+    assert cands, 'no NPC of the host within 30 m whose pocket the client could pick'
+    report['tries'] = []
+    chosen = None
+    for c in cands[:4]:
+        line = report_line(client.bot, 'pickpocket ' + c['guid'], ('PICKPOCKET ', 'REFUSED pickpocket'))
+        report['tries'].append(line)
+        if ' picked_after=1' in line:
+            chosen = c
+            break
+        time.sleep(3)
+    assert chosen, f'the client picked no pocket: {report["tries"]}'
+    # The loot comes from the NPC's treasure sets; some have none (Diego, 24.10.).
+    report['loot'] = {k: int(v) for k, v in re.findall(r'(items_before|items_after)=(-?\d+)', report['tries'][-1])}
+    report['victim'] = chosen['name']
+    marked = wait_for(lambda: (lambda l: ' picked=1' in l and l)(report_line(host.bot, 'pickinfo ' + chosen['guid'], ('PICKINFO ', 'REFUSED pickinfo'))),
+                      10, 'the host marks the NPC as picked') if not negative else None
+    if negative:
+        time.sleep(5)  # as long as the sync would take, and more
+    report['host_info'] = marked or report_line(host.bot, 'pickinfo ' + chosen['guid'], ('PICKINFO ', 'REFUSED pickinfo'))
+    report['host_sync'] = report_line(host.bot, 'picksync', 'PICKSYNC ')
+    report['client_sync'] = report_line(client.bot, 'picksync', 'PICKSYNC ')
+    assert ' picked=1' in report['host_info'], f'the host\'s {chosen["name"]} is still unpicked: {report["host_info"]}'
+
+
+DEATH_TASKS = ('ZS_RagDollDead', 'ZS_PiercedDead', 'ZS_Dead')
+KO_TASKS = ('ZS_Unconscious', 'ZS_LieKnockDown', 'ZS_PiercedKO')
+
+
+def murder_town(host, report):
+    """A town with routine status (G3_TOWN, else the first with members) and two members whose murder the game counts
+    there (QA murdercand: counts=1), unique names, not Zuben (a special case in NotifyEnclave, C 12:28)."""
+    start = host.bot.send('enclaves', 20)
+    host.bot.line('ENCLAVES end', 15, 'enclaves', start)
+    towns = [m.groupdict() for m in re.finditer(r'ENCLAVE members=(?P<members>\d+) first=\S+ status=(?P<status>\d+) enclave=(?P<name>\S+)', host.bot.log()[start:])]
+    wanted = os.environ.get('G3_TOWN')
+    town = next((t['name'] for t in towns if (t['name'] == wanted if wanted else t['status'] == '0' and int(t['members']) >= 4)), None)
+    assert town, f'no town with routine status and members: {towns}'
+    report['town'] = town
+    start = host.bot.send('murdercand ' + town, 20)
+    host.bot.line('MURDERCAND end', 15, 'murdercand', start)
+    cands = [dict(re.findall(r'(\w+)=(\S+)', l)) for l in host.bot.log()[start:].splitlines() if l.startswith('MURDERCAND enclave=')]
+    from collections import Counter
+    names = Counter(c['member'] for c in cands)
+    good = [c['member'] for c in cands if c['alive'] == '1' and c['counts'] == '1' and names[c['member']] == 1 and c['member'] != 'Zuben']
+    assert len(good) >= 2, f'fewer than two countable members in {town}: {cands[:10]}'
+    return town, good
+
+
+def murder_counts(bot, town):
+    counts = enclave_counts(bot, town)
+    return counts[4] if counts else None
+
+
+def stageMurder(copies, report, negative=False):
+    """P7 (plan to 90 %), murders by the other machine's player count for the town as in single-player (C
+    re/findings/notify-enclave-murder-followup-20261024-c.md). In a town with routine status: (1) the host's hero beats a
+    member down and finishes it with its own hits: the game counts one murder (positive control); (2) the client's hits on
+    another member (applied on the host): the lethal one knocks it out as the game decided on the client (24.10. it killed
+    at once), no murder; (3) the client finishes it lying there: one murder, on both machines. Negative control (host):
+    remotemurdersoff (no murder in 3); with G3_MURDER_OFF=ko: remotekooff (2 kills). G3_REPUTATION=personal
+    or together: that mode in the host's INI; personal: each murder counts only on its killer's machine (EnclaveCredit).
+    """
+    reputation = os.environ.get('G3_REPUTATION', 'shared')
+    report['reputation'] = reputation
+    if reputation != 'shared':
+        copies['host'].ini_extra = f'reputation = {reputation}\n'
+    personal = reputation == 'personal'
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    town, good = murder_town(host, report)
+    local_victim, remote_victim = good[0], good[1]
+    if negative:
+        off = 'remotekooff' if os.environ.get('G3_MURDER_OFF') == 'ko' else 'remotemurdersoff'
+        report['negative'] = report_line(host.bot, off, off.upper() + ' ')
+    # (1) Positive control: the host's hero, with its own hits, until the game sets a death task.
+    teleport_to(host.bot, local_victim)
+    report_line(host.bot, 'arm ' + WEAPON, 'ARM ')
+    time.sleep(4)
+    guid = next((g for g, v in npcs(host.bot).items() if v['name'] == local_victim), None)
+    assert guid, f'{local_victim} is not among the host NPCs'
+    before = {c.tag: murder_counts(c.bot, town) for c in (host, client)}
+    report_line(host.bot, f'npchp {local_victim}_30', 'NPCHP ')
+    report['local_hits'] = []
+    for _ in range(40):
+        hit = hit_npc(host.bot, guid)
+        report['local_hits'].append(hit['line'][-100:])
+        if any(f'task={t} ' in hit['line'] for t in DEATH_TASKS):
+            break
+        time.sleep(1.5 if 'Stumble' in hit['line'] else 0.4)
+    time.sleep(8)
+    after = {c.tag: murder_counts(c.bot, town) for c in (host, client)}
+    report['local'] = {'victim': local_victim, 'before': before, 'after': after}
+    assert after['host'] == before['host'] + 1, f'positive control: the host\'s own murder of {local_victim} counted {before} -> {after}'
+    if personal:
+        assert after['client'] == before['client'], f'personal: the host\'s murder changed the client\'s record {before} -> {after}'
+    # (2) The client knocks another member out.
+    teleport_to(host.bot, remote_victim)
+    teleport_to(client.bot, remote_victim)
+    x, y, z = hero_pos(host.bot)
+    move_hero(host.bot, (x + 600, y, z))
+    report_line(client.bot, 'arm ' + WEAPON, 'ARM ')
+    time.sleep(4)
+    guid = next((g for g, v in npcs(host.bot).items() if v['name'] == remote_victim), None)
+    assert guid, f'{remote_victim} is not among the host NPCs'
+    before = {c.tag: murder_counts(c.bot, town) for c in (host, client)}
+    xp_before = re.search(r' xp=(-?\d+)', report_line(client.bot, 'hp', 'HP '))
+    report_line(host.bot, f'npchp {remote_victim}_30', 'NPCHP ')
+    time.sleep(2)
+    report['ko_hits'] = []
+    state = {}
+    host_ko = os.environ.get('G3_MURDER_HOSTKO') == '1'  # the host knocks it out with its own hits (C review 2)
+    if host_ko:
+        report_line(host.bot, 'arm ' + WEAPON, 'ARM ')
+    for _ in range(30):
+        report_line(client.bot, 'arm ' + WEAPON, 'ARM ')
+        hit = hit_npc(host.bot if host_ko else client.bot, guid)
+        report['ko_hits'].append(hit['line'][-110:])
+        time.sleep(0.6)
+        state = npcs(host.bot).get(guid, {})
+        if state.get('dead') or state.get('task') in KO_TASKS or state.get('hp', 1) <= 0:
+            break
+        time.sleep(1.5 if 'Stumble' in hit['line'] else 0.4)
+    time.sleep(3)
+    state = npcs(host.bot).get(guid, {})
+    ko = {c.tag: murder_counts(c.bot, town) for c in (host, client)}
+    xp_ko = re.search(r' xp=(-?\d+)', report_line(client.bot, 'hp', 'HP '))
+    report['knockout'] = {'victim': remote_victim, 'state': state, 'before': before, 'after': ko,
+                          'xp': [int(m[1]) if m else None for m in (xp_before, xp_ko)]}
+    report['host_hp'] = report_line(host.bot, 'hp', 'HP ')
+    assert not state.get('dead'), f'the client\'s lethal hit killed {remote_victim} (the game knocks out): {state}'
+    assert state.get('task') in KO_TASKS, f'{remote_victim} not knocked out: {state}'
+    assert ko == before, f'a knock-out counted as murder: {before} -> {ko}'
+    report['ko_by'] = 'host' if host_ko else 'client'
+    # (3) The client finishes it.
+    time.sleep(4)
+    report['finish_hits'] = []
+    for _ in range(30):
+        hit = hit_npc(client.bot, guid)
+        report['finish_hits'].append(hit['line'][-110:])
+        time.sleep(0.6)
+        if npcs(host.bot).get(guid, {}).get('dead'):
+            break
+        time.sleep(0.6)
+    time.sleep(8)
+    after = {c.tag: murder_counts(c.bot, town) for c in (host, client)}
+    report['murder'] = {'dead': npcs(host.bot).get(guid, {}).get('dead'), 'before': ko, 'after': after}
+    report['host_sync'] = report_line(host.bot, 'enclavesync', 'ENCLAVESYNC ')
+    report['host_log'] = [l for l in host.mod_log().splitlines() if 'knocked' in l or 'killed' in l or 'murder' in l or 'NotifyEnclave' in l][-8:]
+    assert report['murder']['dead'], f'the client could not finish {remote_victim}'
+    expected = {'host': ko['host'], 'client': ko['client'] + 1} if personal else {'host': ko['host'] + 1, 'client': ko['client'] + 1}
+    assert after == expected, f'the client\'s murder of {remote_victim} ({reputation}): {ko} -> {after}, expected {expected}'
+
+
+def questdumpdiag(copies, report, negative=False):
+    """Plan P0 (24.10.), host only: every quest of the game with its journal folder, title, type, status, experience,
+    prerequisites and delivery targets, copied into the run folder as quests.tsv (base of the chapter checklist)."""
+    host = copies['host'].launch()
+    enter_world(host)
+    start = host.bot.send('questdump', 30)
+    report['questdump'] = host.bot.line('QUESTDUMP ', 30, 'questdump', start)
+    shutil.move(host.root/'quests.tsv', host.run/'quests.tsv')  # the install must hold only its own files (isolation check)
+
+
 def combat_state(bot):
     start = bot.send('hp', 20)
     line = bot.line('HP hero=', 10, 'hp', start)
@@ -6244,6 +6540,73 @@ def stageM2(copies, report, negative=False):
         assert not clients, f'NPCs near the host run on the client after the join: {clients}'
 
 
+def stageEdgeClaim(copies, report, negative=False):
+    """Stage EdgeClaim, an NPC the host's game still processes just outside the host's range stays the host's when the
+    client's copy of it puts it inside (stageM2 24.10.: Orc_GameStartRaider_Scout_07, 47 m from the host's hero there and
+    37.7 m in the client's copy, went to the client, so two machines simulated it; from the client it fought the host and
+    killed Slave_03 next to it; one run in three). An NPC the host processes 41-58 m from both players (edgenpcs: left out
+    for range just now) gets one snapshot from the client as the client's own, next to the players (claimrecord): the host
+    must refuse it, keep simulating the NPC and send it itself (within 60 m of a player). NPCs the host does not process
+    (a client's region far from the host, stage E) are not touched. Moving an NPC there with farmove did not do: the host's
+    game stopped processing a teleported NPC for seconds. Negative control: contestoff on the host."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    time.sleep(3)
+    if negative:
+        assert 'ok=1' in report_line(host.bot, 'contestoff', 'CONTESTOFF ')
+    # An NPC by the players with a name of its own, the host's and mirrored by the client. Both heroes step 44 m away from it:
+    # it stays where it is, processed by the host's game, but outside the host's 40 m (at 46 m, run 20261024-140544, the host
+    # processed nothing in its band; Hamlar was processed at 44.6-44.7 m).
+    me = hero_pos(host.bot)
+    rows = npcs(host.bot)
+    there = npcs(client.bot)
+    names = [r['name'] for r in rows.values()]
+    companions = ('Diego', 'Gorn', 'Milten', 'Lester')
+    pick = sorted((g for g, r in rows.items() if not r['dead'] and not r['mirrored'] and r['owner'] == 0 and distance(r['pos'], me) <= 2500
+                   and names.count(r['name']) == 1 and not r['name'].startswith(companions) and (there.get(g) or {}).get('mirrored')),
+                  key=lambda g: distance(rows[g]['pos'], me))
+    assert pick, 'no NPC by the players that the host simulates and the client mirrors'
+    guid = pick[0]
+    name = report['npc'] = rows[guid]['name']
+    at = rows[guid]['pos']
+    dx, dz = me[0] - at[0], me[2] - at[2]
+    length = (dx * dx + dz * dz) ** 0.5
+    dx, dz = (dx / length, dz / length) if length > 100 else (1.0, 0.0)
+    away = (at[0] + dx * 4400, me[1] + 50, at[2] + dz * 4400)
+    report['host_teleport'] = move_hero(host.bot, away)
+    report['client_teleport'] = move_hero(client.bot, (away[0] + 150, away[1], away[2]))
+    time.sleep(12)  # past the join grace, which refuses a client's snapshots near the host's hero for 10 s
+    e = None
+    for attempt in range(3):
+        start = host.bot.send('edgenpcs', 20)
+        host.bot.line('EDGENPC end', 10, 'edgenpcs', start)
+        edge = [dict(re.findall(r'(\w+)=(\S+)', l)) for l in host.bot.log()[start:].splitlines() if l.startswith('EDGENPC guid=')]
+        report['edge'] = [f"{x['name']} {x['nearest_m']} m {x['reason']} {x['age_ms']} ms mirror={x['mirror']}" for x in edge][:12]
+        usable = [x for x in edge if x['reason'] == 'range' and 0 <= int(x['age_ms']) < 500 and x['mirror'] == '0' and float(x['nearest_m']) <= 58]
+        # The one moved away from, or any other the host processes in its band now (Hamlar may walk out of it meanwhile).
+        e = next((x for x in usable if x['guid'] == guid), usable[0] if usable else None)
+        if e:
+            break
+        time.sleep(2)
+    if not e:
+        raise RuntimeError(f'inconclusive: no NPC processed by the host in its band: {report["edge"]}')
+    guid, name = e['guid'], e['name']
+    report['npc'] = f"{name} {e['nearest_m']} m"
+    since = len(host.mod_log())
+    report['claim'] = report_line(client.bot, f'claimrecord {guid}', ('CLAIMRECORD ', 'REFUSED claimrecord'))
+    assert report['claim'].startswith('CLAIMRECORD sent=1'), report['claim']
+    time.sleep(1.5)
+    lines = host.mod_log()[since:].splitlines()
+    taken = [l for l in lines if f'host mirrors {name} of player' in l]
+    kept = [l for l in lines if f'npcs: {name} of player' in l and 'refused' in l]
+    report['taken'], report['kept'] = taken[:3], kept[:3]
+    report['npcsend_after'] = after = report_line(host.bot, 'npcsend ' + guid, ('NPCSEND ', 'REFUSED npcsend'))
+    report['sync'] = report_line(host.bot, 'npcs', 'NPCSYNC ')
+    assert not taken, f"the host took the client's copy of {name}: {taken[0]}"
+    assert kept, f"the host neither took nor refused the client's snapshot of {name}: {report['sync']}"
+    assert ' mirror=0 ' in after and 'reason=sent' in after, f"{name} is not the host's, sent from there: {after}"
+
+
 def stageM1(copies, report, negative=False):
     """Stage M1, the host's NPCs stay mirrored on the client (npcs.cpp, 20.10.): when the client's mirrors went stale
     for a moment (3 s without a snapshot: own AI back, and the client starts sending them as its own), the host's
@@ -7465,7 +7828,7 @@ def stageNpcSpell(copies, report, negative=False):
     control: spellmirroroff (the client's cast stays on its mirror; the host's NPC goes on as before)."""
     # No spell item runs MagicStun or MagicHypnosis (spellfuncdiag 22.10., all 42 It_Spell_/It_Scroll_ templates): there is
     # no It_Spell_Stun or It_Spell_Hypnosis, and runs with them never cast (plan 3.6).
-    expected = {'It_Spell_Sleep': 'ZS_MagicSleep', 'It_Spell_Fear': 'ZS_Flee', 'It_Spell_Charm': 'memory'}
+    expected = {'It_Spell_Sleep': 'ZS_MagicSleep', 'It_Spell_Fear': 'ZS_Flee', 'It_Spell_Charm': 'memory', 'It_Spell_Bloodlust': 'ZS_Attack'}
     spell = os.environ.get('G3_SPELL', 'It_Spell_Sleep')
     task = expected.get(spell, os.environ.get('G3_TASK', ''))
     host, client = join_both(copies)
@@ -8413,6 +8776,34 @@ def usediag(copies, report, negative=False):
     report['status_note'] = 'diagnostic only'
 
 
+def objectscan(copies, report, negative=False):
+    """P1: where are the orc boulders, the Innos and Beliar statues (shrines), anvils and pirate treasures? Their templates
+    (Templates.pak: G3_Object_Interact_Animated_OrcBoulder_*, *_Innos_Statue_01, *_Beliar_Statue_01, *_Anvil_01,
+    *_PirateTreasure_01) say what to look for; the world data does not say where. The host alone teleports to the first
+    member of every town (QA enclaves) and lists those objects within 80 m. Diagnostic."""
+    host = copies['host'].launch()
+    enter_world(host)
+    start = host.bot.send('enclaves', 20)
+    host.bot.line('ENCLAVES end', 15, 'enclaves', start)
+    towns = [m.groups() for m in re.finditer(r'ENCLAVE members=\d+ first=(\S+) status=\d+ enclave=(\S+)', host.bot.log()[start:])]
+    wanted = ('OrcBoulder', 'Statue', 'Anvil', 'PirateTreasure', 'Shrine', 'Altar')
+    report['found'] = {}
+    report['spots'] = {}
+    for first, town in towns:
+        if first == '-':
+            continue
+        line = report_line(host.bot, 'teleportto ' + first, ('TELEPORTTO ', 'REFUSED teleportto'))
+        report['spots'][town] = line[:60]
+        if 'REFUSED' in line:
+            continue
+        time.sleep(6)
+        for u in usables(host.bot, 'all8000'):
+            if any(w in u['name'] for w in wanted):
+                report['found'].setdefault(u['name'], []).append({'town': town, 'at': first, 'pos': u['pos'], 'usetype': u['usetype'],
+                                                                   'usefunc': u['usefunc'], 'distance': u['distance']})
+    report['status_note'] = 'diagnostic only'
+
+
 def worldscan(copies, report, negative=False):
     """Where in the world are doors, ore veins, shrines, anvils, boulders, water barrels? The host alone teleports to
     up to G3_SPOTS dialog owners spread over the map (farnpcs) and lists the interact objects within 40 m there
@@ -8575,7 +8966,7 @@ def parity(copies, report, negative=False):
     report['client_connect_attempts'] = client.mod_log().count('net: connecting to')
 
 
-SUITES = {'stageHostUnreachable': stageHostUnreachable, 'menutextdiag': menutextdiag, 'stageSubtitles': stageSubtitles, 'stageWitness': stageWitness, 'stageTogether': stageTogether, 'stageRansack': stageRansack, 'stageMapMarks': stageMapMarks, 'stageTradeQuality': stageTradeQuality, 'stageTradeKeys': stageTradeKeys, 'fakebreaddiag': fakebreaddiag, 'stageCorpseProp': stageCorpseProp, 'fakebreadlivediag': fakebreadlivediag, 'stagePlayerTrade': stagePlayerTrade, 'stageTradePrice': stageTradePrice, 'skilldiag': skilldiag, 'stageW10': stageW10, 'stageW8': stageW8, 'stageW9': stageW9, 'stageTradeGoods': stageTradeGoods, 'postraidsave': postraidsave, 'puppettalkdiag': puppettalkdiag, 'stageGlide': stageGlide, 'stageWear': stageWear, 'stageW1': stageW1, 'stageW2': stageW2, 'stageW3': stageW3, 'stageW4': stageW4, 'stageW5': stageW5, 'stageW6': stageW6, 'stageW7': stageW7, 'stageX1': stageX1, 'stageF1': stageF1, 'brentondiag': brentondiag, 'xpinfodiag': xpinfodiag, 'stageA4': stageA4, 'stageA3': stageA3, 'stageQ2': stageQ2, 'stageK1': stageK1, 'stageS1': stageS1, 'stageS2': stageS2, 'stageS3': stageS3, 'stageCallAnimals': stageCallAnimals, 'callanimals2diag': callanimals2diag, 'animalscandiag': animalscandiag, 'callanimalsdiag': callanimalsdiag, 'stageOpenLocks': stageOpenLocks, 'stageSelfSpell': stageSelfSpell, 'selfspelldiag': selfspelldiag, 'stageNetOutage': stageNetOutage, 'stageR2': stageR2, 'stageM2': stageM2, 'stageRaid': stageRaid, 'stageM1': stageM1, 'stageR1': stageR1, 'theftdiag': theftdiag, 'stageCreature': stageCreature, 'stageCreatureLife': stageCreatureLife, 'stageControl': stageControl, 'stageNpcSpell': stageNpcSpell, 'stagePoison': stagePoison, 'theftscan': theftscan, 'doorlatediag': doorlatediag, 'doordiag': doordiag, 'worldscan': worldscan, 'usediag': usediag, 'friendlydiag': friendlydiag, 'parity': parity, 'scriptfinddiag': scriptfinddiag, 'tracediag': tracediag, 'deaddiag': deaddiag, 'stageL': stageL, 'stageP3a': stageP3a, 'invariantself': invariantself, 'puppetposediag': puppetposediag, 'syncdiag': syncdiag, 'ownerdiag': ownerdiag, 'potiondiag': potiondiag, 'transformdiag': transformdiag, 'rangeddiag': rangeddiag, 'rangedbot': rangedbot, 'stageP1': stageP1, 'stageP2': stageP2, 'stageP2hit': stageP2hit, 'stageP2fire': stageP2fire, 'stageHealOther': stageHealOther, 'raiddiag': raiddiag, 'arrowtouchdiag': arrowtouchdiag, 'scriptdumpdiag': scriptdumpdiag, 'stageT': stageT, 'stageV5': stageV5, 'stageV4': stageV4, 'posediag': posediag, 'stageV3': stageV3, 'stageV1': stageV1, 'stageV2': stageV2, 'viewdiag': viewdiag, 'stageE5': stageE5, 'stageQ': stageQ, 'questdiag': questdiag, 'stageE4': stageE4, 'infodescdiag': infodescdiag, 'stageE3': stageE3, 'stageE2': stageE2, 'stageE1': stageE1, 'aggrodiag': aggrodiag, 'stageH3b': stageH3b, 'infoscandiag': infoscandiag, 'gotodiag2': gotodiag2, 'walkdiag': walkdiag, 'gotodiag': gotodiag, 'navdiag': navdiag, 'soak': soak, 'stageH2': stageH2, 'stageH1': stageH1, 'infodiag': infodiag, 'stageG2': stageG2, 'stageG': stageG, 'stageD3b': stageD3b, 'stageD3a': stageD3a, 'stageD2': stageD2, 'stageD1': stageD1, 'stageC': stageC, 'stageB': stageB, 'stageA2': stageA2, 'stageA': stageA, 'herodeathdiag': herodeathdiag, 'herodiag': herodiag, 'givexpdiag': givexpdiag, 'stage3c': stage3c, 'farwritediag': farwritediag, 'stage1': stage1, 'stage2': stage2, 'animdiag': animdiag, 'stage3a': stage3a, 'scriptdiag': scriptdiag,
+SUITES = {'stageShapeFight': stageShapeFight, 'objectscan': objectscan, 'stageEdgeClaim': stageEdgeClaim, 'stageSharedUse': stageSharedUse, 'stagePickPocket': stagePickPocket, 'stageMurder': stageMurder, 'questdumpdiag': questdumpdiag, 'stageHostUnreachable': stageHostUnreachable, 'menutextdiag': menutextdiag, 'stageSubtitles': stageSubtitles, 'stageWitness': stageWitness, 'stageTogether': stageTogether, 'stageRansack': stageRansack, 'stageMapMarks': stageMapMarks, 'stageTradeQuality': stageTradeQuality, 'stageTradeKeys': stageTradeKeys, 'fakebreaddiag': fakebreaddiag, 'stageCorpseProp': stageCorpseProp, 'fakebreadlivediag': fakebreadlivediag, 'stagePlayerTrade': stagePlayerTrade, 'stageTradePrice': stageTradePrice, 'skilldiag': skilldiag, 'stageW10': stageW10, 'stageW8': stageW8, 'stageW9': stageW9, 'stageTradeGoods': stageTradeGoods, 'postraidsave': postraidsave, 'puppettalkdiag': puppettalkdiag, 'stageGlide': stageGlide, 'stageWear': stageWear, 'stageW1': stageW1, 'stageW2': stageW2, 'stageW3': stageW3, 'stageW4': stageW4, 'stageW5': stageW5, 'stageW6': stageW6, 'stageW7': stageW7, 'stageX1': stageX1, 'stageF1': stageF1, 'brentondiag': brentondiag, 'xpinfodiag': xpinfodiag, 'stageA4': stageA4, 'stageA3': stageA3, 'stageQ2': stageQ2, 'stageK1': stageK1, 'stageS1': stageS1, 'stageS2': stageS2, 'stageS3': stageS3, 'stageCallAnimals': stageCallAnimals, 'callanimals2diag': callanimals2diag, 'animalscandiag': animalscandiag, 'callanimalsdiag': callanimalsdiag, 'stageOpenLocks': stageOpenLocks, 'stageSelfSpell': stageSelfSpell, 'selfspelldiag': selfspelldiag, 'stageNetOutage': stageNetOutage, 'stageR2': stageR2, 'stageM2': stageM2, 'stageRaid': stageRaid, 'stageM1': stageM1, 'stageR1': stageR1, 'theftdiag': theftdiag, 'stageCreature': stageCreature, 'stageCreatureLife': stageCreatureLife, 'stageControl': stageControl, 'stageNpcSpell': stageNpcSpell, 'stagePoison': stagePoison, 'theftscan': theftscan, 'doorlatediag': doorlatediag, 'doordiag': doordiag, 'worldscan': worldscan, 'usediag': usediag, 'friendlydiag': friendlydiag, 'parity': parity, 'scriptfinddiag': scriptfinddiag, 'tracediag': tracediag, 'deaddiag': deaddiag, 'stageL': stageL, 'stageP3a': stageP3a, 'invariantself': invariantself, 'puppetposediag': puppetposediag, 'syncdiag': syncdiag, 'ownerdiag': ownerdiag, 'potiondiag': potiondiag, 'transformdiag': transformdiag, 'rangeddiag': rangeddiag, 'rangedbot': rangedbot, 'stageP1': stageP1, 'stageP2': stageP2, 'stageP2hit': stageP2hit, 'stageP2fire': stageP2fire, 'stageHealOther': stageHealOther, 'raiddiag': raiddiag, 'arrowtouchdiag': arrowtouchdiag, 'scriptdumpdiag': scriptdumpdiag, 'stageT': stageT, 'stageV5': stageV5, 'stageV4': stageV4, 'posediag': posediag, 'stageV3': stageV3, 'stageV1': stageV1, 'stageV2': stageV2, 'viewdiag': viewdiag, 'stageE5': stageE5, 'stageQ': stageQ, 'questdiag': questdiag, 'stageE4': stageE4, 'infodescdiag': infodescdiag, 'stageE3': stageE3, 'stageE2': stageE2, 'stageE1': stageE1, 'aggrodiag': aggrodiag, 'stageH3b': stageH3b, 'infoscandiag': infoscandiag, 'gotodiag2': gotodiag2, 'walkdiag': walkdiag, 'gotodiag': gotodiag, 'navdiag': navdiag, 'soak': soak, 'stageH2': stageH2, 'stageH1': stageH1, 'infodiag': infodiag, 'stageG2': stageG2, 'stageG': stageG, 'stageD3b': stageD3b, 'stageD3a': stageD3a, 'stageD2': stageD2, 'stageD1': stageD1, 'stageC': stageC, 'stageB': stageB, 'stageA2': stageA2, 'stageA': stageA, 'herodeathdiag': herodeathdiag, 'herodiag': herodiag, 'givexpdiag': givexpdiag, 'stage3c': stage3c, 'farwritediag': farwritediag, 'stage1': stage1, 'stage2': stage2, 'animdiag': animdiag, 'stage3a': stage3a, 'scriptdiag': scriptdiag,
           'stage3b': stage3b, 'combatdiag': combatdiag, 'stackdiag': stackdiag, 'stage4': stage4, 'stage4b': stage4b, 'talkdiag': talkdiag, 'namesdiag': namesdiag, 'talkdiag2': talkdiag2, 'stage4c': stage4c, 'itemdiag': itemdiag, 'stage5': stage5, 'lootdiag': lootdiag, 'stage5b': stage5b, 'stage5c': stage5c, 'chestdiag': chestdiag, 'stageChest': stageChest, 'quicklootdiag': quicklootdiag, 'radiusdiag': radiusdiag, 'pausediag': pausediag, 'savediag': savediag, 'stageQuickLoot': stageQuickLoot, 'tradediag': tradediag, 'stageTrade': stageTrade, 'spellfuncdiag': spellfuncdiag, 'stageDialogAudio': stageDialogAudio, 'listendiag': listendiag, 'stageU1': stageU1, 'stageBigTrade': stageBigTrade, 'stageReloadLoot': stageReloadLoot}
 
 
