@@ -16,16 +16,9 @@
 #include <cstring>
 
 namespace g3t::partner {
-namespace {
-constexpr uint32_t Cooldown = 5000;  // ms between jumps
-uint32_t lastJump = 0;
-bool wasDown = false;
-unsigned jumps = 0, refused = 0;
-
-// The key from the INI: F1..F24, PAGEDOWN, PAGEUP, HOME, END, INSERT, DELETE, or a single letter or digit.
-int KeyCode()
+// A key from the INI: F1..F24, PAGEDOWN, PAGEUP, HOME, END, INSERT, DELETE, or a single letter or digit.
+int KeyFromName(char const* name, int fallback)
 {
-    char const* name = GetConfig().partnerKey;
     if ((name[0] == 'F' || name[0] == 'f') && name[1] >= '1' && name[1] <= '9') {
         const int n = std::atoi(name + 1);
         if (n >= 1 && n <= 24) return VK_F1 + n - 1;
@@ -40,7 +33,18 @@ int KeyCode()
         const char c = static_cast<char>(toupper(static_cast<unsigned char>(name[0])));
         if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) return c;
     }
-    return VK_NEXT;
+    return fallback;
+}
+
+// The INI name of a key KeyFromName knows ("F7", "PAGEDOWN", "A"), for messages.
+void KeyName(int code, char* out, size_t size)
+{
+    char const* named = code == VK_NEXT ? "PAGEDOWN" : code == VK_PRIOR ? "PAGEUP" : code == VK_HOME ? "HOME" : code == VK_END ? "END"
+                        : code == VK_INSERT ? "INSERT" : code == VK_DELETE ? "DELETE" : nullptr;
+    if (named) strcpy_s(out, size, named);
+    else if (code >= VK_F1 && code <= VK_F24) sprintf_s(out, size, "F%d", code - VK_F1 + 1);
+    else if ((code >= 'A' && code <= 'Z') || (code >= '0' && code <= '9')) sprintf_s(out, size, "%c", code);
+    else sprintf_s(out, size, "0x%02X", code);
 }
 
 // The game window of this process has the keyboard (two test copies on one PC: only the focused one reacts).
@@ -50,6 +54,14 @@ bool Focused()
     GetWindowThreadProcessId(GetForegroundWindow(), &owner);
     return owner == GetCurrentProcessId();
 }
+
+namespace {
+constexpr uint32_t Cooldown = 5000;  // ms between jumps
+uint32_t lastJump = 0;
+bool wasDown = false;
+unsigned jumps = 0, refused = 0;
+
+int KeyCode() { return KeyFromName(GetConfig().partnerKey, VK_NEXT); }
 
 // The other player: the host for a client, the first connected client in this world for the host.
 int Partner()

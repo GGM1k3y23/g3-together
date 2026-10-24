@@ -12,6 +12,7 @@
 #include <Windows.h>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <algorithm>
 #include <vector>
@@ -24,6 +25,11 @@ gFScript originalSummon = nullptr;
 gFScript originalHit = nullptr;
 bool mirror = true;      // QA negative control: MirrorOff
 bool copyOwner = true;   // QA negative control: CopyHeroOff (the copy belongs to our own hero, as a naive copy would)
+// QA (stage W8, A 23.10.): the copy of another's creature is made this late and not bound again (Rebind), as any NPC that
+// appears after its first snapshot; npcs.cpp has to find it by looking it up again.
+uint32_t lateCopyMs = 0;
+struct LateCopy { uint8_t from; net::SummonNote note; DWORD due; };
+std::vector<LateCopy> lateCopies;
 uint32_t counter = 0;
 unsigned announced = 0, unresolved = 0, goneSent = 0, received = 0, replayed = 0, spawnedDirect = 0, noPuppet = 0,
          copiesBound = 0, copiesUnbound = 0, goneApplied = 0, copiesEndedAlone = 0, areaTicksSkipped = 0, areaTicksRun = 0;
@@ -283,7 +289,7 @@ void CopyCreature(uint8_t from, net::SummonNote const& note)
     }
     if (net::IsHost()) npcs::OnClaim(note.guid, from, true);  // the client simulates it and sends it
     npcs::Foreign(note.guid);  // before its first snapshot arrives it must not go out as one of ours
-    npcs::Rebind(note.guid);
+    if (!lateCopyMs) npcs::Rebind(note.guid);
     CreatureCopy c;
     std::memcpy(c.guid, note.guid, 16);
     c.created = GetTickCount();
@@ -457,6 +463,11 @@ void OnSummon(uint8_t from, net::SummonNote const& note)
         return;
     }
     if (note.op == net::SummonCreature) {
+        if (lateCopyMs) {
+            lateCopies.push_back({from, note, GetTickCount() + lateCopyMs});
+            Logf("summon: creature net %08X from player %u: its copy waits %u ms (QA)", note.netId, from, lateCopyMs);
+            return;
+        }
         CopyCreature(from, note);
         return;
     }
@@ -538,6 +549,12 @@ void CheckCreatureCopies()
 void Tick()
 {
     Install();
+    for (size_t i = 0; i < lateCopies.size();) {
+        if (static_cast<int32_t>(GetTickCount() - lateCopies[i].due) < 0) { ++i; continue; }
+        const LateCopy late = lateCopies[i];
+        lateCopies.erase(lateCopies.begin() + static_cast<std::ptrdiff_t>(i));
+        CopyCreature(late.from, late.note);
+    }
     if (!pending.empty()) Resolve();
     CheckKnown();
     CheckCreatureCopies();
@@ -569,6 +586,15 @@ void MirrorOff(LogFn log)
 {
     mirror = false;
     log("SUMMONMIRROROFF own summons are not announced");
+}
+
+void LateCopyCommand(char const* argument, LogFn log)
+{
+    const int ms = std::atoi(argument);
+    lateCopyMs = ms > 0 && ms <= 30000 ? static_cast<uint32_t>(ms) : 0;
+    char line[100];
+    sprintf_s(line, "SUMMONLATECOPY ms=%u (no Rebind)", lateCopyMs);
+    log(line);
 }
 
 void Creatures(LogFn log)

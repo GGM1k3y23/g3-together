@@ -11,6 +11,7 @@ struct PlayerState
 {
     uint8_t id = 0;
     uint32_t sequence = 0;
+    uint32_t sent = 0;    // the sender's net::Now() when it went out: speed from send times, not arrival (23.10.)
     uint32_t world = 0;   // FNV-1a of the world's file base name
     float position[3] = {};
     float rotation[4] = {};  // quaternion x, y, z, w
@@ -23,6 +24,10 @@ struct PlayerState
     char heldRight[40] = {};  // item names in the hero's hands (drawn weapon, shield, bow); empty = nothing
     char heldLeft[40] = {};
     char shape[32] = {};     // template of the body the player controls instead of its hero (transformed: Wolf), empty = its hero
+    char armor[40] = {};     // item names the hero wears in its body and helmet slots (stacks only, not its default body);
+                             // empty = none (23.10.: not shown before)
+    char helmet[40] = {};
+    char look[32] = {};      // template the player chose to be seen as (INI look); empty = the receiver's puppet_template
 };
 #pragma pack(pop)
 
@@ -74,6 +79,10 @@ uint32_t JoinCount();
 void SetInWorld(uint8_t id, bool in);  // host: that client entered (left) the host's world; client: id = LocalId(), this machine
 bool InWorld(uint8_t id);
 bool Joined();                   // client: welcomed by the host, in its world or not
+char const* RefusalReason();     // client: why the host refused this machine (empty if it did not), as the host wrote it
+void ClaimVersionForTest(uint16_t version);  // QA stage W7 only: the next hello claims this protocol version (0: ours)
+uint32_t WelcomeSerial();        // client: counts the welcomes this machine got, local only (persist binds an autoload to one)
+void AdvanceWelcomeSerialForTest();  // QA stage W6 only: simulate a new local welcome without a wire/server change
 bool PeerJoined(uint8_t id);     // host: a client with this id is connected, in the host's world or not
 // Host: which connection holds slot id, counted up at every hello it accepts there. A player who leaves and joins again
 // within one frame keeps its slot, so PeerJoined never turns false in between (Codex review 22.10. R7).
@@ -82,8 +91,10 @@ char const* PeerName(uint8_t id);
 void GateCounts(unsigned& in, unsigned& out);  // gameplay messages dropped at the gate so far
 // World identity, reliable. Host -> one client: WorldHost, the world the host plays (epoch changes with every load, new
 // game and return to the menu; campaign: the save a player loads to be in it). Client -> host: WorldReady (this player is
-// in that world now) or WorldOther (it is not: another save, a new game of its own, or no game).
-enum : uint8_t { WorldHost = 1, WorldReady = 2, WorldOther = 3 };
+// in that world now) or WorldOther (it is not: another save, a new game of its own, or no game), or WorldWaiting (it is in
+// the host's save, but its own hero record was refused; it waits until the record loads, owner 23.10.; hosts before it
+// ignore the op).
+enum : uint8_t { WorldHost = 1, WorldReady = 2, WorldOther = 3, WorldWaiting = 4 };
 enum : uint8_t { KindMenu = 0, KindNew = 1, KindSaved = 2 };
 enum : uint8_t { WorldSyncOff = 1 };  // flags: QA negative control, the host passes no world change on (the old behaviour)
 #pragma pack(push, 1)
@@ -102,12 +113,13 @@ void SetWorldHandler(WorldHandler handler);
 // NPC snapshots (unreliable) and motion names (reliable): host -> every client; client -> host (its own region,
 // passed on by the host).
 constexpr int MaxNpcsPerMessage = 48;  // receiving limit
-constexpr int NpcsPerSend = 18;         // sent per message: 7 + 18 x 63 bytes fit one 1200-byte datagram (hamachi-net-c.md)
+constexpr int NpcsPerSend = 18;         // sent per message: 11 + 18 x 63 bytes fit one 1200-byte datagram (hamachi-net-c.md)
 void SendNpcs(NpcRecord const* records, int count);
 void SendMotionName(uint32_t hash, char const* name);
 // Client side: received NPC snapshots and motion names are handed to these callbacks.
 // owner: the player whose machine simulates these NPCs (1 = host; a client sends its own region's NPCs).
-using NpcHandler = void (*)(NpcRecord const* records, int count, uint32_t now, uint8_t owner);
+// sent: the sender's net::Now() when the snapshot went out.
+using NpcHandler = void (*)(NpcRecord const* records, int count, uint32_t now, uint32_t sent, uint8_t owner);
 using MotionNameHandler = void (*)(uint32_t hash, char const* name);
 void SetNpcHandlers(NpcHandler npcs, MotionNameHandler names);
 
@@ -220,6 +232,19 @@ bool SendContents(uint8_t const guid[16], ContentEntry const* entries, int count
 bool SendContainerTx(uint8_t const guid[16], uint32_t seq, ContentEntry const* entries, int count);  // false: not sent
 void SendContainerTxResult(uint8_t to, uint8_t const guid[16], uint32_t seq, bool ok);
 void SendWatch(uint8_t const guid[16]);
+// Player trade (trade.cpp): what this player can trade, sent whenever it changes; the host passes it on. On receipt
+// player is the sender (set by the host). Items of one template with different qualities (sharp, blessed, forged ...) are
+// entries of their own; the size stays that of a ContentEntry.
+struct GoodsEntry {
+    uint8_t id[16];    // item template ID
+    uint16_t quality;  // gEItemQuality flags (below 1024, as a hero record's)
+    char name[26];     // for logs
+    int32_t amount;
+};
+constexpr int MaxGoodsEntries = MaxContentEntries;
+bool SendGoods(uint32_t serial, int32_t gold, GoodsEntry const* entries, int count);  // false: not sent
+using GoodsHandler = void (*)(uint8_t player, uint32_t serial, int32_t gold, GoodsEntry const* entries, int count);
+void SetGoodsHandler(GoodsHandler goods);
 using ContentsHandler = void (*)(uint8_t const guid[16], ContentEntry const* entries, int count);
 using ContainerTxHandler = void (*)(uint8_t from, uint8_t const guid[16], uint32_t seq, ContentEntry const* entries, int count);
 using TxResultHandler = void (*)(uint8_t const guid[16], uint32_t seq, bool ok);
@@ -324,6 +349,36 @@ struct DialogLineNote {
 void SendDialogLine(DialogLineNote const& note);
 using DialogLineHandler = void (*)(uint8_t from, DialogLineNote const& note);
 void SetDialogLineHandler(DialogLineHandler handler);
+// A trade between two players (offer.cpp, owner 23.10., point 2): the buyer, who traded at the seller's puppet, sends what
+// it took and gave; the seller accepts or declines it within 30 s and answers. Through the host, reliable; the host stamps
+// who sent it.
+constexpr int MaxOfferEntries = 24;
+enum : uint8_t { OfferAccepted = 1, OfferDeclined = 2, OfferExpired = 3, OfferUnavailable = 4, OfferBusy = 5 };
+#pragma pack(push, 1)
+struct OfferEntry {
+    uint8_t item[16] = {};      // template ID
+    int32_t amount = 0;         // + goes to the buyer, - from the buyer
+    uint16_t quality = 0;       // gEItemQuality flags of what goes (protocol 46; the name gave 2 bytes, the message stays 1164)
+    char name[26] = {};         // the buyer's name of it (its focus name, UTF-8), for the seller's screen
+};
+struct OfferNote {
+    uint8_t buyer = 0, seller = 0;
+    uint8_t count = 0;
+    uint32_t serial = 0;        // the buyer's
+    int32_t gold = 0;           // + goes to the buyer, - from the buyer
+    OfferEntry entries[MaxOfferEntries];
+};
+struct OfferResultNote {
+    uint8_t buyer = 0, seller = 0;
+    uint8_t result = 0;         // OfferAccepted .. OfferBusy
+    uint32_t serial = 0;
+};
+#pragma pack(pop)
+void SendOffer(OfferNote const& note);              // to note.seller (through the host)
+void SendOfferResult(OfferResultNote const& note);  // to note.buyer (through the host)
+using OfferHandler = void (*)(OfferNote const& note);
+using OfferResultHandler = void (*)(OfferResultNote const& note);
+void SetOfferHandlers(OfferHandler offer, OfferResultHandler result);
 // The clock that stamps received states (ENet's). Compare stamps only against this clock.
 uint32_t Now();
 }

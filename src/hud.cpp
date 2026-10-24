@@ -17,7 +17,7 @@ std::string last[4];  // newest first, as UTF-8 for the log
 void Message(Kind kind, wchar_t const* text)
 {
     gui2.PrintGameMessage(bCUnicodeString(text), static_cast<gEGameMessageType>(kind));
-    char utf8[300] = {};
+    char utf8[700] = {};  // the longest German message with a file name in it is ~260 bytes
     WideCharToMultiByte(CP_UTF8, 0, text, -1, utf8, sizeof(utf8) - 1, nullptr, nullptr);
     for (int i = 3; i > 0; --i) last[i] = last[i - 1];
     last[0] = utf8;

@@ -27,7 +27,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import together as T  # noqa: E402
 
 # Code that keeps a stage out of a shared session.
-NOT_SHARED = ('.launch(', 'nativesave', 'nativeload', 'closewindow', 'killhero', 'NETSIM', 'NETLINK', 'host_before', 'CHAOS')
+NOT_SHARED = ('.launch(', 'nativesave', 'nativeload', 'closewindow', 'killhero', 'NETSIM', 'NETLINK', 'host_before', 'CHAOS',
+              'ini_extra',  # INI lines of its own (stageWear's look): the games of a session read theirs at the start
+              "report['raid_kills']",  # measures the raid's own kills (stage3c): after another stage cleared it there are none
+              'unrolled chests')  # needs chests near the start nobody opened (stageChest; stage5b before it opened one, 24.10.)
 
 
 class Fresh(Exception):
@@ -77,7 +80,8 @@ class Session:
             self.start[tag] = hero_position(copy)
 
     def between(self):
-        """Back to where the session began: no dialog, both heroes at their start positions."""
+        """Back to where the session began: no dialog, both heroes standing at full hit points at their start positions
+        (stageA4 after stageA3 found the host at 20 hit points: its duel ended at once and the client's hits counted)."""
         for tag, copy in self.copies.items():
             if copy.bot is None:
                 continue
@@ -85,6 +89,11 @@ class Session:
                 if T.talkstate(copy.bot).get('running') == '1':
                     start = copy.bot.send('endtalk', 20)
                     copy.bot.line('TALKSTATE ', 10, 'endtalk', start)
+                T.wait_for(lambda: ' down=0 ' in T.herostate(copy.bot) + ' ', 60, f'the {tag} hero stands again')
+                hp = re.search(r' hp=(-?\d+) max=(\d+)', ' ' + T.herostate(copy.bot))
+                if hp and int(hp[1]) < int(hp[2]):
+                    start = copy.bot.send(f'sethp {hp[2]}', 20)
+                    copy.bot.line('SETHP ', 10, 'sethp', start)
                 if self.start.get(tag):
                     T.move_hero(copy.bot, self.start[tag])
             except Exception as error:  # noqa: BLE001 - the next stage will notice a broken session
@@ -164,14 +173,20 @@ def main():
     rerun = []
     pending = list(shared)
     kernel, handle, protected, before, mod_sha = prepare()
+    # Stages that may start from the post-raid save first, in sessions of their own; then those that need the raid.
+    pending.sort(key=lambda n: not T.postraid_for(n))
     while pending:
         session = Session(seconds=1200*len(pending))
+        T.POSTRAID = T.postraid_for(pending[0])
+        session.report['start'] = 'post-raid save' if T.POSTRAID else 'new game'
         T.join_both, T.clear_raid = session.join_both, session.clear_raid
         started = time.monotonic()
         passed_here = []
         failed = False
         try:
             while pending:
+                if T.postraid_for(pending[0]) != T.POSTRAID:
+                    break  # the rest needs the other start: a session of its own
                 name = pending.pop(0)
                 report = {'suite': name, 'negative_control': False, 'session': session.run.name}
                 began = time.monotonic()

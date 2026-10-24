@@ -13,9 +13,12 @@
 #include "talk.h"
 #include "items.h"
 #include "containers.h"
+#include "trade.h"
+#include "mapmarks.h"
 #include "dialogaudio.h"
 #include "explore.h"
 #include "npcs.h"
+#include "offer.h"
 #include "downed.h"
 #include "transform.h"
 #include "ranged.h"
@@ -246,6 +249,47 @@ bool RunReviewAction(const char* action)
         g3t::combat::KillOnceOff(&Log);
     } else if (!std::strcmp(action, "killreport")) {
         g3t::combat::KillReport(&Log);
+    } else if (!std::strcmp(action, "recordwaitoff")) {
+        g3t::persist::RecordWaitOff(&Log);
+    } else if (!std::strcmp(action, "recordwait")) {
+        g3t::persist::Waiting(&Log);
+    } else if (!std::strcmp(action, "helloversion")) {  // stage W7: the next hello claims this protocol version
+        g3t::net::ClaimVersionForTest(static_cast<uint16_t>(std::atoi(argument)));
+        Log("HELLOVERSION ok=1");
+    } else if (!std::strcmp(action, "mirrorretryoff")) {
+        g3t::npcs::MirrorRetryOff(&Log);
+    } else if (!std::strcmp(action, "mirrorstats")) {
+        g3t::npcs::MirrorStats(&Log);
+    } else if (!std::strcmp(action, "summonlatecopy")) {
+        g3t::summon::LateCopyCommand(argument, &Log);
+    } else if (!std::strcmp(action, "skillreplaceoff")) {
+        g3t::hero::SkillReplaceOff(&Log);
+    } else if (!std::strcmp(action, "hasskill")) {
+        g3t::hero::HasSkill(argument, &Log);
+    } else if (!std::strcmp(action, "skilldiag")) {
+        g3t::hero::SkillDiag(&Log);
+    } else if (!std::strcmp(action, "skilltry")) {
+        g3t::hero::SkillTry(&Log);
+    } else if (!std::strcmp(action, "offersend")) {  // stage W10: player trade offers (offer.cpp)
+        g3t::offer::SendCommand(argument, &Log);
+    } else if (!std::strcmp(action, "offeraccept")) {
+        g3t::offer::Decide(true, &Log);
+    } else if (!std::strcmp(action, "offerreject")) {
+        g3t::offer::Decide(false, &Log);
+    } else if (!std::strcmp(action, "offerstate")) {
+        g3t::offer::Report(&Log);
+    } else if (!std::strcmp(action, "offerpartial")) {
+        g3t::offer::PartialOn(&Log);
+    } else if (!std::strcmp(action, "heroadd")) {
+        g3t::offer::AddCommand(argument, &Log);
+    } else if (!std::strcmp(action, "herocount")) {
+        g3t::offer::CountCommand(argument, &Log);
+    } else if (!std::strcmp(action, "keycheck")) {
+        g3t::offer::KeyCheck(&Log);
+    } else if (!std::strcmp(action, "stacks")) {
+        g3t::containers::Stacks(argument, &Log);
+    } else if (!std::strcmp(action, "holditem")) {
+        g3t::containers::HoldItem(argument, &Log);
     } else {
         return false;
     }
@@ -253,6 +297,70 @@ bool RunReviewAction(const char* action)
 }
 
 // Commands added after the chain below reached MSVC's limit of nested blocks (C1061).
+// Phase 1b/2 (B, 23.10.): glide, what puppets wear and look like, talking and trading with them. Apart from the long chain
+// in RunAction, which reached the compiler's nesting limit.
+bool RunPlayerAction(const char* action)
+{
+    if (!std::strcmp(action, "puppettradeon")) {
+        g3t::remote::PuppetTradeOn(argument, &Log);
+    } else if (!std::strcmp(action, "puppetinfo")) {
+        g3t::remote::PuppetInfo(argument, &Log);
+    } else if (!std::strcmp(action, "lookoff")) {
+        g3t::remote::LookOff(&Log);
+    } else if (!std::strcmp(action, "wear")) {
+        g3t::remote::WearHero(argument, &Log);
+    } else if (!std::strcmp(action, "wornscan")) {
+        g3t::remote::WornScan(&Log);
+    } else if (!std::strcmp(action, "wearoff")) {
+        g3t::remote::WearOff(&Log);
+    } else if (!std::strcmp(action, "glidestopoff")) {
+        g3t::body::GlideStopOff(&Log);
+    } else if (!std::strcmp(action, "glideold")) {
+        g3t::body::GlideOld(&Log);
+    } else if (!std::strcmp(action, "glidereset")) {
+        g3t::body::GlideReset(&Log);
+    } else if (!std::strcmp(action, "glide")) {
+        g3t::body::GlideReport(&Log);
+    } else if (!std::strcmp(action, "tradesync")) {
+        g3t::trade::Report(&Log);
+    } else if (!std::strcmp(action, "autohelpon")) {
+        g3t::downed::AutoHelpOn(&Log);
+    } else if (!std::strcmp(action, "helpoptionoff")) {
+        g3t::downed::HelpOptionOff(&Log);
+    } else if (!std::strcmp(action, "tradeclose")) {
+        g3t::trade::CloseCommand(&Log);
+    } else if (!std::strcmp(action, "tradeholdoff")) {
+        g3t::trade::HoldOff(&Log);
+    } else if (!std::strcmp(action, "mapmarks")) {
+        g3t::mapmarks::Report(&Log);
+    } else if (!std::strcmp(action, "mapmarksoff")) {
+        g3t::mapmarks::Off(&Log);
+    } else if (!std::strcmp(action, "mapopen")) {
+        g3t::mapmarks::OpenMap(&Log);
+    } else if (!std::strcmp(action, "mapclose")) {
+        g3t::mapmarks::CloseMap(&Log);
+    } else if (!std::strcmp(action, "tradequalityoff")) {
+        g3t::trade::QualityOff(&Log);
+    } else if (!std::strcmp(action, "givequality")) {
+        g3t::trade::GiveQuality(argument, &Log);
+    } else if (!std::strcmp(action, "qualitycount")) {
+        g3t::trade::QualityCount(argument, &Log);
+    } else if (!std::strcmp(action, "tradesell")) {
+        g3t::containers::TradeSell(argument, &Log);
+    } else if (!std::strcmp(action, "tradeprice")) {
+        g3t::trade::Price(argument, &Log);
+    } else if (!std::strcmp(action, "tradepricesoff")) {
+        g3t::trade::PricesOff(&Log);
+    } else if (!std::strcmp(action, "tradefilloff")) {
+        g3t::trade::FillOff(&Log);
+    } else if (!std::strcmp(action, "playergoods")) {
+        g3t::trade::GoodsReport(argument, &Log);
+    } else {
+        return false;
+    }
+    return true;
+}
+
 bool RunLaterAction(const char* action)
 {
     if (!std::strcmp(action, "world")) {
@@ -267,6 +375,8 @@ bool RunLaterAction(const char* action)
         g3t::persist::Pause(argument, &Log);
     } else if (!std::strcmp(action, "worldgatelate")) {
         g3t::persist::WorldGateLate(&Log);
+    } else if (!std::strcmp(action, "loadticksoff")) {
+        g3t::persist::LoadTicksOff(argument, &Log);
     } else if (!std::strcmp(action, "dialogxpoff")) {
         g3t::infocmd::DialogXpOff(&Log);
     } else if (!std::strcmp(action, "duelhero")) {
@@ -473,7 +583,7 @@ void RunAction(const char* action)
 {
     gCSession& session = gCSession::GetInstance();
     char line[256] = {};
-    if (RunLaterAction(action) || RunReviewAction(action)) return;
+    if (RunLaterAction(action) || RunReviewAction(action) || RunPlayerAction(action)) return;
     if (!std::strcmp(action, "state")) {
         State(session);
     } else if (!std::strcmp(action, "menu")) {

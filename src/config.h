@@ -9,8 +9,12 @@ struct Config
     unsigned short port = 34567;
     char name[24] = "Player";
     char language[3] = "en";       // local HUD language: en | de (not a network setting)
-    char puppetTemplate[64] = "PC_Hero";  // template used to show other players (the hero himself)
+    char puppetTemplate[64] = "PC_Hero";  // template used to show other players (the hero himself) who chose no look
+    char look[32] = "";                  // this player's own look: the template the others show it as (empty: theirs)
     char partnerKey[16] = "PAGEDOWN";     // key that jumps to the other player (partner.cpp)
+    char offerAcceptKey[16] = "INSERT";   // keys that accept / decline another player's trade offer (offer.cpp)
+    char offerDeclineKey[16] = "DELETE";
+    bool qaKeyCheckOff = false;           // QA negative control (qa_keycheck = off, only with the QA bot): no key clash check
     char trace[8] = "off";                // off | on | all: runtime trace to g3trace.log (trace.cpp)
     // Town reputation (enclaves.cpp; the host's setting counts): shared = one town counter for both, the guard pursues
     // the one who did it; together = shared, and both answer for it; personal = each player's own counters.

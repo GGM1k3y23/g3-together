@@ -26,6 +26,15 @@ bool potionNeeded = true; // QA negative control: potionoff (helping up is free 
 // 21:35: guards knocked a player out, a partner paid a potion, nobody robbed him).
 bool lethalOnly = true;   // QA negative control: lethalonlyoff (every knock-out waits for help again)
 unsigned redirects = 0, revives = 0, releases = 0, deaths = 0, potionsPaid = 0, refusedNoPotion = 0;
+// Helping up through a dialog (owner 23.10.): a partner waiting for help gets an option on its puppet, the player's line
+// "Ich werde dir helfen." (INFO_SKALVERAM320060309153144, C trade-screen-c.md 6.); chosen, the hero pays a healing potion and
+// helps it up. Standing next to it for 3 s no longer does (QA autohelpon: that again).
+bool autoHelp = false;
+bool helpOption = true;  // QA negative control: helpoptionoff (no option is offered)
+char const* const HelpLine = "INFO_SKALVERAM320060309153144";
+bool helpStarted[net::MaxPlayers] = {};  // our option for player i is the running info (once per choice)
+uint32_t lastOffer = 0;
+unsigned optionsOffered = 0, optionsChosen = 0;
 char const* const KnockOutTask = "ZS_LieKnockDown";
 char const* const DeathTask = "ZS_Dead";
 char const* const PotionPrefix = "It_Potion_Health";  // healing potions (the game's own templates)
@@ -102,12 +111,42 @@ void SendToPlayer(uint8_t kind, int player)
     net::SendWorldState(s, 0);
 }
 
-// The local hero stands next to a downed partner: after ReviveTime it pays a healing potion and helps it up.
+// The local hero helps player i up: it pays a healing potion (the smallest it carries) or is told it needs one.
+void PayAndHelp(Entity& hero, int i, net::Remote const& r, uint32_t now)
+{
+    wchar_t name[32], text[200];
+    Wide(r.latest.name, name, 32);
+    char potion[64] = "";
+    const GEInt stack = potionNeeded ? SmallestPotion(hero, potion, sizeof(potion)) : -1;
+    if (potionNeeded && stack < 0) {
+        if (!hinted[i]) {
+            hinted[i] = true;
+            ++refusedNoPotion;
+            swprintf_s(text, i18n::Text(i18n::NeedHealingPotion), name);
+            hud::Message(hud::Warning, text);
+            SendToPlayer(9, i);
+            Logf("downed: wants to help player %d without a healing potion", i);
+        }
+        return;
+    }
+    if (stack >= 0) {
+        hero.Inventory.DeleteItems(stack, 1);
+        ++potionsPaid;
+    }
+    paidAt[i] = now;
+    helpingSince[i] = 0;
+    hinted[i] = false;
+    SendToPlayer(8, i);
+    swprintf_s(text, potionNeeded ? i18n::Text(i18n::HelpedUpWithPotion) : i18n::Text(i18n::HelpedUp), name);
+    hud::Message(hud::Good, text);
+    Logf("downed: helped player %d up, paid %s", i, *potion ? potion : "nothing");
+}
+
+// QA autohelpon (as before 23.10.): the local hero stands next to a downed partner: after ReviveTime it helps it up.
 void Help(Entity& hero, net::Remote const* remotes, uint32_t now)
 {
     const bCVector& at = hero.GetInstance()->GetWorldPosition();
     const float here[3] = {at.GetX(), at.GetY(), at.GetZ()};
-    wchar_t name[32], text[200];
     for (int i = 1; i < net::MaxPlayers; ++i) {
         if (i == net::LocalId()) continue;
         net::Remote const& r = remotes[i];
@@ -119,30 +158,73 @@ void Help(Entity& hero, net::Remote const* remotes, uint32_t now)
         }
         if (!helpingSince[i]) { helpingSince[i] = now; continue; }
         if (now - helpingSince[i] < ReviveTime) continue;
-        Wide(r.latest.name, name, 32);
-        char potion[64] = "";
-        const GEInt stack = potionNeeded ? SmallestPotion(hero, potion, sizeof(potion)) : -1;
-        if (potionNeeded && stack < 0) {
-            if (!hinted[i]) {
-                hinted[i] = true;
-                ++refusedNoPotion;
-                swprintf_s(text, i18n::Text(i18n::NeedHealingPotion), name);
-                hud::Message(hud::Warning, text);
-                SendToPlayer(9, i);
-                Logf("downed: next to player %d without a healing potion", i);
-            }
-            continue;
+        PayAndHelp(hero, i, r, now);
+    }
+}
+
+// The manager finds a speaker's infos through a map by owner it builds when it loads them; AddInfo does not enter a new
+// one there, so it never showed in a dialog (stageA2 24.10.: "G3T_HelpUp_2" could not be chosen). The game's own
+// BuildMapInfosByOwners (private, exported by Game.dll) builds the map again from all infos.
+void RebuildOwnerMap(gCInfoManager_PS* manager)
+{
+    using Build = void(__thiscall*)(gCInfoManager_PS*);
+    static Build build = reinterpret_cast<Build>(GetProcAddress(GetModuleHandleA("Game.dll"), "?BuildMapInfosByOwners@gCInfoManager_PS@@AAEXXZ"));
+    if (build) build(manager);
+    else Log("downed: BuildMapInfosByOwners not found; the help option will not show");
+}
+
+// Player i's puppet offers our help while i waits for it (its info is hidden otherwise); the option chosen, we pay and
+// help. Infos are looked up by name, never kept: a load makes the info manager anew.
+void OfferHelp(Entity& hero, net::Remote const* remotes, uint32_t now)
+{
+    gCInfoManager_PS* manager = gCInfoManager_PS::GetInstance();
+    if (!manager) return;
+    gCInfo_PS* running = manager->AccessIsRunning() ? manager->GetCurrentInfo() : nullptr;
+    const bool scan = now - lastOffer >= 250;
+    if (scan) lastOffer = now;
+    for (int i = 1; i < net::MaxPlayers; ++i) {
+        if (i == net::LocalId()) continue;
+        char infoName[32];
+        sprintf_s(infoName, "G3T_HelpUp_%d", i);
+        // Chosen: the running info is ours (once per choice; the option hides itself when it ran).
+        const bool ours = running && !std::strcmp(running->AccessName().GetText(), infoName);
+        if (ours && !helpStarted[i]) {
+            helpStarted[i] = true;
+            ++optionsChosen;
+            Logf("downed: the player chose to help player %d up", i);
+            hinted[i] = false;  // every choice without a potion says so again
+            PayAndHelp(hero, i, remotes[i], now);
         }
-        if (stack >= 0) {
-            hero.Inventory.DeleteItems(stack, 1);
-            ++potionsPaid;
+        if (!ours) helpStarted[i] = false;
+        if (!scan) continue;
+        net::Remote const& r = remotes[i];
+        const bool waiting = helpOption && Present(r, now) && (r.latest.flags & 8) && !(r.latest.flags & 4) && now - paidAt[i] >= PaidCooldown;
+        gCInfo_PS* info = manager->GetInfo(bCString(infoName));
+        if (!info && waiting) {
+            info = manager->AddInfo(bCString(infoName));
+            if (!info) continue;
+            char owner[32];
+            sprintf_s(owner, "G3T_Player%d", i);  // the puppet's name (remote.cpp)
+            info->AccessOwner() = bCString(owner);
+            info->AccessConditionType() = gEInfoCondType_General;
+            info->AccessType() = gEInfoType_Info;
+            info->AccessPermanent() = GEFalse;
+            info->AccessInfoGiven() = GETrue;
+            if (gCInfoScript_PS* script = info->AccessInfoScript().GetObject())
+                script->AddCommand(bCString("Say"), bCString("player"), bCString(""), bCString(""), bCString(""), eCLocString(bCString(HelpLine)));
+            RebuildOwnerMap(manager);
+            Logf("downed: help option for player %d made (%s)", i, owner);
         }
-        paidAt[i] = now;
-        helpingSince[i] = 0;
-        SendToPlayer(8, i);
-        swprintf_s(text, potionNeeded ? i18n::Text(i18n::HelpedUpWithPotion) : i18n::Text(i18n::HelpedUp), name);
-        hud::Message(hud::Good, text);
-        Logf("downed: helped player %d up, paid %s", i, *potion ? potion : "nothing");
+        if (!info) continue;
+        // Shown (not given) while i waits, hidden (given) otherwise; running it marks it given, so a choice without a
+        // potion shows it again on the next look while i still waits.
+        const bool shown = !info->AccessInfoGiven();
+        if (waiting && !shown && !ours) {
+            info->AccessInfoGiven() = GEFalse;
+            ++optionsOffered;
+        } else if (!waiting && shown) {
+            info->AccessInfoGiven() = GETrue;
+        }
     }
 }
 
@@ -232,7 +314,8 @@ void Tick()
         dying = false;
         aloneSince = 0;
         revivedBy = 0;
-        Help(hero, remotes, now);
+        if (autoHelp) Help(hero, remotes, now);
+        else OfferHelp(hero, remotes, now);
         return;
     }
     if (dying) {
@@ -381,9 +464,22 @@ void Potions(LogFn log)
 void Report(LogFn log)
 {
     char line[240];
-    sprintf_s(line, "DOWNED lethal=%d lethal_only=%d enabled=%d hold=%d held=%d redirects=%u revives=%u releases=%u deaths=%u potions_paid=%u no_potion=%u potion_needed=%d",
+    sprintf_s(line, "DOWNED lethal=%d lethal_only=%d enabled=%d hold=%d held=%d redirects=%u revives=%u releases=%u deaths=%u potions_paid=%u no_potion=%u potion_needed=%d"
+                    " auto_help=%d help_option=%d offered=%u chosen=%u",
               lethal ? 1 : 0, lethalOnly ? 1 : 0, enabled ? 1 : 0, holdEnabled ? 1 : 0, held ? 1 : 0, redirects, revives, releases, deaths, potionsPaid, refusedNoPotion,
-              potionNeeded ? 1 : 0);
+              potionNeeded ? 1 : 0, autoHelp ? 1 : 0, helpOption ? 1 : 0, optionsOffered, optionsChosen);
     log(line);
+}
+
+void AutoHelpOn(LogFn log)
+{
+    autoHelp = true;
+    log("AUTOHELPON ok");
+}
+
+void HelpOptionOff(LogFn log)
+{
+    helpOption = false;
+    log("HELPOPTIONOFF ok");
 }
 }

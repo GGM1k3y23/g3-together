@@ -38,7 +38,26 @@ struct State
     bool combatMoves = false; // replay attacks as the game's combat moves (mirrored NPCs; a player's hero fights without its SPU)
     bool combatFaulted = false; // a combat move faulted on this body: motion names only from then on
     uint32_t combatMoveAt = 0;  // when the last combat move started (its own recover follows the hit by itself)
+    bool puppet = false;        // QA (glide): a remote player's puppet, else a mirrored NPC
+    float lastPos[3] = {};      // QA (glide): where the body stood at the last Drive, and when
+    uint32_t lastAt = 0;
+    bool steered = false;       // QA (glide): the last Drive steered the body through its movement controller
+    uint32_t settleAt = 0;      // while steered: when to look again for a stance motion left on slot 0
 };
+
+// QA (glide, owner's look 21.10.: characters glide instead of walking): time driven bodies travelled faster than
+// 1 m/s, the part of it slot 0 showed no movement motion (gliding), the part steered vs. placed with MoveTo, and jumps.
+struct Glide { unsigned movingMs = 0, glideMs = 0, steerMs = 0, placeMs = 0, snaps = 0; };
+extern Glide glide[2];  // 0: mirrored NPCs, 1: puppets
+void GlideReport(void (*log)(char const*));
+// Speed in cm/s between two states, from the sender's clock: over Hamachi two states often arrived in one frame, their
+// arrival times gave 0 and the body was placed instead of walking (owner's look 21.10.: characters glide). QA negative
+// control `glideold`: from the arrival times, and a replayed stance motion is left running when the body sets off, as
+// before 23.10.
+float Speed(float const from[3], float const to[3], uint32_t sentFrom, uint32_t sentTo, uint32_t arrivedFrom, uint32_t arrivedTo);
+void GlideOld(void (*log)(char const*));
+void GlideStopOff(void (*log)(char const*));  // QA comparison: on set-off only StopPlayAni, the slot's motion runs on
+void GlideReset(void (*log)(char const*));
 
 struct Target
 {

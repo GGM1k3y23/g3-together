@@ -118,16 +118,47 @@ unsigned worldChanges = 0;
 // Host
 uint32_t epoch = 0, epochs = 0;
 struct Client { uint32_t told = 0; std::string toldCampaign; uint32_t ready = 0; uint32_t sent = 0; unsigned resends = 0; uint32_t hinted = 0; bool wants = false;
-                uint32_t generation = 0; };  // net::PeerGeneration of the connection this is about
+                uint32_t generation = 0;     // net::PeerGeneration of the connection this is about
+                uint32_t waitHinted = 0; };  // the epoch the host was last shown that this player waits for its hero
 uint32_t savedAt = 0;            // GetTickCount() of the host's last save: the game writes the files after SaveGame returns
 Client clients[net::MaxPlayers];
 bool byGeneration = true;        // host: false after the QA negative control `generationoff` (a slot is reset only once empty)
 uint32_t pausedUntil = 0;        // host, QA (stage W1): HostTick waits until then (`persistpause <ms>`), as if leave and join fell in one frame
 bool earlyGate = true;           // client: false after the QA negative control `worldgatelate` (the gate as before 23.10.)
+// Client: the player's own hero record for the loaded save was refused (damaged, R1). The player waits outside the host's
+// world until it loads (owner 23.10., C's recommendation); no copy of the host's hero any more. Tried again whenever the
+// file changes; removed, the rule of a first join holds (a copy of the host's hero, NoCampaignHero).
+std::string refusedRecord;
+FILETIME refusedWritten{};
+uint32_t refusedHinted = 0;
+bool recordWait = true;          // client: false after the QA negative control `recordwaitoff` (a refused record opened the gate)
 // The game's own load runs (LoadDetour). It is reentrant: its Session::Start runs twelve frames of its own, in which
 // persist::Tick and the network handlers run again before it returns (C 22.10., re/findings/load-worldactivate-hero-r6-
 // 20261022-codex.md). Settling, the hero restore, an autoload and opening the gate wait until it returned.
 unsigned nativeLoadDepth = 0;
+// Nothing of the mod runs in those frames either (BeginFrame): remote, npcs and the rest handled the network and the
+// half-made world there. A client's autoload of the host's campaign starts from a window timer, outside the module's
+// Process (C 23.10., re/findings/p3-load-autoload-ransack-contract-c-20261023.md): started from persist::Tick, the
+// subsystems after it ran on in the same frame in the new world.
+unsigned processDepth = 0;       // inside the module's Process (BeginFrame .. EndFrame)
+unsigned loadFrames = 0, loadFramesRan = 0;  // frames the game ran inside its loads; the mod's ticks ran in these
+bool loadTicks = false;          // QA negative control `loadticksoff`: the ticks run in them, the autoload from Tick (as before 23.10.)
+bool autoloadHold = false;       // QA stage W6 only: keep a valid timer order armed until `loadticksoff release`
+constexpr UINT_PTR AutoloadTimer = 0x47335436;  // 'G3T6'
+// Client: one order, made when the campaign arrived (OnFileDone) and never bound again: the save, the host world and the
+// number of loads and welcomes at that moment, and a serial of its own. A load, another host world, a rejoin or leaving
+// the host voids it.
+struct Autoload {
+    std::string slot;
+    uint32_t epoch = 0, welcome = 0;
+    unsigned loads = 0, serial = 0;
+    HWND window = nullptr;
+    bool valid = false, armed = false;
+};
+Autoload autoload;
+unsigned autoloadSerial = 0;
+unsigned autoloadPosted = 0, autoloadStale = 0;
+bool autoloadWarned = false;
 // Client
 net::WorldNote hostWorld;        // the host's last WorldHost
 uint32_t synced = 0;             // the host epoch this machine plays, 0: none
@@ -239,16 +270,84 @@ void OnFileChunk(uint8_t file, uint32_t total, uint32_t offset, uint8_t const* d
     std::memcpy(incoming[file].data() + offset, data, length);
 }
 
+// Client: the autoload order is void (a load began, another host world, left the host, a newer campaign); logged once.
+// Only that order's save is taken back from pendingLoad, so nothing newer is lost.
+void DropAutoload(char const* why)
+{
+    if (!autoload.valid) return;
+    if (autoload.armed && autoload.window) KillTimer(autoload.window, AutoloadTimer);
+    if (pendingLoad == autoload.slot) pendingLoad.clear();
+    ++autoloadStale;
+    Logf("persist: autoload of %s is stale (%s), order %u; not loaded", autoload.slot.c_str(), why, autoload.serial);
+    autoload = Autoload{};
+}
+
+// Client, from the window's timer (the game's message loop, between two of its frames): the order runs if it still holds.
+// Nothing else here; the next Process settles the world and restores the hero, as after any load.
+void CALLBACK AutoloadNow(HWND window, UINT, UINT_PTR id, DWORD)
+{
+    if (!autoload.valid || !autoload.armed) { KillTimer(window, id); return; }
+    if (processDepth || nativeLoadDepth) return;  // a frame or a load runs (a message loop of its own): the timer comes again
+    char const* why = net::IsHost() ? "this machine hosts" : !net::Joined() ? "not joined" : autoload.welcome != net::WelcomeSerial() ? "another welcome"
+                    : autoload.epoch != hostWorld.epoch ? "another host world" : autoload.loads != loads ? "a load ran since"
+                    : pendingLoad != autoload.slot ? "another campaign" : nullptr;
+    if (why) { DropAutoload(why); return; }
+    if (autoloadHold) return;  // QA timing only; validity above and Tick invalidation still apply while held
+    if (!KillTimer(window, id)) Logf("persist: the autoload timer could not be stopped (%lu)", GetLastError());
+    autoload.armed = false;
+    const std::string name = autoload.slot;
+    const uint32_t welcome = autoload.welcome;
+    const unsigned serial = autoload.serial;
+    autoload = Autoload{};  // used up before the load, so its LoadDetour finds no order to void
+    pendingLoad.clear();
+    ++autoLoads;
+    Logf("persist: autoload of %s runs outside the module's frame (process depth %u, welcome %u), order %u", name.c_str(), processDepth,
+         welcome, serial);
+    Logf("persist: loading the host's campaign %s", name.c_str());
+    explore::NativeLoad(name.c_str(), &Log);
+}
+
+// Client: the order's timer; false (logged once) if there is no window or no timer yet, and Tick tries the same order again.
+bool ArmAutoload()
+{
+    HWND window = eCApplication::GetInstance().GetHandle();
+    if (!window || !SetTimer(window, AutoloadTimer, USER_TIMER_MINIMUM, &AutoloadNow)) {
+        if (!autoloadWarned) Logf("persist: autoload of %s cannot be posted yet (window %p, error %lu), order %u", autoload.slot.c_str(),
+                                  static_cast<void*>(window), GetLastError(), autoload.serial);
+        autoloadWarned = true;
+        return false;
+    }
+    autoloadWarned = false;
+    autoload.window = window;
+    autoload.armed = true;
+    ++autoloadPosted;
+    Logf("persist: autoload of %s posted (host world %08x, welcome %u, loads %u), order %u", autoload.slot.c_str(), autoload.epoch,
+         autoload.welcome, autoload.loads, autoload.serial);
+    return true;
+}
+
+// Client, when a campaign arrived: the order is bound now, to this save, this host world and this many loads. A newer one
+// replaces it, also for the same save.
+void OrderAutoload(std::string const& slot)
+{
+    DropAutoload("a newer campaign arrived");
+    autoload = Autoload{slot, hostWorld.epoch, net::WelcomeSerial(), loads, ++autoloadSerial, nullptr, true, false};
+    pendingLoad = slot;
+    ArmAutoload();
+}
+
 void OnFileDone(char const* name, uint32_t const size[net::FileCount], uint32_t const crc[net::FileCount])
 {
     if (!SafeName(name)) {
         Logf("persist: a campaign name the host sent is not a plain save name; not stored");
+        hud::Message(hud::Warning, i18n::Text(i18n::SaveDamaged));
         for (auto& v : incoming) v.clear();
         return;
     }
     const std::string local = std::string("G3T_host_") + name;
     if (!size[0] || !size[1]) {  // a save without its world data must never be loaded (the game hangs)
         Logf("persist: campaign %s arrived without %s; not loaded", name, size[0] ? Extensions[1] : Extensions[0]);
+        hud::Message(hud::Warning, i18n::Text(i18n::SaveDamaged));
         for (auto& v : incoming) v.clear();
         return;
     }
@@ -256,6 +355,7 @@ void OnFileDone(char const* name, uint32_t const size[net::FileCount], uint32_t 
         if (!size[f]) continue;
         if (incoming[f].size() != size[f] || Crc32(incoming[f].data(), incoming[f].size()) != crc[f]) {
             Logf("persist: campaign %s arrived damaged (file %d); not loaded", name, f);
+            hud::Message(hud::Warning, i18n::Text(i18n::SaveDamaged));
             for (auto& v : incoming) v.clear();
             return;
         }
@@ -285,7 +385,8 @@ void OnFileDone(char const* name, uint32_t const size[net::FileCount], uint32_t 
             Logf("persist: first time in %s and no hero in play; the host's hero is copied", local.c_str());
         }
     }
-    if (autoLoad) pendingLoad = local;
+    if (autoLoad && loadTicks) pendingLoad = local;  // QA negative control: Tick loads it, as before
+    else if (autoLoad) OrderAutoload(local);
 }
 
 bool __stdcall SaveDetour(void* self, bCString const* name)
@@ -351,6 +452,10 @@ void Evaluate()
     // The player's own hero comes back first (Codex review 22.10. R6): opened before the record was applied, a reward in
     // those ~3 s was overwritten, and a host save then kept the host's hero as this player's record.
     if (earlyGate && (!pendingRecord.empty() || nativeLoadDepth)) return;
+    if (!refusedRecord.empty()) {  // waits until its own hero loads (owner 23.10.); the host learns why
+        SendAnswer(net::WorldWaiting);
+        return;
+    }
     if (synced == hostWorld.epoch || (hostWorld.kind == net::KindNew && localKind == net::KindNew)) {
         synced = hostWorld.epoch;
         everIn = true;
@@ -407,6 +512,7 @@ void Changing(uint8_t kind)
         return;
     }
     synced = 0;
+    refusedRecord.clear();  // a load or another world checks its own record again
     // Closed at once (Codex review 22.10. R6): during a load Evaluate returns before it closes the gate, so it stayed open
     // through the world change, and the first frame of the new world handled the host's messages before persist::Tick.
     if (earlyGate) net::SetInWorld(net::LocalId(), false);
@@ -438,6 +544,7 @@ void OnWorld(uint8_t from, net::WorldNote const& note)
             Logf("persist: %s is from an older host world; not loaded", pendingLoad.c_str());
             pendingLoad.clear();
         }
+        if (note.epoch != hostWorld.epoch) DropAutoload("another host world");
         hostWorld = note;
         Evaluate();
         return;
@@ -465,6 +572,17 @@ void OnWorld(uint8_t from, net::WorldNote const& note)
         } else if (localKind == net::KindNew && note.kind != net::KindMenu && c.hinted != epoch) {  // not one about to start a game
             c.hinted = epoch;
             hud::Message(hud::Warning, i18n::Text(i18n::PartnerOtherWorldSave));
+        }
+    } else if (note.op == net::WorldWaiting) {  // in the host's save, but its own hero record was refused (owner 23.10.)
+        c.ready = 0;
+        net::SetInWorld(from, false);
+        Logf("persist: player %u (%s) waits outside the host's world: its own hero record was refused", from, net::PeerName(from));
+        if (c.waitHinted != epoch) {
+            c.waitHinted = epoch;
+            wchar_t name[32] = {}, text[400];
+            MultiByteToWideChar(CP_UTF8, 0, net::PeerName(from), -1, name, 31);
+            _snwprintf_s(text, _TRUNCATE, i18n::Text(i18n::PartnerWaitsForHero), name);
+            hud::Message(hud::Warning, text);
         }
     }
 }
@@ -506,6 +624,7 @@ void HostTick()
 bool __stdcall LoadDetour(void* self, bCString const* name)
 {
     ++loads;
+    DropAutoload("a load began");  // before the game gets it: no order of the world before runs after this load (C 23.10.)
     pendingRecord.clear();  // a new load: the restore order of the one before is void (C 22.10.)
     pendingSince = 0;
     lastLoad = name ? name->GetText() : "";
@@ -537,10 +656,12 @@ bool __stdcall LoadDetour(void* self, bCString const* name)
     Logf("persist: loading %s, %s (%u journal entries)", lastLoad.c_str(), found ? "sidecar read" : "no sidecar", entries);
     dialogaudio::OnWorldChange();  // nothing of the old world plays on into the load (B, with R6); idempotent
     containers::OnWorldChange();   // and no container state of it is compared with the reloaded containers (R5)
+    const unsigned framesBefore = loadFrames, ranBefore = loadFramesRan;
     ++nativeLoadDepth;
     const bool ok = originalLoad(self, name);
     --nativeLoadDepth;
-    Logf("persist: the game's load of %s returned (%d)", lastLoad.c_str(), ok ? 1 : 0);
+    Logf("persist: the game's load of %s returned (%d) after %u frames of its own, mod ticks in %u", lastLoad.c_str(), ok ? 1 : 0,
+         loadFrames - framesBefore, loadFramesRan - ranBefore);
     if (!ok) {
         Logf("persist: loading %s failed", lastLoad.c_str());
         loading.clear();
@@ -548,6 +669,75 @@ bool __stdcall LoadDetour(void* self, bCString const* name)
         newWorld = true;  // if a world runs after all, it counts as one of this machine's own
     }
     return ok;
+}
+
+FILETIME WriteTime(std::string const& path)
+{
+    WIN32_FILE_ATTRIBUTE_DATA data{};
+    if (!GetFileAttributesExA(path.c_str(), GetFileExInfoStandard, &data)) return FILETIME{};
+    return data.ftLastWriteTime;
+}
+
+// Client, while it waits for its own hero (Tick): the reason on the screen every 30 s; the record is tried again once its
+// file changed (repaired); removed, the player goes on with a copy of the host's hero, as at a first join.
+void WaitForRecord()
+{
+    gCSession& session = gCSession::GetInstance();
+    if (!session.GetHero() || !session.IsGameRunning()) return;
+    if (GetFileAttributesA(refusedRecord.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        Logf("persist: own hero record %s was removed; the player goes on with a copy of the host's hero", refusedRecord.c_str());
+        hud::Message(hud::Warning, i18n::Text(i18n::NoCampaignHero));
+        refusedRecord.clear();
+        Evaluate();
+        return;
+    }
+    const FILETIME written = WriteTime(refusedRecord);
+    if (CompareFileTime(&written, &refusedWritten) != 0) {
+        refusedWritten = written;
+        if (hero::LoadRecord(refusedRecord.c_str())) {
+            ++recordsApplied;
+            Logf("persist: own hero record %s applied after it changed: 1", refusedRecord.c_str());
+            hud::Message(hud::Good, i18n::Text(i18n::RecordBack));
+            refusedRecord.clear();
+            Evaluate();
+            return;
+        }
+        Logf("persist: own hero record %s changed and is still refused (%s)", refusedRecord.c_str(), hero::LastRefusal() ? hero::LastRefusal() : "?");
+    }
+    const uint32_t now = GetTickCount();
+    if (refusedHinted && now - refusedHinted < 30000) return;
+    refusedHinted = now ? now : 1;
+    wchar_t name[80] = {}, text[400];
+    const size_t cut = refusedRecord.find_last_of("\\/");
+    MultiByteToWideChar(CP_UTF8, 0, refusedRecord.c_str() + (cut == std::string::npos ? 0 : cut + 1), -1, name, 79);
+    _snwprintf_s(text, _TRUNCATE, i18n::Text(i18n::RecordRefusedWaiting), name);
+    hud::Message(hud::Bad, text);
+}
+
+// Client: the connection on the screen (owner 23.10., point 10): lost and back again, and why the host refused this machine.
+void StatusHints()
+{
+    static bool wasJoined = false, everJoined = false;
+    static std::string shown;
+    const bool joined = net::Joined();
+    if (wasJoined && !joined) hud::Message(hud::Warning, i18n::Text(i18n::ConnectionLost));
+    else if (!wasJoined && joined && everJoined) hud::Message(hud::Good, i18n::Text(i18n::Reconnected));
+    everJoined = everJoined || joined;
+    wasJoined = joined;
+    char const* reason = net::RefusalReason();
+    if (!*reason || shown == reason) return;
+    shown = reason;
+    static char const install[] = "install differs from the host: ";
+    wchar_t text[400], wide[200] = {};
+    unsigned mine = 0, host = 0;
+    if (sscanf_s(reason, "different G3 Together version (protocol %u, host %u)", &mine, &host) == 2) {
+        _snwprintf_s(text, _TRUNCATE, i18n::Text(i18n::RefusedVersion), mine, host);
+    } else {
+        char const* list = std::strstr(reason, install);
+        MultiByteToWideChar(CP_UTF8, 0, list ? list + sizeof(install) - 1 : reason, -1, wide, 199);
+        _snwprintf_s(text, _TRUNCATE, i18n::Text(list ? i18n::RefusedInstall : i18n::RefusedOther), wide);
+    }
+    hud::Message(hud::Bad, text);
 }
 
 // Client: the host saved the campaign; this player's own hero is kept for that save.
@@ -559,6 +749,22 @@ void OnCampaign(uint8_t kind, char const* name)
     recordsWritten += ok ? 1 : 0;
     Logf("persist: the host saved %s; own hero record %s", name, ok ? "written" : "NOT written");
 }
+}
+
+bool BeginFrame()
+{
+    if (nativeLoadDepth) {
+        ++loadFrames;
+        if (!loadTicks) return false;
+        ++loadFramesRan;
+    }
+    ++processDepth;
+    return true;
+}
+
+void EndFrame()
+{
+    if (processDepth) --processDepth;
 }
 
 void OnWorldActivate()
@@ -597,12 +803,20 @@ void Tick()
     }
     if (net::IsHost()) {
         HostTick();
-    } else if (!pendingLoad.empty()) {
+    } else if (autoload.valid) {  // the order of OnFileDone, never bound again here
+        if (!net::Joined()) DropAutoload("left the host");
+        else if (autoload.welcome != net::WelcomeSerial()) DropAutoload("another welcome");
+        else if (!autoload.armed) ArmAutoload();
+    } else if (!pendingLoad.empty() && loadTicks) {  // QA negative control: within this frame, as before
         const std::string name = pendingLoad;
         pendingLoad.clear();
         ++autoLoads;
         Logf("persist: loading the host's campaign %s", name.c_str());
         explore::NativeLoad(name.c_str(), &Log);
+    }
+    if (!net::IsHost()) {
+        StatusHints();
+        if (!refusedRecord.empty()) WaitForRecord();
     }
     if (pendingRecord.empty()) return;
     gCSession& session = gCSession::GetInstance();
@@ -613,6 +827,13 @@ void Tick()
     const bool ok = hero::LoadRecord(pendingRecord.c_str());
     recordsApplied += ok ? 1 : 0;
     Logf("persist: own hero record %s applied: %d", pendingRecord.c_str(), ok ? 1 : 0);
+    if (!ok && recordWait) {
+        refusedRecord = pendingRecord;
+        refusedWritten = WriteTime(refusedRecord);
+        refusedHinted = 0;
+        Logf("persist: own hero record %s refused (%s): the player waits outside the host's world until it loads", refusedRecord.c_str(),
+             hero::LastRefusal() ? hero::LastRefusal() : "?");
+    }
     pendingRecord.clear();
     Evaluate();  // the gate opens now that the hero is this player's own (R6)
 }
@@ -695,6 +916,43 @@ void WorldGateLate(LogFn log)
     log(net::IsHost() ? "WORLDGATELATE ok=0 (client only)" : "WORLDGATELATE ok=1");
 }
 
+void RecordWaitOff(LogFn log)
+{
+    recordWait = false;
+    log(net::IsHost() ? "RECORDWAITOFF ok=0 (client only)" : "RECORDWAITOFF ok=1 (a refused hero record opens the gate, as before 23.10.)");
+}
+
+void Waiting(LogFn log)
+{
+    char line[400];
+    sprintf_s(line, "RECORDWAIT waiting=%d record=%.300s", refusedRecord.empty() ? 0 : 1, refusedRecord.empty() ? "-" : refusedRecord.c_str());
+    log(line);
+}
+
+void LoadTicksOff(char const* argument, LogFn log)
+{
+    if (argument && !std::strcmp(argument, "hold")) {
+        autoloadHold = true;
+        log("LOADTICKSOFF hold=1");
+        return;
+    }
+    if (argument && !std::strcmp(argument, "release")) {
+        autoloadHold = false;
+        log("LOADTICKSOFF hold=0");
+        return;
+    }
+    if (argument && !std::strcmp(argument, "welcome")) {
+        const uint32_t before = net::WelcomeSerial();
+        net::AdvanceWelcomeSerialForTest();
+        char line[120];
+        sprintf_s(line, "LOADTICKSOFF welcome=%u->%u", before, net::WelcomeSerial());
+        log(line);
+        return;
+    }
+    loadTicks = true;
+    log("LOADTICKSOFF ok=1");
+}
+
 void WorldReport(LogFn log)
 {
     char line[700];
@@ -712,11 +970,11 @@ void WorldReport(LogFn log)
 
 void Report(LogFn log)
 {
-    char line[600];
-    sprintf_s(line, "PERSIST hooked=%d saves=%u loads=%u written=%u read=%u last_save=%s last_load=%s writing=%d records_written=%u records_applied=%u campaign=%s sent=%u received=%u auto_loads=%u last_received=%s",
+    char line[800];
+    sprintf_s(line, "PERSIST hooked=%d saves=%u loads=%u written=%u read=%u last_save=%s last_load=%s writing=%d records_written=%u records_applied=%u campaign=%s sent=%u received=%u auto_loads=%u last_received=%s load_frames=%u load_frames_ran=%u autoload_posted=%u autoload_stale=%u load_ticks=%d",
               originalSave && originalLoad ? 1 : 0, saves, loads, sidecarsWritten, sidecarsRead, lastSave.c_str(), lastLoad.c_str(),
               writing ? 1 : 0, recordsWritten, recordsApplied, campaign.empty() ? "-" : campaign.c_str(), filesSent, filesReceived,
-              autoLoads, lastReceived.c_str());
+              autoLoads, lastReceived.c_str(), loadFrames, loadFramesRan, autoloadPosted, autoloadStale, loadTicks ? 1 : 0);
     log(line);
 }
 }

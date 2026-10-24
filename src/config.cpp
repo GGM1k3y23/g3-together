@@ -71,13 +71,17 @@ Config const& LoadConfig()
             }
         }
         else if (!_stricmp(key, "puppet_template")) strncpy_s(config.puppetTemplate, value, _TRUNCATE);
+        else if (!_stricmp(key, "look")) strncpy_s(config.look, value, _TRUNCATE);
         else if (!_stricmp(key, "partner_key")) strncpy_s(config.partnerKey, value, _TRUNCATE);
+        else if (!_stricmp(key, "offer_accept_key")) strncpy_s(config.offerAcceptKey, value, _TRUNCATE);
+        else if (!_stricmp(key, "offer_decline_key")) strncpy_s(config.offerDeclineKey, value, _TRUNCATE);
+        else if (!_stricmp(key, "qa_keycheck")) config.qaKeyCheckOff = !_stricmp(value, "off");
         else if (!_stricmp(key, "trace")) strncpy_s(config.trace, value, _TRUNCATE);
         else if (!_stricmp(key, "reputation")) strncpy_s(config.reputation, value, _TRUNCATE);
     }
     fclose(file);
-    Logf("config: role=%s address=%s port=%u name=%s puppet_template=%s language=%s", config.host ? "host" : "client",
-         config.address, config.port, config.name, config.puppetTemplate, config.language);
+    Logf("config: role=%s address=%s port=%u name=%s puppet_template=%s look=%s language=%s", config.host ? "host" : "client",
+         config.address, config.port, config.name, config.puppetTemplate, *config.look ? config.look : "-", config.language);
     return config;
 }
 }

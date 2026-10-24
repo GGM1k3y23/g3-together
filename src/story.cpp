@@ -5,6 +5,7 @@
 #include "combat.h"
 #include "log.h"
 #include "net.h"
+#include "remote.h"
 
 #include <Game.h>
 #include <Script.h>
@@ -17,6 +18,14 @@
 #include <vector>
 
 namespace g3t::story {
+namespace {
+// QA: an NPC by name, or "puppet<id>" for that player's puppet (its template name, PC_Hero, finds the hero itself).
+Entity Named(char const* name)
+{
+    return !std::strncmp(name, "puppet", 6) ? Entity(remote::PuppetOf(std::atoi(name + 6))) : Entity::GetEntity(bCString(name));
+}
+}
+
 namespace {
 constexpr DWORD PollInterval = 500;
 using States = std::unordered_map<std::string, uint8_t>;
@@ -332,7 +341,7 @@ void Talk(char const* npcName, LogFn log)
 {
     gCInfoManager_PS* manager = Infos();
     eCEntity* hero = gCSession::GetInstance().GetHero();
-    Entity npc = Entity::GetEntity(bCString(npcName));
+    Entity npc = Named(npcName);
     if (!manager || !hero || !npc.GetInstance()) { log("REFUSED talk: no game, hero or NPC"); return; }
     const GEBool started = manager->StartInfoManager(*hero, *npc.GetInstance());
     // The options on offer; ":xp" marks one whose script gives experience (GiveXP), for stage Q2.
@@ -381,7 +390,7 @@ void AssessTalk(char const* npcName, LogFn log)
 {
     char line[260];
     eCEntity* hero = gCSession::GetInstance().GetHero();
-    Entity npc = Entity::GetEntity(bCString(npcName));
+    Entity npc = Named(npcName);
     if (!hero || !npc.GetInstance()) { log("REFUSED assesstalk: no hero or NPC"); return; }
     const GEInt result = GetScriptAdminExt().CallScript(bCString("AssessTalk"), npc.GetInstance(), hero, 0);
     sprintf_s(line, "ASSESSTALK npc=%s result=%d npc_task=%s npc_aimode=%d hero_task=%s has_info=%d frozen=%d npc_talking=%d npc_talked_to=%d",
@@ -420,7 +429,7 @@ void Approach(char const* npcName, LogFn log)
 {
     char line[200];
     eCDynamicEntity* hero = gCSession::GetInstance().GetHero();
-    Entity npc = Entity::GetEntity(bCString(npcName));
+    Entity npc = Named(npcName);
     if (!hero || !npc.GetInstance()) { log("REFUSED approach: no hero or NPC"); return; }
     const bCVector& n = npc.GetInstance()->GetWorldPosition();
     const bCVector& h = hero->GetWorldPosition();

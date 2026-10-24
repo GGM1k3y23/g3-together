@@ -115,7 +115,8 @@ void LookAt(char const* name, LogFn log)
 {
     char line[200];
     eCDynamicEntity* hero = gCSession::GetInstance().GetHero();
-    Entity target = Entity::GetEntity(bCString(name));
+    // "puppet<id>": the puppet of that player (its template name, PC_Hero, finds the hero itself).
+    Entity target = !std::strncmp(name, "puppet", 6) ? Entity(remote::PuppetOf(std::atoi(name + 6))) : Entity::GetEntity(bCString(name));
     if (!hero || !target.GetInstance()) { log("REFUSED lookat: no hero or no such entity"); return; }
     float from[3], at[3];
     PositionOf(hero, from);
@@ -413,9 +414,21 @@ void InfoScan(char const* command, LogFn log)
     float h[3];
     PositionOf(hero, h);
     auto& infos = manager->AccessInfos();
+    // "type_<n>": every info of that condition type (17 = trade), one row each.
+    const int condType = !std::strncmp(command, "type_", 5) ? std::atoi(command + 5) : -1;
     for (int i = 0; i < infos.GetCount(); ++i) {
         gCInfo_PS* info = infos.AccessAt(i);
         if (!info) continue;
+        if (condType >= 0) {
+            if (static_cast<int>(static_cast<gEInfoCondType const&>(info->AccessConditionType())) != condType) continue;
+            Entity owner = Entity::GetEntity(info->AccessOwner());
+            float distance = 1e9f;
+            if (owner.GetInstance()) { float p[3]; PositionOf(owner.GetInstance(), p); distance = body::Distance(p, h) / 100.0f; }
+            sprintf_s(line, "INFOSCAN info=%s owner=%s distance_m=%.0f given=%d permanent=%d", info->AccessName().GetText(),
+                      info->AccessOwner().GetText(), distance, info->AccessInfoGiven() ? 1 : 0, info->AccessPermanent() ? 1 : 0);
+            rows.push_back({distance, line});
+            continue;
+        }
         gCInfoScript_PS* script = info->AccessInfoScript().GetObject();
         if (!script) continue;
         auto& lines = script->AccessInfoScriptLines();
@@ -526,8 +539,8 @@ void InfoDescribe(char const* name, LogFn log)
         for (int k = 0; k < lines.GetCount(); ++k) {
             gCInfoScriptLine_PS* l = static_cast<gCInfoScriptLine_PS*>(lines.AccessAt(k));
             if (!l) continue;
-            sprintf_s(line, "INFOLINE %d %s e1=%s e2=%s id1=%s id2=%s", k, l->AccessCommand().GetText(), l->AccessEntity1().GetText(),
-                      l->AccessEntity2().GetText(), l->AccessID1().GetText(), l->AccessID2().GetText());
+            sprintf_s(line, "INFOLINE %d %s e1=%s e2=%s id1=%s id2=%s text=%s", k, l->AccessCommand().GetText(), l->AccessEntity1().GetText(),
+                      l->AccessEntity2().GetText(), l->AccessID1().GetText(), l->AccessID2().GetText(), l->AccessText().GetID().GetText());
             log(line);
         }
     }

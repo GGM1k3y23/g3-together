@@ -107,8 +107,9 @@ these guides used two game copies on one PC; play over the real internet remains
 - Items, chests, corpses and trading are shared: what one player takes is gone for everyone.
 - Everyone uses the same time of day. Sleeping advances time for all players.
 - Helping up a downed player costs one healing potion. A player who would die stays down while a
-  connected partner in the same world, who is not downed, can help. Stand within 2.5 m for three
-  seconds to help them up. The cheapest healing potion in the helper's inventory is consumed.
+  connected partner in the same world, who is not downed, can help. Talk to the downed player's
+  character and choose "I will help you." to help them up. The cheapest healing potion in the
+  helper's inventory is consumed.
   Without a potion, both players see a notice and the downed player waits for their partner to
   return with one.
 - If nobody can help because everyone is down, or the partner is disconnected, in another world
@@ -155,7 +156,19 @@ these guides used two game copies on one PC; play over the real internet remains
 - **Jump to your partner:** **Page Down** puts you 1.5 m behind the other player in the same world,
   including a downed partner you want to help. There is a five-second cooldown. Staying together
   is preferable, but you can separate and regroup. To change the key, use `partner_key = F9` in
-  the INI (F1–F24, PAGEUP, HOME, END, INSERT, DELETE or a letter).
+  the INI (F1–F24, PAGEUP, HOME, END, INSERT, DELETE or a letter; Insert and Delete are the trade keys below).
+- **Map and compass:** your partner is marked on your map, with their name, and on the compass in their direction from
+  where you look.
+- **Your look:** the other player sees the armor and helmet you wear. To be seen as another character, set
+  `look = Diego` (a character template of the game) in your own INI; without it, the other player's
+  `puppet_template` decides (default: the hero).
+- **Trading with your partner:** talk to the other player's character and choose "Show me your wares!". The game's trade
+  window opens with what your partner can trade (not what they wear, no quest items) and their gold; prices are the
+  same both ways; a sharpened, blessed or forged weapon stays so. On your very first trade a tip box comes first: click Ok. Swap as often as you like, then close the
+  window: your partner gets one offer and accepts with Insert or declines with Delete within 30 seconds. Until then
+  you have neither what you get nor what you gave; afterwards everything is where it belongs. Other keys:
+  `offer_accept_key = F7` and `offer_decline_key = F8` in the INI (the same names as for `partner_key`). If two of
+  these three keys are the same, one press does both: the mod says so on the screen at the start and in `g3together.log`.
 - Dialog changes to NPCs, such as trader, teacher, guard and routine settings, apply to everyone,
   as do dialog-triggered duels, attacks and companion recruitment. Dialog items go to the player
   speaking.
@@ -164,7 +177,8 @@ these guides used two game copies on one PC; play over the real internet remains
   After a disconnect without loading, companions initially belong to the host.
 - If the host loads a save during a session, the other players are loaded into it automatically. Until they
   are done, you do not see each other.
-- Trading and looting have been tested with bots, not through the real trading interface.
+- Trading and looting have been tested with bots through the game's own trade functions; the trade window's mouse
+  controls (dragging items, its buttons) have not been tried by a person yet.
 - Sleep advances the clock for everyone, but only heals the player who sleeps.
 - Transformations: the other player sees the creature moving, then sees the hero again after the
   transformation ends. Wolf and Bloodfly were tested using the same setup as the game's spell.

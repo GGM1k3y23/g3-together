@@ -4,8 +4,14 @@
 #include "log.h"
 
 #include <Windows.h>
+#include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
+#include <map>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace g3t::body {
 unsigned actionsStarted = 0, actionsShown = 0, actionsPlayed = 0, pacifies = 0, ownerReleases = 0;
@@ -19,6 +25,61 @@ unsigned kindStarted[3] = {}, kindPlayed[3] = {}, kindShown[3] = {};
 unsigned scriptAnis = 0, scriptAniFaults = 0, loopRestarts = 0;
 bool scriptAniReplay = true;  // QA comparison: scriptanioff
 bool loopRestart = true;      // QA comparison: looprestartoff
+Glide glide[2];
+unsigned stanceStops = 0;   // replayed stance motions ended because the body set off
+unsigned stopOwners[8] = {};  // QA: slot 0's owner when that happened
+std::map<std::string, unsigned> glideMotions[2];  // what slot 0 showed while a body glided, ms by motion name
+
+void GlideReport(void (*log)(char const*))
+{
+    char line[200];
+    for (int kind = 0; kind < 2; ++kind) {
+        Glide const& g = glide[kind];
+        sprintf_s(line, "GLIDE kind=%s moving_ms=%u glide_ms=%u steer_ms=%u place_ms=%u snaps=%u stance_stops=%u owners=%u/%u/%u/%u/%u/%u/%u",
+                  kind ? "puppet" : "mirror", g.movingMs, g.glideMs, g.steerMs, g.placeMs, g.snaps, stanceStops, stopOwners[0], stopOwners[1],
+                  stopOwners[2], stopOwners[3], stopOwners[4], stopOwners[5], stopOwners[6]);
+        log(line);
+        // The five motions shown longest while gliding (a name without _Move_ is not always a still body: starts, stops).
+        std::vector<std::pair<unsigned, std::string>> top;
+        for (auto const& [name, ms] : glideMotions[kind]) top.emplace_back(ms, name);
+        std::sort(top.rbegin(), top.rend());
+        for (size_t i = 0; i < top.size() && i < 5; ++i) {
+            sprintf_s(line, "GLIDEMOTION kind=%s ms=%u motion=%.120s", kind ? "puppet" : "mirror", top[i].first, top[i].second.c_str());
+            log(line);
+        }
+    }
+}
+
+bool arrivalSpeed = false;  // QA negative control: glideold
+bool settleStance = true;   // QA negative control: glideold
+bool stopMotion = true;     // QA comparison: glidestopoff (only StopPlayAni on set-off)
+
+float Speed(float const from[3], float const to[3], uint32_t sentFrom, uint32_t sentTo, uint32_t arrivedFrom, uint32_t arrivedTo)
+{
+    const uint32_t interval = arrivalSpeed ? arrivedTo - arrivedFrom : sentTo - sentFrom;
+    return interval ? Distance(from, to) * 1000.0f / interval : 0.0f;
+}
+
+void GlideStopOff(void (*log)(char const*))
+{
+    stopMotion = false;
+    log("GLIDESTOPOFF ok");
+}
+
+void GlideOld(void (*log)(char const*))
+{
+    arrivalSpeed = true;
+    settleStance = false;
+    log("GLIDEOLD on");
+}
+
+void GlideReset(void (*log)(char const*))
+{
+    glide[0] = glide[1] = Glide{};
+    glideMotions[0].clear();
+    glideMotions[1].clear();
+    log("GLIDERESET ok");
+}
 
 int ReplayKind(char const* name)
 {
@@ -315,6 +376,27 @@ void Drive(Entity& entity, State& state, Target const& target, uint32_t now)
     const bCVector& at = instance->GetWorldPosition();
     const float current[3] = {at.GetX(), at.GetY(), at.GetZ()};
     const float error = Distance(current, target.position);
+    // QA (glide): how the body travelled since the last Drive. Faster than 15 m/s is a jump (snap), not travel.
+    const uint32_t dt = now - state.lastAt;
+    if (state.lastAt && dt > 0 && dt < 500) {
+        const float moved = Distance(current, state.lastPos), speed = moved * 1000.0f / dt;
+        Glide& g = glide[state.puppet ? 1 : 0];
+        if (moved > 150.0f && speed > 1500.0f) ++g.snaps;
+        else if (speed > 100.0f) {
+            g.movingMs += dt;
+            (state.steered ? g.steerMs : g.placeMs) += dt;
+            char shows[128];
+            CurrentMotion(instance, shows, sizeof(shows));
+            if (!strstr(shows, "_Move_")) {
+                g.glideMs += dt;
+                auto& seen = glideMotions[state.puppet ? 1 : 0];
+                if (auto it = seen.find(shows); it != seen.end()) it->second += dt;
+                else if (seen.size() < 200) seen[shows] = dt;
+            }
+        }
+    }
+    std::memcpy(state.lastPos, current, sizeof(current));
+    state.lastAt = now;
     const bCMatrix pose = Pose(*instance, target.position, target.rotation);
     // Movement motions (Move_*) belong to the engine's movement system and only play while a body really
     // travels. A moving body is therefore steered through its movement controller with the sender's
@@ -328,17 +410,41 @@ void Drive(Entity& entity, State& state, Target const& target, uint32_t now)
         entity.CharacterMovement.StopMovement();
         entity.MoveTo(pose);
         state.walking = false;
+        state.steered = false;
     } else if (moving || (!action && state.walking && error > 60.0f)) {
         // Up from a knock-down and off at once: a body left in its sitting state cannot walk and froze on its get-up
         // motion (19.10.: most of the raid's frozen mirrors). Take the stance here too, as below when standing.
         if (static_cast<int32_t>(state.actionUntil - now) <= 0 && target.aniState >= 0 &&
             static_cast<int>(entity.Routine.AniState) != target.aniState)
             entity.Routine.AniState = static_cast<gEAniState>(target.aniState);
+        // A stance motion replayed while the player stood (an idle loop, a gesture: StartPlayAni or a play-ani instruction)
+        // kept slot 0 when it walked off: the body travelled but showed it standing (stageGlide 23.10.: 13-16 % of the
+        // travel under G3_NETSIM, nearly all of it steered). End it as the body sets off, and again while it travels.
+        if (settleStance && (!state.walking || static_cast<int32_t>(now - state.settleAt) >= 0)) {
+            state.settleAt = now + 250;
+            char shows[128];
+            CurrentMotion(instance, shows, sizeof(shows));
+            if (*shows && !strstr(shows, "_Move_")) {
+                // Stopping the replay alone left a looping idle on slot 0 now and then (host trace 23.10. 18:11: 1.4 s steered in
+                // Ambient_Loop); stop the motion on the slot too, blended, so movement takes it next frame. (Handing the slot to
+                // owner 2 instead made it worse: 85-98 % glided, run 20261023-182342.)
+                entity.StopPlayAni();
+                if (gCScriptRoutine_PS* routine = RoutineOf(instance)) routine->AIStopPlayAnimation();  // only a running play-ani
+                if (auto* animation = static_cast<eCVisualAnimation_PS*>(instance->GetPropertySet(eEPropertySetType_Animation))) {
+                    const auto slot0 = static_cast<eCWrapper_emfx2Actor::eEMotionType>(0);
+                    ++stopOwners[static_cast<unsigned>(animation->GetMotionOwner(slot0)) & 7];
+                    if (stopMotion) animation->StopMotion(slot0, 0.2f);
+                }
+                ++stanceStops;
+            }
+        }
         entity.CharacterMovement.SetMovementMode(moving ? mode : gECharMovementMode_Walk);
         entity.CharacterMovement.SetMovementGoal(bCVector(target.position[0], target.position[1], target.position[2]));
         state.walking = true;
+        state.steered = true;
         *state.playing = '\0';
     } else {
+        state.steered = false;
         if (state.walking) {
             entity.CharacterMovement.StopMovement();
             state.walking = false;

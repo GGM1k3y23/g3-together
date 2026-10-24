@@ -112,6 +112,31 @@ def post_rclick(pid):
     return len(found)
 
 
+def post_click(pid, fx, fy):
+    """Queue a left mouse click at (fx, fy), fractions of the client area, to the visible top-level windows of our own
+    game process (the trade screen's tip box: its Ok takes no key, C trade-vendor-empty-followup-c.md)."""
+    user = ctypes.WinDLL('user32', use_last_error=True)
+    from ctypes import wintypes
+    found = []
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    def visit(hwnd, _):
+        owner = ctypes.c_ulong()
+        user.GetWindowThreadProcessId(ctypes.c_void_p(hwnd), ctypes.byref(owner))
+        if owner.value == pid and user.IsWindowVisible(ctypes.c_void_p(hwnd)):
+            found.append(hwnd)
+        return True
+    user.EnumWindows(visit, None)
+    user.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    for hwnd in found:
+        rect = wintypes.RECT()
+        user.GetClientRect(ctypes.c_void_p(hwnd), ctypes.byref(rect))
+        at = int(rect.right * fx) | int(rect.bottom * fy) << 16
+        user.PostMessageW(ctypes.c_void_p(hwnd), 0x0200, 0, at)       # WM_MOUSEMOVE
+        user.PostMessageW(ctypes.c_void_p(hwnd), 0x0201, 0x0001, at)  # WM_LBUTTONDOWN, MK_LBUTTON
+        user.PostMessageW(ctypes.c_void_p(hwnd), 0x0202, 0, at)       # WM_LBUTTONUP
+    return len(found)
+
+
 def place_on_second_screen(pid, slot, seconds=90):
     """Place the game window of `pid` side by side on a monitor: the primary one, or with G3_SCREEN=2 a secondary one.
     slot 0 = left half, 1 = right half of that monitor. Runs in a thread: retries while the game creates and

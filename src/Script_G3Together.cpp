@@ -17,6 +17,8 @@
 #include "partner.h"
 #include "items.h"
 #include "containers.h"
+#include "trade.h"
+#include "mapmarks.h"
 #include "dialogaudio.h"
 #include "config.h"
 #include "trace.h"
@@ -24,6 +26,7 @@
 #include "enclaves.h"
 #include "log.h"
 #include "npcs.h"
+#include "offer.h"
 #include "qa.h"
 #include "remote.h"
 #include "crashlog.h"
@@ -79,6 +82,15 @@ void Frame()
     }
 }
 
+// One frame of the module for persist (BeginFrame/EndFrame), closed on every way out of Process.
+struct FrameScope {
+    FrameScope() : run(g3t::persist::BeginFrame()) {}
+    ~FrameScope() { if (run) g3t::persist::EndFrame(); }
+    FrameScope(FrameScope const&) = delete;
+    FrameScope& operator=(FrameScope const&) = delete;
+    const bool run;
+};
+
 // The engine's own extension point: a module registered with eCModuleAdmin gets Process()
 // every frame and world activation/shutdown callbacks.
 // Every virtual is overridden and no base version is called: the base versions log "not implemented"
@@ -112,6 +124,8 @@ class Module : public eCEngineComponentBase
         g3t::enclaves::OnWorldChange();
         g3t::dialogaudio::OnWorldChange();
         g3t::containers::OnWorldChange();
+        g3t::trade::OnWorldChange();  // before offer: its declines must not undo anything on the hero of the new world
+        g3t::offer::OnWorldChange();
     }
     bEResult WorldActivate() override
     {
@@ -138,8 +152,12 @@ class Module : public eCEngineComponentBase
     bEResult Shutdown() override { return bEResult_Ok; }
     bEResult ResetResources(GEBool) override { return bEResult_Ok; }
     bEResult RestoreResources(GEBool) override { return bEResult_Ok; }
+    // Also a frame the game runs inside its own load (Session::Start, C 22.10.): there nothing of the mod runs, from the
+    // first line on (C 23.10.); the world is half made and the load has not returned.
     void Process() override
     {
+        FrameScope frame;
+        if (!frame.run) return;
         Frame();
         g3t::crashlog::Tick();
         g3t::remote::Tick();
@@ -160,7 +178,10 @@ class Module : public eCEngineComponentBase
         g3t::clock::Tick();
         g3t::infocmd::Tick();
         g3t::containers::Tick();
+        g3t::trade::Tick();
+        g3t::mapmarks::Tick();
         g3t::dialogaudio::Tick();
+        g3t::offer::Tick();
         g3t::qa::Tick();
         g3t::shot::Tick();  // after QA: a QA shot is re-aimed there before it is announced
         g3t::spells::Tick();
@@ -196,7 +217,10 @@ extern "C" __declspec(dllexport) gSScriptInit const* GE_STDCALL ScriptInit()
     g3t::items::Start();
     g3t::enclaves::Start();
     g3t::containers::Start();
+    g3t::trade::Start();
+    g3t::mapmarks::Start();
     g3t::dialogaudio::Start();
+    g3t::offer::Start();
     g3t::journal::Start();
     g3t::persist::Install();
     g3t::clock::Start();

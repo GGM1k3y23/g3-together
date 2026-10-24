@@ -28,6 +28,7 @@ struct Puppet
     bool spawned = false;
     std::string heldRight, heldLeft;  // what the puppet holds (item names)
     uint32_t holdChecked = 0;
+    uint32_t wearChecked = 0;
     uint32_t world = 0;
     body::State body;
     std::string shape;        // the shape it stands for (the player's hero template, or its creature)
@@ -92,6 +93,12 @@ bool LocalState(net::PlayerState& state)
     const Entity right = self.Inventory.GetItemFromSlot(gESlot_RightHand), left = self.Inventory.GetItemFromSlot(gESlot_LeftHand);
     strncpy_s(state.heldRight, right.GetInstance() ? right.GetName().GetText() : "", _TRUNCATE);
     strncpy_s(state.heldLeft, left.GetInstance() ? left.GetName().GetText() : "", _TRUNCATE);
+    Entity mine(own);
+    // A worn armor is a Body_* item in the body slot 17 (UseType 114); slot 9 stays empty (re/findings/armor-equip-c.md).
+    const Entity armor = mine.Inventory.GetItemFromSlot(gESlot_Body), helmet = mine.Inventory.GetItemFromSlot(gESlot_Helmet);
+    strncpy_s(state.armor, armor.GetInstance() ? armor.GetName().GetText() : "", _TRUNCATE);
+    strncpy_s(state.helmet, helmet.GetInstance() ? helmet.GetName().GetText() : "", _TRUNCATE);
+    strncpy_s(state.look, GetConfig().look, _TRUNCATE);
     return true;
 }
 
@@ -192,6 +199,44 @@ void Hold(P& puppet, char const* right, char const* left, uint32_t now)
     puppet.entity.Inventory.HoldStacks(StackFor(puppet.entity, left), StackFor(puppet.entity, right));
 }
 
+// The player's armor and helmet on the puppet (owner 23.10.: a new armor did not show on the other machine). Like the
+// hands, checked every 250 ms; an empty slot takes off what the puppet's template wore.
+constexpr gESlot WornSlots[2] = {gESlot_Body, gESlot_Helmet};
+bool puppetWear = true;  // QA negative control: wearoff
+bool remoteLooks = true;  // QA negative control: lookoff (every player shown as puppet_template, as before 23.10.)
+unsigned wearChanges = 0, wearEquipped = 0, wearLinked = 0, wearFailed = 0;
+
+void TakeOff(Entity& body, gESlot slot)
+{
+    for (GEInt i = 0; i < body.Inventory.GetStackCount(); ++i)
+        if (body.Inventory.GetSlotFromStack(i) == slot) body.Inventory.UnEquipStack(i);
+}
+
+void Wear(Puppet& puppet, char const* armor, char const* helmet, uint32_t now)
+{
+    if (!puppetWear || static_cast<int32_t>(now - puppet.wearChecked) < 250) return;
+    puppet.wearChecked = now;
+    char const* const wanted[2] = {armor, helmet};
+    for (int i = 0; i < 2; ++i) {
+        const Entity worn = puppet.entity.Inventory.GetItemFromSlot(WornSlots[i]);
+        const std::string have = worn.GetInstance() ? worn.GetName().GetText() : "";
+        if (have == wanted[i]) continue;
+        if (!have.empty()) TakeOff(puppet.entity, WornSlots[i]);
+        const GEInt stack = StackFor(puppet.entity, wanted[i]);
+        if (stack < 0) continue;
+        ++wearChanges;
+        // EquipStackToSlot left the puppet bare (23.10.: 25 tries, helmet slot still empty). Equip it as the game does for
+        // the hero; where the puppet's template cannot equip it (requirements), link it to the slot: it is only shown.
+        if (puppet.entity.Inventory.EquipStack(stack) && puppet.entity.Inventory.GetSlotFromStack(stack) == WornSlots[i]) {
+            ++wearEquipped;
+            continue;
+        }
+        auto* inventory = static_cast<gCInventory_PS*>(puppet.entity.GetInstance()->GetPropertySet(eEPropertySetType_Inventory));
+        if (inventory && inventory->LinkStackToSlot(stack, WornSlots[i], GETrue)) ++wearLinked;
+        else ++wearFailed;
+    }
+}
+
 void Despawn(int id, char const* reason)
 {
     Puppet& puppet = puppets[id];
@@ -233,8 +278,10 @@ void UpdatePuppet(int id, net::Remote const& remote, eCEntity const& hero)
         Despawn(id, !fresh ? "no recent state" : "other world");
         return;
     }
-    // A transformed player is shown as its creature: a human body played the wolf's motions (or none) before.
-    char const* requested = *remote.latest.shape ? remote.latest.shape : GetConfig().puppetTemplate;
+    // A transformed player is shown as its creature: a human body played the wolf's motions (or none) before. Otherwise
+    // as the look it chose in its INI (owner 21.10.: each player picks how the others see it), else as puppet_template.
+    char const* requested = *remote.latest.shape ? remote.latest.shape
+                          : remoteLooks && *remote.latest.look ? remote.latest.look : GetConfig().puppetTemplate;
     if (puppet.spawned && puppet.shape != requested) {
         const std::string from = puppet.shape;
         Despawn(id, "changed shape");
@@ -243,8 +290,8 @@ void UpdatePuppet(int id, net::Remote const& remote, eCEntity const& hero)
     if (!puppet.spawned) {
         char const* wanted = requested;
         Template shape(wanted);
-        if (!shape.IsValid() && *remote.latest.shape) {  // a creature unknown here: show the hero rather than nothing
-            Logf("remote: no template %s for player %d's shape; showing its hero", wanted, id);
+        if (!shape.IsValid() && std::strcmp(wanted, GetConfig().puppetTemplate) != 0) {  // unknown here: show the hero rather than nothing
+            Logf("remote: no template %s for player %d; showing %s", wanted, id, GetConfig().puppetTemplate);
             wanted = GetConfig().puppetTemplate;
             shape = Template(wanted);
         }
@@ -271,16 +318,29 @@ void UpdatePuppet(int id, net::Remote const& remote, eCEntity const& hero)
             puppet.entity.Party.Waiting = GEFalse;
         }
         puppet.spawned = true;
+        puppet.body.puppet = true;  // QA (glide): counted apart from mirrored NPCs
         puppet.world = CurrentWorld();
         puppet.shape = requested;
         Logf("remote: puppet %d spawned for %s (%s)", id, remote.latest.name, wanted);
     }
     if (!puppet.entity.GetInstance()) { Despawn(id, "body gone"); return; }
-    const uint32_t interval = remote.latestTicks - remote.previousTicks;
-    const float speed = interval ? body::Distance(remote.latest.position, remote.previous.position) * 1000.0f / interval : 0.0f;
+    // A name of its own: under its template's name the dialogs of that NPC were offered on it, and one started by itself
+    // (look = Diego, puppettalkdiag 23.10.); as PC_Hero a lookup by name could find it instead of the hero. Set right after
+    // the spawn, the game named it after its template again, so it is checked on every update.
+    char own[32];
+    sprintf_s(own, "G3T_Player%d", id);
+    if (std::strcmp(puppet.entity.GetInstance()->GetName().GetText(), own) != 0) puppet.entity.GetInstance()->SetName(bCString(own));
+    // Trading between players (owner 23.10.): addressed, a puppet offers the game's own trade option ("Zeig mir deine
+    // Ware!"), which opens the trade window with it (trade.cpp, offer.cpp). Checked like the name.
+    if (!puppet.entity.Dialog.TradeEnabled) puppet.entity.Dialog.TradeEnabled = GETrue;
+    const float speed = body::Speed(remote.previous.position, remote.latest.position, remote.previous.sent, remote.latest.sent,
+                                    remote.previousTicks, remote.latestTicks);
     const body::Target target{remote.latest.position, remote.latest.rotation, remote.latest.movementMode, remote.latest.animation, speed,
                               remote.latest.aniState};
-    if (!*remote.latest.shape) Hold(puppet, remote.latest.heldRight, remote.latest.heldLeft, now);  // a creature holds nothing
+    if (!*remote.latest.shape) {  // a creature holds and wears nothing
+        Hold(puppet, remote.latest.heldRight, remote.latest.heldLeft, now);
+        Wear(puppet, remote.latest.armor, remote.latest.helmet, now);
+    }
     // The player's swings replay as the game's combat moves too (owner's look: players' attacks hardly visible);
     // a body whose move faults goes back to motion names (body.cpp).
     puppet.body.combatMoves = puppetCombat;
@@ -460,7 +520,8 @@ void Report(LogFn log)
             }
             sprintf_s(line, "PUPPETPOSE id=%d remote=%s shows=%s run0=%d shape=%s body=%s", id, *r.latest.animation ? r.latest.animation : "-",
                       *shows ? shows : "-", running, *r.latest.shape ? r.latest.shape : "-",
-                      puppets[id].spawned && puppets[id].entity.GetInstance() ? puppets[id].entity.GetName().GetText() : "-");
+                      // body: the template it is made from (its entity is named G3T_Player<id> since 23.10.)
+                      puppets[id].spawned && puppets[id].entity.GetInstance() ? puppets[id].shape.c_str() : "-");
             log(line);
         }
         {
@@ -468,6 +529,15 @@ void Report(LogFn log)
             const Entity held = entity ? body.Inventory.GetItemFromSlot(gESlot_RightHand) : Entity();
             sprintf_s(line, "HELD id=%d remote=%s puppet=%s", id, *r.latest.heldRight ? r.latest.heldRight : "-",
                       held.GetInstance() ? held.GetName().GetText() : "-");
+            log(line);
+            const Entity armor = entity ? body.Inventory.GetItemFromSlot(gESlot_Body) : Entity();
+            const Entity helmet = entity ? body.Inventory.GetItemFromSlot(gESlot_Helmet) : Entity();
+            sprintf_s(line, "WEAR id=%d remote_armor=%s remote_helmet=%s puppet_armor=%s puppet_helmet=%s look=%s template=%s changes=%u"
+                            " equipped=%u linked=%u failed=%u", id,
+                      *r.latest.armor ? r.latest.armor : "-", *r.latest.helmet ? r.latest.helmet : "-",
+                      armor.GetInstance() ? armor.GetName().GetText() : "-", helmet.GetInstance() ? helmet.GetName().GetText() : "-",
+                      *r.latest.look ? r.latest.look : "-", puppets[id].spawned ? puppets[id].shape.c_str() : "-", wearChanges,
+                      wearEquipped, wearLinked, wearFailed);
             log(line);
         }
         if (entity) {
@@ -542,5 +612,165 @@ void PuppetCombatOff(LogFn log)
 {
     puppetCombat = false;
     log("PUPPETCOMBATOFF ok=1");
+}
+
+// QA (stage Wear): the local hero puts on an item by name (armor or helmet, by its use type); "-armor" / "-helmet" takes
+// that slot off.
+void WearHero(char const* argument, LogFn log)
+{
+    char line[1000];  // equipped= lists every filled slot (up to 900 characters)
+    eCDynamicEntity* hero = gCSession::GetInstance().GetHero();
+    if (!hero || !argument || !*argument) { log("REFUSED wear: no hero or no item"); return; }
+    Entity self(hero);
+    if (!std::strcmp(argument, "-armor") || !std::strcmp(argument, "-helmet")) {
+        TakeOff(self, argument[1] == 'a' ? gESlot_Body : gESlot_Helmet);
+    } else {
+        const bool known = Template(argument).IsValid();
+        const GEInt stack = StackFor(self, argument);
+        // The game picks the slot itself: a Body_* armor goes to slot 17, a helmet to 18. (It_Armor_* are the packets one
+        // picks up, use type 0: EquipStack refuses them, and UseStack answers true without equipping, armor-equip-c.md.)
+        const GEBool ok = stack >= 0 ? self.Inventory.EquipStack(stack) : GEFalse;
+        if (!ok) {
+            // Why not: what the game says is missing.
+            int length = sprintf_s(line, "REFUSED wear: %s template=%d stack=%d not equipped", argument, known, stack);
+            auto* inventory = static_cast<gCInventory_PS*>(hero->GetPropertySet(eEPropertySetType_Inventory));
+            if (inventory && stack >= 0) {
+                bTObjArray<gCInventory_PS::SMissingAttrib> attribs;
+                bTValArray<gCInventory_PS::SMissingSkill> skills;
+                const GEBool can = inventory->CanEquip(stack, attribs, skills);
+                length += sprintf_s(line + length, sizeof(line) - length, " can=%d", can ? 1 : 0);
+                for (GEInt i = 0; i < attribs.GetCount() && i < 6 && length < 800; ++i)
+                    length += sprintf_s(line + length, sizeof(line) - length, " attrib:%.24s-%d", attribs[i].MissingAttribName.GetText(),
+                                        attribs[i].MissingAttribValue);
+                for (GEInt i = 0; i < skills.GetCount() && i < 6 && length < 800; ++i)
+                    length += sprintf_s(line + length, sizeof(line) - length, " skill:%.40s",
+                                        skills[i].MissingSkill ? skills[i].MissingSkill->GetName().GetText() : "?");
+                sprintf_s(line + length, sizeof(line) - length, " use=%d", static_cast<int>(self.Inventory.GetUseType(stack)));
+            }
+            log(line);
+            return;
+        }
+    }
+    const Entity armor = self.Inventory.GetItemFromSlot(gESlot_Body), helmet = self.Inventory.GetItemFromSlot(gESlot_Helmet);
+    int length = sprintf_s(line, "WEARHERO armor=%s helmet=%s equipped=", armor.GetInstance() ? armor.GetName().GetText() : "-",
+                           helmet.GetInstance() ? helmet.GetName().GetText() : "-");
+    for (GEInt i = 0; i < self.Inventory.GetStackCount() && length > 0 && length < 900; ++i) {
+        const int slot = static_cast<int>(self.Inventory.GetSlotFromStack(i));
+        const Entity item = slot ? self.Inventory.GetTemplateItem(i) : Entity();
+        if (item.GetInstance()) length += sprintf_s(line + length, sizeof(line) - length, "%d:%.40s,", slot, item.GetName().GetText());
+    }
+    log(line);
+}
+
+// QA (stage Wear): armor and helmet items NPCs within 100 m carry (worn or not; by use type or the armor category),
+// to pick real names; for the first five NPCs every filled slot too (WORNSLOTS), to see where their armor is.
+void WornScan(LogFn log)
+{
+    char line[1000];  // WORNSLOTS: up to 18 slots of 45 characters
+    eCDynamicEntity* hero = gCSession::GetInstance().GetHero();
+    int count = 0, slotted = 0;
+    if (hero) {
+        const bCVector& h = hero->GetWorldPosition();
+        const float at[3] = {h.GetX(), h.GetY(), h.GetZ()};
+        const bTObjArray<Entity> all = Entity::GetNPCs();
+        for (int i = 0; i < all.GetCount() && count < 40; ++i) {
+            Entity npc = all.GetAt(i);
+            eCEntity* instance = npc.GetInstance();
+            if (!instance || IsPuppet(instance)) continue;
+            const bCVector& p = instance->GetWorldPosition();
+            const float there[3] = {p.GetX(), p.GetY(), p.GetZ()};
+            if (body::Distance(at, there) > 10000.0f) continue;
+            if (slotted < 5) {
+                ++slotted;
+                int length = sprintf_s(line, "WORNSLOTS npc=%s stacks=%d", npc.GetName().GetText(), npc.Inventory.GetStackCount());
+                for (int slot = 1; slot <= 18 && length > 0; ++slot) {
+                    const Entity in = npc.Inventory.GetItemFromSlot(static_cast<gESlot>(slot));
+                    if (in.GetInstance()) length += sprintf_s(line + length, sizeof(line) - length, " %d:%.40s", slot, in.GetName().GetText());
+                }
+                log(line);
+            }
+            for (GEInt k = 0; k < npc.Inventory.GetStackCount() && count < 40; ++k) {
+                Entity item = npc.Inventory.GetTemplateItem(k);
+                if (!item.GetInstance()) continue;
+                const int use = static_cast<int>(item.Interaction.GetUseType());
+                const bool armorCategory = static_cast<int>(item.Item.GetCategory()) == gEItemCategory_Armor;
+                if (use != gEUseType_Armor && use != gEUseType_Helmet && !armorCategory) continue;
+                sprintf_s(line, "WORN npc=%s item=%s kind=%s slot=%d use=%d", npc.GetName().GetText(), item.GetName().GetText(),
+                          use == gEUseType_Helmet ? "helmet" : "armor", static_cast<int>(npc.Inventory.GetSlotFromStack(k)), use);
+                log(line);
+                ++count;
+            }
+        }
+    }
+    sprintf_s(line, "WORN end count=%d", count);
+    log(line);
+}
+
+void WearOff(LogFn log)
+{
+    puppetWear = false;
+    log("WEAROFF ok");
+}
+
+void LookOff(LogFn log)
+{
+    remoteLooks = false;
+    log("LOOKOFF ok");
+}
+
+// QA (phase 2, ENTWURF-HANDEL): "<id>_<Info>": player <id>'s puppet gets a name of its own (G3T_Player<id>; an option owned
+// by its template name would show on that NPC too) and a copy of the named dialog option, owned by it.
+void PuppetInfo(char const* argument, LogFn log)
+{
+    char line[400], source[96] = {};
+    const int id = std::atoi(argument);
+    char const* sep = std::strchr(argument, '_');
+    if (sep) strncpy_s(source, sep + 1, _TRUNCATE);
+    eCEntity* puppet = PuppetOf(id);
+    gCInfoManager_PS* manager = gCSession::GetInstance().IsGameRunning() ? gCInfoManager_PS::GetInstance() : nullptr;
+    gCInfo_PS* from = manager && *source ? manager->GetInfo(bCString(source)) : nullptr;
+    if (!puppet || !from) { log("REFUSED puppetinfo: <id>_<Info> with a puppet and a known info"); return; }
+    char own[32], name[128];
+    sprintf_s(own, "G3T_Player%d", id);
+    sprintf_s(name, "G3T_%s_%d", source, id);
+    puppet->SetName(bCString(own));
+    gCInfo_PS* info = manager->GetInfo(bCString(name));
+    const bool added = !info;
+    if (!info) info = manager->AddInfo(bCString(name));
+    if (!info) { log("REFUSED puppetinfo: AddInfo failed"); return; }
+    info->CopyFrom(*from);
+    info->AccessName() = bCString(name);
+    info->AccessOwner() = bCString(own);
+    info->AccessInfoGiven() = GEFalse;
+    info->AccessPermanent() = GETrue;
+    // CopyFrom left the condition type at General (puppettalkdiag 23.10.); a trader's own option is Trade, and its NPC
+    // has trading switched on.
+    info->AccessConditionType() = static_cast<gEInfoCondType const&>(from->AccessConditionType());
+    info->AccessType() = static_cast<gEInfoType const&>(from->AccessType());
+    Entity body(puppet);
+    body.Dialog.TradeEnabled = GETrue;
+    gCInfoScript_PS* script = info->AccessInfoScript().GetObject();
+    sprintf_s(line, "PUPPETINFO id=%d puppet=%s by_name=%d info=%s added=%d cond_type=%d type=%d owner=%s lines=%d infos=%d has_info=%d trade=%d", id,
+              puppet->GetName().GetText(), Entity::GetEntity(bCString(own)).GetInstance() == puppet ? 1 : 0, name, added ? 1 : 0,
+              static_cast<int>(static_cast<gEInfoCondType const&>(info->AccessConditionType())),
+              static_cast<int>(static_cast<gEInfoType const&>(info->AccessType())), info->AccessOwner().GetText(),
+              script ? script->AccessInfoScriptLines().GetCount() : -1, manager->GetInfos().GetCount(), manager->HasInfos(puppet) ? 1 : 0,
+              body.Dialog.TradeEnabled ? 1 : 0);
+    log(line);
+}
+
+// QA (phase 2): trading switched on for player <id>'s puppet; the game then offers its own trade option (FILLER27, "Zeig mir
+// deine Ware!") and ENDE when the player addresses it (puppettalkdiag 23.10.).
+void PuppetTradeOn(char const* argument, LogFn log)
+{
+    char line[200];
+    eCEntity* puppet = PuppetOf(std::atoi(argument));
+    if (!puppet) { log("REFUSED puppettradeon: no such puppet"); return; }
+    Entity body(puppet);
+    body.Dialog.TradeEnabled = GETrue;
+    gCInfoManager_PS* manager = gCSession::GetInstance().IsGameRunning() ? gCInfoManager_PS::GetInstance() : nullptr;
+    sprintf_s(line, "PUPPETTRADE id=%s name=%s trade=%d has_info=%d", argument, puppet->GetName().GetText(), body.Dialog.TradeEnabled ? 1 : 0,
+              manager && manager->HasInfos(puppet) ? 1 : 0);
+    log(line);
 }
 }

@@ -10,6 +10,7 @@ namespace g3t::hero {
 using LogFn = void (*)(char const*);
 bool SaveRecord(char const* path);      // the local hero into a text file
 bool LoadRecord(char const* path);      // the local hero from a text file
+char const* LastRefusal();              // why the last LoadRecord refused its record (damaged, unreadable), nullptr if it did not
 void Dump(LogFn log);                   // QA: HERODUMP line, a canonical summary of the local hero
 void SaveCommand(char const* name, LogFn log);  // QA: <save folder>/g3t-hero-<name>.txt
 void LoadCommand(char const* name, LogFn log);
@@ -17,5 +18,9 @@ void RestoreOff(LogFn log);             // QA negative control: LoadRecord chang
 void CutCommand(char const* argument, LogFn log);  // QA (stage W2): "<name>" or "<name>_header" cuts that record as a broken write
 void CheckOff(LogFn log);               // QA negative control (stage W2): records are applied unchecked
 void WriteFault(LogFn log);             // QA (stage W2): the next record write breaks off before it replaces the record
+void SkillReplaceOff(LogFn log);        // QA negative control (stage W9): a record's skills are only taught on top (as before 23.10.)
+void SkillDiag(LogFn log);              // QA diagnostic (stage W9): SKILLDIAG lines, what a skill stack of the hero is
+void SkillTry(LogFn log);               // QA diagnostic (stage W9): SKILLTRY line, which way puts a removed skill back
+void HasSkill(char const* id, LogFn log);  // QA (stage W9): HEROSKILL line, whether the hero has learned that skill
 std::string RecordPath(char const* name);  // <save folder>/g3t-hero-<name>.txt
 }

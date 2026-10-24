@@ -5,6 +5,7 @@
 #include "log.h"
 #include "net.h"
 #include "remote.h"
+#include "trade.h"
 
 #include <Game.h>
 #include <Script.h>
@@ -13,6 +14,7 @@
 #include <array>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <string>
@@ -29,8 +31,9 @@ constexpr float PreRollRadius = 1500.0f;  // a client this close to an unrolled 
 bool disabled = false;
 bool traderFillOff = false;  // QA negative control: the host does not fill traders before a dialog
 bool forgetOff = false;  // QA negative control: container state survives a world change (as before R5)
+bool handsOff = false;  // QA negative control: a corpse's hand keeps a held stack of its contents (as before 23.10.)
 unsigned contentsSent = 0, contentsReceived = 0, rewrites = 0, txSent = 0, txApplied = 0, txRefused = 0, txMismatch = 0, txDenied = 0,
-         reverted = 0;
+         reverted = 0, handsReleased = 0;
 
 std::string Key(uint8_t const guid[16]) { return std::string(reinterpret_cast<char const*>(guid), 16); }
 
@@ -179,9 +182,24 @@ void Write(Entity& entity, Content const& content)
 {
     // On the host a dying NPC puts what it held into its inventory (a slave's rice), while its mirror here still holds
     // it: new items of that kind would join the held stack and never count (Slave_08's It_FakeRice drifted every 2 s,
-    // stageQuickLoot 22.10.). On a corpse such a held stack goes too. A weapon the host's NPC dropped is not in the
-    // contents and stays in the mirror's hand.
+    // stageQuickLoot 22.10.). On a corpse such a held stack goes too, once its hand let go of it (below). A weapon the
+    // host's NPC dropped is not in the contents and stays in the mirror's hand.
     const bool corpse = Corpse(entity);
+    // DeleteStack leaves a stack held in a hand where it is, and CreateItems then adds to it: the client's dead slave held
+    // one more bread every 2 s and its copy drifted for good (fakebreadlivediag 23.10.; It_FakeBread, It_FakeCup_Clay).
+    // So the hand lets go of it first; the other hand keeps what it holds.
+    if (corpse && !handsOff) {
+        GEInt hold[2] = {-1, -1};  // left, right
+        bool release = false;
+        for (int i = 0; i < entity.Inventory.GetStackCount(); ++i) {
+            const gESlot slot = entity.Inventory.GetSlotFromStack(i);
+            if (slot != gESlot_LeftHand && slot != gESlot_RightHand) continue;
+            const bool inContents = content.count(TemplateKey(entity, i)) != 0;
+            release = release || inContents;
+            hold[slot == gESlot_LeftHand ? 0 : 1] = inContents ? -1 : i;
+        }
+        if (release && entity.Inventory.HoldStacks(hold[0], hold[1])) ++handsReleased;
+    }
     for (int i = entity.Inventory.GetStackCount() - 1; i >= 0; --i)
         if (entity.Inventory.GetSlotFromStack(i) == gESlot_None || (corpse && content.count(TemplateKey(entity, i))))
             entity.Inventory.DeleteStack(i);
@@ -577,8 +595,10 @@ DWORD lastHookTry = 0;
 
 void Opened(gCScriptProcessingUnit* spu, GELPVoid other, bool trade)
 {
-    if (net::IsHost() || disabled) return;
     Entity partner = other ? *static_cast<Entity*>(other) : Entity(spu ? spu->GetOtherEntity() : nullptr);
+    // Trade with another player's puppet, on any machine: filled with that player's goods (trade.cpp), never a container.
+    if (trade && partner.GetInstance() && trade::OnOpen(partner.GetInstance())) return;
+    if (net::IsHost() || disabled) return;
     if (!partner.GetInstance()) return;
     uint8_t guid[16];
     GuidOf(partner.GetInstance(), guid);
@@ -814,9 +834,9 @@ void Take(char const* argument, LogFn log)
 void Report(LogFn log)
 {
     char line[700];
-    sprintf_s(line, "CONTAINERSYNC hooked=%d quick_hooked=%d quick_takes=%u quick_refused=%u active=%d known=%zu pending=%zu contents_sent=%u contents_received=%u rewrites=%u tx_sent=%u tx_applied=%u tx_refused=%u tx_mismatch=%u tx_denied=%u reverted=%u",
+    sprintf_s(line, "CONTAINERSYNC hooked=%d quick_hooked=%d quick_takes=%u quick_refused=%u active=%d known=%zu pending=%zu contents_sent=%u contents_received=%u rewrites=%u tx_sent=%u tx_applied=%u tx_refused=%u tx_mismatch=%u tx_denied=%u reverted=%u hands_released=%u",
               hooked, quickHooked, quickTakes, quickRefused, !active.empty(), known.size(), pending.size(), contentsSent, contentsReceived, rewrites, txSent, txApplied,
-              txRefused, txMismatch, txDenied, reverted);
+              txRefused, txMismatch, txDenied, reverted, handsReleased);
     log(line);
 }
 
@@ -825,6 +845,11 @@ void Disable(char const* what, LogFn log)
     if (!std::strcmp(what, "forget")) {
         forgetOff = true;
         log("CONTAINERSYNCOFF ok=1 forget=0");
+        return;
+    }
+    if (!std::strcmp(what, "hands")) {
+        handsOff = true;
+        log("CONTAINERSYNCOFF ok=1 hands=0");
         return;
     }
     if (!std::strcmp(what, "trader")) {
@@ -869,6 +894,11 @@ namespace {
 // "GUID" or "GUID_Template" (the QA argument alphabet has no other separator).
 Entity Target(char const* argument, char const** wanted)
 {
+    if (!std::strncmp(argument, "puppet", 6)) {  // "puppet<id>[_Template]": a player's puppet (player trade, QA)
+        char const* sep = std::strchr(argument, '_');
+        *wanted = sep ? sep + 1 : nullptr;
+        return Entity(remote::PuppetOf(std::atoi(argument + 6)));
+    }
     uint8_t raw[16];
     char guid[40] = {};
     strncpy_s(guid, argument, 36);
@@ -876,16 +906,29 @@ Entity Target(char const* argument, char const** wanted)
     return ParseGuid(guid, raw) ? Resolve(raw) : Entity();
 }
 
-int StackOf(Entity& entity, char const* wanted, bool skipGold)
+int StackOf(Entity& entity, char const* wanted, bool skipGold, int quality = -1)
 {
     for (int i = 0; i < entity.Inventory.GetStackCount(); ++i) {
         if (entity.Inventory.GetSlotFromStack(i) != gESlot_None) continue;
+        if (quality >= 0 && entity.Inventory.GetQuality(i) != static_cast<GEU32>(quality)) continue;
         Entity item = entity.Inventory.GetTemplateItem(i);
         if (!item.GetInstance()) continue;
         char const* name = item.GetName().GetText();
         if (wanted ? std::strcmp(name, wanted) == 0 : !(skipGold && std::strcmp(name, "It_Gold") == 0)) return i;
     }
     return -1;
+}
+
+// "Template-q<quality>" (player trade with qualities, 24.10.): the name into `name`, the quality returned; -1 without one.
+int SplitQuality(char const* wanted, char (&name)[64])
+{
+    name[0] = '\0';
+    if (!wanted) return -1;
+    strncpy_s(name, wanted, _TRUNCATE);
+    char* q = std::strstr(name, "-q");
+    if (!q) return -1;
+    *q = '\0';
+    return std::atoi(q + 2);
 }
 }
 
@@ -916,17 +959,47 @@ void TradeBuy(char const* argument, LogFn log)
     Entity trader = Target(argument, &wanted);
     if (!hero || !trader.GetInstance()) { log("REFUSED tradebuy: no hero or trader"); return; }
     Entity self(hero);
-    const int stack = StackOf(trader, wanted, true);
+    char only[64];
+    const int quality = SplitQuality(wanted, only);
+    const int stack = StackOf(trader, wanted ? only : nullptr, true, quality);
     if (stack < 0) { log("REFUSED tradebuy: nothing to buy"); return; }
     Entity item = trader.Inventory.GetTemplateItem(stack);
     const std::string name = item.GetName().GetText();
+    const unsigned stackQuality = trader.Inventory.GetQuality(stack);
     const int price = item.Item.GetGoldValue() > 0 ? item.Item.GetGoldValue() : 1;
     const int gold = StackOf(self, "It_Gold", false);
     if (gold < 0 || self.Inventory.GetAmount(gold) < price) { log("REFUSED tradebuy: not enough gold"); return; }
     const GEBool got = trader.Inventory.TransferAmountTo(stack, 1, self);
     const GEBool paid = self.Inventory.TransferAmountTo(StackOf(self, "It_Gold", false), price, trader);
     char line[200];
-    sprintf_s(line, "TRADEBUY trader=%s name=%s price=%d got=%d paid=%d", trader.GetName().GetText(), name.c_str(), price, got ? 1 : 0, paid ? 1 : 0);
+    sprintf_s(line, "TRADEBUY trader=%s name=%s price=%d got=%d paid=%d quality=%u", trader.GetName().GetText(), name.c_str(), price, got ? 1 : 0,
+              paid ? 1 : 0, stackQuality);
+    log(line);
+}
+
+// QA: the other way of the trade window's swap: one piece of the hero's goes to the trader, who pays its value.
+void TradeSell(char const* argument, LogFn log)
+{
+    char const* wanted = nullptr;
+    eCDynamicEntity* hero = gCSession::GetInstance().GetHero();
+    Entity trader = Target(argument, &wanted);
+    if (!hero || !trader.GetInstance() || !wanted) { log("REFUSED tradesell: no hero or trader, or no item"); return; }
+    Entity self(hero);
+    char only[64];
+    const int quality = SplitQuality(wanted, only);
+    const int stack = StackOf(self, only, true, quality);
+    if (stack < 0) { log("REFUSED tradesell: nothing to sell"); return; }
+    Entity item = self.Inventory.GetTemplateItem(stack);
+    const std::string name = item.GetName().GetText();
+    const unsigned stackQuality = self.Inventory.GetQuality(stack);
+    const int price = item.Item.GetGoldValue() > 0 ? item.Item.GetGoldValue() : 1;
+    const int gold = StackOf(trader, "It_Gold", false);
+    if (gold < 0 || trader.Inventory.GetAmount(gold) < price) { log("REFUSED tradesell: the trader has not enough gold"); return; }
+    const GEBool gave = self.Inventory.TransferAmountTo(stack, 1, trader);
+    const GEBool paid = trader.Inventory.TransferAmountTo(StackOf(trader, "It_Gold", false), price, self);
+    char line[200];
+    sprintf_s(line, "TRADESELL trader=%s name=%s price=%d gave=%d paid=%d quality=%u", trader.GetName().GetText(), name.c_str(), price, gave ? 1 : 0,
+              paid ? 1 : 0, stackQuality);
     log(line);
 }
 
@@ -981,6 +1054,43 @@ void InvState(char const* argument, LogFn log)
     if (!entity.GetInstance() || !HasInventory(entity.GetInstance())) { log("REFUSED invstate: no inventory"); return; }
     const std::string line = "INVSTATE guid=" + std::string(argument, 36) + InvStateOf(entity);
     log(line.c_str());
+}
+
+// QA: every stack of an inventory, held ones too, and whether it counts as contents (It_FakeBread drift 23.10.).
+void Stacks(char const* argument, LogFn log)
+{
+    char const* unused = nullptr;
+    Entity entity = Target(argument, &unused);
+    if (!entity.GetInstance() || !HasInventory(entity.GetInstance())) { log("REFUSED stacks: no inventory"); return; }
+    const int count = entity.Inventory.GetStackCount();
+    const bool npc = entity.GetInstance()->GetPropertySet(eEPropertySetType_NPC) != nullptr;
+    char line[300];
+    sprintf_s(line, "STACKS guid=%.36s name=%s corpse=%d hp=%d aimode=%d count=%d", argument, entity.GetName().GetText(), Corpse(entity) ? 1 : 0,
+              npc ? static_cast<int>(entity.DamageReceiver.HitPoints) : -1, npc ? static_cast<int>(entity.Routine.AIMode) : -1, count);
+    log(line);
+    for (int i = 0; i < count; ++i) {
+        Entity item = entity.Inventory.GetTemplateItem(i);
+        sprintf_s(line, "STACK %d name=%s amount=%d slot=%d category=%d quality=%u counted=%d", i,
+                  item.GetInstance() ? item.GetName().GetText() : "-", entity.Inventory.GetAmount(i),
+                  static_cast<int>(entity.Inventory.GetSlotFromStack(i)), static_cast<int>(entity.Inventory.GetCategory(i)),
+                  entity.Inventory.GetQuality(i), Counted(entity, i) ? 1 : 0);
+        log(line);
+    }
+    log("STACKS end");
+}
+
+// QA: one piece of an item into an NPC's right hand ("GUID_Template"), as a slave holds the bread it eats (FakeBread 23.10.).
+void HoldItem(char const* argument, LogFn log)
+{
+    char const* wanted = nullptr;
+    Entity entity = Target(argument, &wanted);
+    if (!entity.GetInstance() || !wanted || !HasInventory(entity.GetInstance())) { log("REFUSED holditem: need GUID_Template"); return; }
+    const GEInt stack = entity.Inventory.CreateItems(Template(wanted), 0, 1);
+    const bool held = stack >= 0 && entity.Inventory.HoldStacks(-1, stack);
+    const Entity right = entity.Inventory.GetItemFromSlot(gESlot_RightHand);
+    char line[200];
+    sprintf_s(line, "HOLDITEM name=%s stack=%d held=%d right=%s", wanted, stack, held ? 1 : 0, right.GetInstance() ? right.GetName().GetText() : "-");
+    log(line);
 }
 
 // QA: chests near the hero (an inventory, no NPC, no item), nearest first, with their roll state.

@@ -45,7 +45,9 @@ name = Player2
 language = en
 ```
 
-`puppet_template` is optional and defaults to `PC_Hero`. A missing INI starts the mod in host mode,
+`puppet_template` is optional and defaults to `PC_Hero`. `look = <character template>` (for example
+`look = Diego`) is optional too: it is how you appear to the other player. `offer_accept_key` and
+`offer_decline_key` (default Insert and Delete) answer a trade offer. A missing INI starts the mod in host mode,
 so check that the joining PC has `role = client` before starting.
 
 English is the default for mod messages, as quoted below. Set `language = de` for German. Players
@@ -63,11 +65,11 @@ can choose independently; the setting changes only mod messages.
 
 | Time | Stage | Steps and observations |
 |---|---|---|
-| 0–8 min | Start and join | The host loads or starts the test campaign and exactly one other player joins. Check that both see each other, names match, movement is visible and no compatibility rejection occurs. |
+| 0–8 min | Start and join | The host loads or starts the test campaign and exactly one other player joins. Check that both see each other, names match, movement is visible and no compatibility rejection occurs. Each player changes armor or helmet once: the other sees the change within a few seconds. When a player starts walking, their legs should move at once on the other screen instead of gliding. Open the map: the partner is marked there with their name; on the compass their mark points their way. |
 | 8–18 min | Shared combat | Fight a small encounter near the host. Both attack the same NPC. Check that hits and deaths appear on both PCs and the actual killer earns the experience. Record quest state and counters; one success does not verify every kill-quest case. |
 | 18–28 min | Recruit and dismiss a companion | The joining player recruits a suitable NPC. Check that it follows that player, appears on both PCs and is not simulated twice. The same player then dismisses it; both check that it no longer acts as their companion. |
-| 28–38 min | Knock-out and help | In a safe setting, let one player be knocked down in a controlled way. Their partner stands within about 2.5 m for at least three seconds. Check the recovery, notice and consumption of one healing potion. Without a potion, both should receive a notice and the player should remain down. Optionally at the end, before reloading: with both players down, both die and reach game over. |
-| 38–50 min | Dialog, quest, trade and loot | Speak to an NPC, trigger a known quest step, perform a clearly identifiable trade and take an item from a chest or corpse. Compare quest and dialog state, gold and item counts. The real trading interface is not covered by bot tests. |
+| 28–38 min | Knock-out and help | In a safe setting, let one player be knocked down in a controlled way. Their partner first stands next to them for a few seconds: nothing should happen. Then the partner talks to them and chooses "I will help you.". Check the recovery, notice and consumption of one healing potion. Without a potion, both should receive a notice and the player should remain down. Optionally at the end, before reloading: with both players down, both die and reach game over. |
+| 38–50 min | Dialog, quest, trade and loot | Speak to an NPC, trigger a known quest step, perform a clearly identifiable trade and take an item from a chest or corpse. Compare quest and dialog state, gold and item counts. Then trade with each other using the mouse: one player talks to the other's character and chooses "Show me your wares!" (on the very first trade, click Ok on the tip), takes one item, gives one and closes the window; the other accepts with Insert. Compare items and gold on both PCs. Trade once more and decline with Delete: nothing should change hands. Bots could not test the trade window's mouse controls. |
 | 50–70 min | Distance, separate regions and regrouping | Move apart. Beyond about 35 m, check for "Far from host" and that the host is told who is away. While separated, each player fights a different NPC in their region; record whether results agree and whether anything appears to be simulated twice. Regroup within about 25 m and check for "Back near the host." and matching world state. Accept a kill quest and kill a target in the joining player's region: the counter in the host's quest log should increase. |
 | 70–82 min | Save and load | The host saves with a distinct name. Check that the other player keeps their hero for this save. Use a separate test save or backup for loading. Let the world and players settle, then compare their state. If the joining player had a companion, it should follow them again after loading and rejoining. |
 | 82–90 min | Rejoin and bug report | If time remains, test a clean disconnect and rejoin, in the same process or after restarting. Record campaign, hero record, NPC ownership and companion state. If something failed, collect both players' logs as described below and give them privately to the host. |
@@ -124,4 +126,4 @@ share unredacted INI files, saves, campaign sidecars or a complete Documents fol
 - Companions are restored after loading by player name. Changing your name loses that association.
 - If the host loads another save during a session, the other player must disconnect and rejoin.
 - Untested: monsters attacking downed heroes, robbing downed heroes, the actual bed dialog, and the
-  actual trading interface. Bots trade through script commands.
+  mouse controls of the trade window (dragging items, its buttons). Bots trade through the game's own trade functions.

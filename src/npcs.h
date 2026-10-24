@@ -35,6 +35,8 @@ unsigned ReadCompanions(FILE* file);
 void ClearCompanions();
 void CompanionsOff(LogFn log);
 void StyleOff(LogFn log);
+void MirrorRetryOff(LogFn log);  // QA negative control (stage W8): a mirror missing at its first lookup stays missing (as before 23.10.)
+void MirrorStats(LogFn log);     // QA (stage W8): MIRRORSTATS line (mirrors, missing ones, found later, expired)
 void RecvOn(LogFn log);   // QA: take NPC snapshots again (stageM1: the host's win over this machine's own simulation)
 void RecvOff(LogFn log);  // QA: ignore every NPC snapshot from now on (invariant self-test)
 void DeadPoseOff(LogFn log);     // QA negative control: dead mirrors are not laid down

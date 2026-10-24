@@ -48,14 +48,18 @@ If joining is refused, open `g3together.log` in the Gothic 3 folder and find the
 ## While playing
 
 - If you are downed, wait for your partner. A connected player in the same world can help you up by
-  standing within 2.5 m for three seconds. This costs them a healing potion. Without one, you stay
+  talking to you and choosing "I will help you.". This costs them a healing potion. Without one, you stay
   down until they have a potion. If everyone is down or you are alone, you die as in single-player:
   game over, then load a save.
 - Carry healing potions for your partner.
 - Beyond about 35 m from the host, you see **"Far from host"**; below about 25 m, **"Back near the host."**
 - **Page Down** puts you directly behind your partner, including when they are downed. There is a
   five-second cooldown. To choose another key, set `partner_key = F9` in the INI (F1–F24, PAGEUP,
-  HOME, END, INSERT, DELETE or a letter).
+  HOME, END, INSERT, DELETE or a letter; Insert and Delete are the trade keys unless you change those).
+- Your partner is marked on your map and compass.
+- Your partner sees the armor and helmet you wear. `look = Diego` in your INI shows you as another character.
+- Trade with your partner: talk to their character, "Show me your wares!"; they confirm with Insert (Delete declines).
+  Other keys: `offer_accept_key` and `offer_decline_key` in the INI; the mod warns at the start if two of your keys are the same.
 - The host saves the campaign.
 - See **Known issues** in the [full player guide](PLAYING.md) for problems and workarounds.
 

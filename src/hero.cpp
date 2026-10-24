@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace g3t::hero {
@@ -20,6 +21,8 @@ namespace {
 char const* const Tags[] = {"STR", "DEX", "INT", "ALC", "SMT", "THF", "HP", "MP", "SP"};
 bool restoring = true;
 bool checking = true;     // QA negative control: recordcheckoff (a record is applied as read, as before 22.10.)
+char const* lastRefusal = nullptr;  // why the last LoadRecord refused its record, nullptr if it did not (LastRefusal)
+bool replaceSkills = true;  // QA negative control: skillreplaceoff (skills only taught on top, as before 23.10.)
 bool writeFault = false;  // QA (stage W2): recordwritefault breaks off the next write before it replaces the record
 
 struct Stack
@@ -28,7 +31,8 @@ struct Stack
     int amount = 0;
     unsigned quality = 0;
     int slot = 0;      // gESlot it is equipped to, 0 if none
-    int category = 0;  // gEItemCategory (10: learned skill)
+    int category = 0;  // gEItemCategory (10: skill, the perk item of one skill)
+    int learned = -1;  // skills: whether the hero knows that skill (a sixth field since 23.10.), -1: not in the record
 };
 
 std::string Hex(bCPropertyID const& id)
@@ -51,6 +55,28 @@ Template FromHex(std::string const& hex)
     return Template(bCPropertyID(bCGuid(raw)));
 }
 
+// A skill stack is the perk item (It_Perk_PotionHP); whether the hero knows it is its skill's (Perk_PotionHP) learned
+// state, the one HasLearnedSkill and TeachSkill take. The hero carries the items of skills it has not learned too
+// (skilldiag 23.10.: with the stack's own template both did nothing; a removed stack unlearned its skill, made again it
+// stayed unlearned, TeachSkill with the skill taught it).
+Template SkillOf(Entity& self, int i)
+{
+    Entity item = self.Inventory.GetTemplateItem(i);
+    Entity skill = item.GetInstance() ? item.Item.GetSkill() : Entity();
+    return skill.GetInstance() ? skill.GetTemplate() : Template();
+}
+
+int FindSkillStack(Entity& self, std::string const& hex)
+{
+    for (int i = 0; i < self.Inventory.GetStackCount(); ++i) {
+        if (static_cast<int>(self.Inventory.GetCategory(i)) != gEItemCategory_Skill) continue;
+        const Template t = self.Inventory.GetTemplate(i);
+        bCPropertyID const& id = t;
+        if (Hex(id) == hex) return i;
+    }
+    return -1;
+}
+
 std::vector<Stack> Stacks(Entity& self)
 {
     std::vector<Stack> out;
@@ -63,6 +89,10 @@ std::vector<Stack> Stacks(Entity& self)
         s.quality = self.Inventory.GetQuality(i);
         s.slot = static_cast<int>(self.Inventory.GetSlotFromStack(i));
         s.category = static_cast<int>(self.Inventory.GetCategory(i));
+        if (s.category == gEItemCategory_Skill) {
+            const Template skill = SkillOf(self, i);
+            s.learned = skill.IsValid() && self.Inventory.HasLearnedSkill(skill) ? 1 : 0;
+        }
         out.push_back(s);
     }
     std::sort(out.begin(), out.end(), [](Stack const& a, Stack const& b) { return a.id != b.id ? a.id < b.id : a.slot < b.slot; });
@@ -90,7 +120,10 @@ bool SaveRecord(char const* path)
                        static_cast<int>(self.PlayerMemory.LPPerks)) > 0;
     for (char const* tag : Tags)
         ok = ok && fprintf(file, "attr %s %d %d\n", tag, self.PlayerMemory.GetBaseValue(bCString(tag)), self.PlayerMemory.GetMaximum(bCString(tag))) > 0;
-    for (Stack const& s : stacks) ok = ok && fprintf(file, "stack %s %d %u %d %d\n", s.id.c_str(), s.amount, s.quality, s.slot, s.category) > 0;
+    for (Stack const& s : stacks)
+        ok = ok && (s.category == gEItemCategory_Skill
+                        ? fprintf(file, "stack %s %d %u %d %d %d\n", s.id.c_str(), s.amount, s.quality, s.slot, s.category, s.learned)
+                        : fprintf(file, "stack %s %d %u %d %d\n", s.id.c_str(), s.amount, s.quality, s.slot, s.category)) > 0;
     ok = ok && fprintf(file, "end %zu\n", stacks.size()) > 0;
     ok = fflush(file) == 0 && ok;
     ok = fclose(file) == 0 && ok;
@@ -107,9 +140,16 @@ bool LoadRecord(char const* path)
 {
     eCDynamicEntity* hero = Hero();
     FILE* file = nullptr;
-    if (!hero || fopen_s(&file, path, "r") || !file) return false;
+    lastRefusal = nullptr;
+    if (!hero) return false;
+    if (fopen_s(&file, path, "r") || !file) { lastRefusal = "the file cannot be read"; return false; }
     char line[256];
-    if (!fgets(line, sizeof(line), file) || std::strncmp(line, "G3THERO ", 8) || (line[8] != '1' && line[8] != '2')) { fclose(file); return false; }
+    if (!fgets(line, sizeof(line), file) || std::strncmp(line, "G3THERO ", 8) || (line[8] != '1' && line[8] != '2')) {
+        fclose(file);
+        lastRefusal = "no hero record header";
+        Logf("hero: record %s refused (%s); the hero stays as it is", path, lastRefusal);
+        return false;
+    }
     const int version = line[8] - '0';
     if (!restoring) { fclose(file); return true; }
     // The whole record is read and checked before the hero changes (R1): a record that broke off, a line that is no
@@ -132,7 +172,9 @@ bool LoadRecord(char const* path)
         else if (sscanf_s(line, "xp %d", &xp) == 1) haveXp = true;
         else if (sscanf_s(line, "lp %d %d", &lpa, &lpp) == 2) haveLp = true;
         else if (sscanf_s(line, "attr %63s %d %d", a, 64u, &b, &c) == 3) attrs.push_back({a, b, c});
-        else if (sscanf_s(line, "stack %63s %d %u %d %d", a, 64u, &s.amount, &s.quality, &s.slot, &s.category) == 5) {
+        else if (const int fields = std::strncmp(line, "stack ", 6) ? 0
+                                    : sscanf_s(line, "stack %63s %d %u %d %d %d", a, 64u, &s.amount, &s.quality, &s.slot, &s.category, &s.learned);
+                 fields == 5 || fields == 6) {  // a sixth field: the skill's learned state (23.10.)
             s.id = a;
             wanted.push_back(s);
         } else if (sscanf_s(line, "end %zu", &declared) == 1) ended = true;
@@ -157,27 +199,53 @@ bool LoadRecord(char const* path)
             if (s.id.size() != 32 || s.id.find_first_not_of("0123456789abcdef") != std::string::npos || !FromHex(s.id).IsValid())
                 refused = "a stack whose item does not exist";
             else if (s.amount < 1 || s.amount > 1000000 || s.quality >= 1024 || s.slot < gESlot_None || s.slot > gESlot_Helmet ||
-                     s.category < 0 || s.category >= gEItemCategory_Count)
+                     s.category < 0 || s.category >= gEItemCategory_Count || s.learned < -1 || s.learned > 1 ||
+                     (s.learned != -1 && s.category != gEItemCategory_Skill))
                 refused = "a stack out of range";
         }
     }
     if (refused) {
+        lastRefusal = refused;
         Logf("hero: record %s refused (%s); the hero stays as it is", path, refused);
         return false;
     }
     if (version < 2 && checking) Logf("hero: record %s is of version 1 (no end line); every field is there", path);
     Entity self(hero);
     // Inventory first: equipment modifies attributes, so the base values go on afterwards.
+    // Skills are the record's (Codex review 22.10.: a player loaded into the host's save kept the skills of the host's hero
+    // there; the old code only "taught" with the perk item's template, which did nothing): a perk stack the record does not
+    // have goes, a missing one is made, and each skill is learned or unlearned as the record says (version 2 records, without
+    // that field, keep the hero's state).
+    std::unordered_set<std::string> recordSkills;
+    for (Stack const& s : wanted)
+        if (s.category == gEItemCategory_Skill) recordSkills.insert(s.id);
+    unsigned skillsRemoved = 0, skillsTaught = 0, skillsUnlearned = 0;
     self.Inventory.HoldStacks(-1, -1);
     for (int i = self.Inventory.GetStackCount() - 1; i >= 0; --i) {
-        if (static_cast<int>(self.Inventory.GetCategory(i)) == gEItemCategory_Skill) continue;  // skills are taught, below
+        if (static_cast<int>(self.Inventory.GetCategory(i)) == gEItemCategory_Skill) {
+            const Template skill = self.Inventory.GetTemplate(i);
+            bCPropertyID const& id = skill;
+            if (!replaceSkills || recordSkills.count(Hex(id))) continue;  // kept; missing ones are taught below
+            if (self.Inventory.DeleteStack(i)) ++skillsRemoved;
+            continue;
+        }
         if (self.Inventory.GetSlotFromStack(i) != gESlot_None) self.Inventory.UnEquipStack(i);
         self.Inventory.DeleteStack(i);
     }
     for (Stack const& s : wanted) {
         const Template item = FromHex(s.id);
         if (s.category == gEItemCategory_Skill) {
-            if (!self.Inventory.HasLearnedSkill(item)) self.Inventory.TeachSkill(item);
+            if (!replaceSkills) {  // QA negative control: as before 23.10.
+                if (!self.Inventory.HasLearnedSkill(item) && self.Inventory.TeachSkill(item)) ++skillsTaught;
+                continue;
+            }
+            int index = FindSkillStack(self, s.id);
+            if (index < 0) index = self.Inventory.CreateItems(item, 0, 1);  // a perk this hero did not carry: not learned yet
+            const Template skill = index >= 0 ? SkillOf(self, index) : Template();
+            if (s.learned < 0 || !skill.IsValid()) continue;
+            const bool knows = self.Inventory.HasLearnedSkill(skill) != GEFalse;
+            if (s.learned == 1 && !knows && self.Inventory.TeachSkill(skill)) ++skillsTaught;
+            else if (s.learned == 0 && knows && self.Inventory.DeleteStack(index) && self.Inventory.CreateItems(item, 0, 1) >= 0) ++skillsUnlearned;
             continue;
         }
         const GEInt index = self.Inventory.CreateItems(item, s.quality, s.amount);
@@ -192,6 +260,8 @@ bool LoadRecord(char const* path)
         self.PlayerMemory.SetMaximum(bCString(at.tag.c_str()), at.max);
         self.PlayerMemory.SetBaseValue(bCString(at.tag.c_str()), at.base);
     }
+    Logf("hero: record %s applied: %zu skills in it, %u taught, %u unlearned, %u removed", path, recordSkills.size(), skillsTaught,
+         skillsUnlearned, skillsRemoved);
     return true;
 }
 
@@ -215,7 +285,7 @@ void Dump(LogFn log)
     unsigned long long hash = 1469598103934665603ull;
     int count = 0;
     for (Stack const& s : Stacks(self)) {
-        sprintf_s(part, "%s:%d:%u:%d;", s.id.c_str(), s.amount, s.quality, s.slot);
+        sprintf_s(part, "%s:%d:%u:%d:%d;", s.id.c_str(), s.amount, s.quality, s.slot, s.learned);
         for (char const* c = part; *c; ++c) { hash ^= static_cast<unsigned char>(*c); hash *= 1099511628211ull; }
         ++count;
     }
@@ -223,6 +293,8 @@ void Dump(LogFn log)
     text += part;
     log(("HERODUMP " + text).c_str());
 }
+
+char const* LastRefusal() { return lastRefusal; }
 
 std::string RecordPath(char const* name)
 {
@@ -292,5 +364,114 @@ void WriteFault(LogFn log)
 {
     writeFault = true;
     log("RECORDWRITEFAULT ok=1 (the next record write breaks off)");
+}
+
+// QA diagnostic (stage W9, 23.10.): what a skill stack of the hero is. HasLearnedSkill and TeachSkill did nothing with the
+// stack's own template (learned=0 for all 71; a removed skill was not taught back), so: the item's skill, and which of the
+// two the inventory calls learned or active.
+void SkillDiag(LogFn log)
+{
+    eCDynamicEntity* hero = Hero();
+    if (!hero) { log("SKILLDIAG end"); return; }
+    Entity self(hero);
+    char line[400];
+    int shown = 0;
+    for (int i = 0; i < self.Inventory.GetStackCount() && shown < 4; ++i) {
+        if (static_cast<int>(self.Inventory.GetCategory(i)) != gEItemCategory_Skill) continue;
+        ++shown;
+        const Template stack = self.Inventory.GetTemplate(i);
+        Entity item = self.Inventory.GetTemplateItem(i);
+        Entity skill = item.GetInstance() ? item.Item.GetSkill() : Entity();
+        const Template skillTemplate = skill.GetInstance() ? skill.GetTemplate() : Template();
+        bCPropertyID const& stackId = stack;
+        bCPropertyID const& skillId = skillTemplate;
+        sprintf_s(line, "SKILLDIAG stack=%d name=%s item=%s skill=%s same=%d learned_stack=%d learned_skill=%d active_stack=%d active_skill=%d activations=%u",
+                  i, self.Inventory.GetName(i).GetText(), item.GetInstance() ? item.GetName().GetText() : "-",
+                  skill.GetInstance() ? skill.GetName().GetText() : "-", Hex(stackId) == Hex(skillId) ? 1 : 0,
+                  self.Inventory.HasLearnedSkill(stack) ? 1 : 0, skill.GetInstance() && self.Inventory.HasLearnedSkill(skillTemplate) ? 1 : 0,
+                  self.Inventory.IsSkillActive(stack) ? 1 : 0, skill.GetInstance() && self.Inventory.IsSkillActive(skillTemplate) ? 1 : 0,
+                  skill.GetInstance() ? self.Inventory.GetSkillActivationCount(skillTemplate) : 0u);
+        log(line);
+    }
+    log("SKILLDIAG end");
+}
+
+// QA diagnostic (stage W9): how a skill is learned and unlearned. A learned one: its stack removed (still learned?), made
+// again with CreateItems (learned now?), then TeachSkill. An unlearned one: TeachSkill with its stack there, then its stack
+// removed and made again (unlearned by that?). One SKILLTRY line each.
+void SkillTry(LogFn log)
+{
+    eCDynamicEntity* hero = Hero();
+    if (!hero) { log("SKILLTRY none"); return; }
+    Entity self(hero);
+    auto skillOf = [&self](int i) {
+        Entity item = self.Inventory.GetTemplateItem(i);
+        Entity skill = item.GetInstance() ? item.Item.GetSkill() : Entity();
+        return skill.GetInstance() ? skill.GetTemplate() : Template();
+    };
+    auto indexOf = [&self](Template const& stack) {
+        bCPropertyID const& want = stack;
+        for (int i = 0; i < self.Inventory.GetStackCount(); ++i) {
+            const Template t = self.Inventory.GetTemplate(i);
+            bCPropertyID const& id = t;
+            if (static_cast<int>(self.Inventory.GetCategory(i)) == gEItemCategory_Skill && Hex(id) == Hex(want)) return i;
+        }
+        return -1;
+    };
+    char line[400];
+    for (int want = 1; want >= 0; --want) {
+        int index = -1;
+        for (int i = 0; i < self.Inventory.GetStackCount() && index < 0; ++i)
+            if (static_cast<int>(self.Inventory.GetCategory(i)) == gEItemCategory_Skill && skillOf(i).IsValid() &&
+                (self.Inventory.HasLearnedSkill(skillOf(i)) ? 1 : 0) == want)
+                index = i;
+        if (index < 0) { sprintf_s(line, "SKILLTRY case=%s none", want ? "learned" : "unlearned"); log(line); continue; }
+        const Template stack = self.Inventory.GetTemplate(index);
+        const Template skill = skillOf(index);
+        const bCString name = self.Inventory.GetName(index);
+        auto learned = [&self, &skill]() { return self.Inventory.HasLearnedSkill(skill) ? 1 : 0; };
+        const int before = learned();
+        int teach1 = -1, afterTeach1 = -1;
+        if (!want) { teach1 = self.Inventory.TeachSkill(skill) ? 1 : 0; afterTeach1 = learned(); }
+        const int deleted = self.Inventory.DeleteStack(indexOf(stack)) ? 1 : 0;
+        const int afterDelete = learned();
+        const int created = self.Inventory.CreateItems(stack, 0, 1);
+        const int afterCreate = learned();
+        const int teach2 = self.Inventory.TeachSkill(skill) ? 1 : 0;
+        const int afterTeach2 = learned();
+        sprintf_s(line, "SKILLTRY case=%s name=%s before=%d teach1=%d after_teach1=%d deleted=%d after_delete=%d created=%d after_create=%d teach2=%d after_teach2=%d",
+                  want ? "learned" : "unlearned", name.GetText(), before, teach1, afterTeach1, deleted, afterDelete, created, afterCreate, teach2,
+                  afterTeach2);
+        log(line);
+    }
+}
+
+void SkillReplaceOff(LogFn log)
+{
+    replaceSkills = false;
+    log("SKILLREPLACEOFF ok=1 (a record's skills are only taught on top, as before 23.10.)");
+}
+
+// QA (stage W9): the perk stack with this template ID (32 hex digits, as in a record): there or not, and whether the hero
+// knows its skill; and how many skills it knows of how many perk stacks.
+void HasSkill(char const* id, LogFn log)
+{
+    char line[200];
+    eCDynamicEntity* hero = Hero();
+    const std::string hex = id ? id : "";
+    if (!hero || hex.size() != 32 || hex.find_first_not_of("0123456789abcdef") != std::string::npos) { log("REFUSED hasskill: no hero or bad ID"); return; }
+    Entity self(hero);
+    int stacks = 0, known = 0;
+    for (int i = 0; i < self.Inventory.GetStackCount(); ++i) {
+        if (static_cast<int>(self.Inventory.GetCategory(i)) != gEItemCategory_Skill) continue;
+        ++stacks;
+        const Template skill = SkillOf(self, i);
+        if (skill.IsValid() && self.Inventory.HasLearnedSkill(skill)) ++known;
+    }
+    const int index = FindSkillStack(self, hex);
+    const Template skill = index >= 0 ? SkillOf(self, index) : Template();
+    sprintf_s(line, "HEROSKILL id=%s has=%d learned=%d known=%d stacks=%d", hex.c_str(), index >= 0 ? 1 : 0,
+              skill.IsValid() && self.Inventory.HasLearnedSkill(skill) ? 1 : 0, known, stacks);
+    log(line);
 }
 }

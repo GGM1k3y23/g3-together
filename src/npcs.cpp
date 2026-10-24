@@ -62,6 +62,8 @@ struct Mirror
     Entity entity;
     bool resolved = false;
     bool missing = false;  // GUID not found in this copy
+    uint32_t resolvedAt = 0;  // net::Now() of the last lookup, 0: never looked up
+    uint32_t firstSeen = 0;   // net::Now() of its first snapshot
     bool killed = false;
     uint8_t owner = 1;             // player whose machine simulates it
     bool guarded = false;          // DefeatedByPlayer forced on while mirrored
@@ -71,6 +73,7 @@ struct Mirror
     net::NpcRecord latest;
     uint32_t previousTicks = 0;
     uint32_t latestTicks = 0;
+    uint32_t previousSent = 0, latestSent = 0;  // the sender's clock (body::Speed)
     uint32_t heldRight = 0, heldLeft = 0;  // what this mirror holds now (hashes)
     uint32_t holdChecked = 0;
     char skeleton[24] = {};        // prefix of its motion names (Orc, Hero, ...), for the lying-dead motions
@@ -84,6 +87,9 @@ struct Mirror
 };
 unsigned holdChanges = 0;
 bool style = true;  // QA negative control: StyleOff (no weapons in hand, no stance on mirrors)
+constexpr uint32_t RetryLookup = 1000;  // ms between lookups of a mirror whose NPC is not here (yet)
+bool retryMissing = true;  // QA negative control: mirrorretryoff (a missing mirror stays missing and stays, as before 23.10.)
+unsigned mirrorsFoundLater = 0, mirrorsExpired = 0, mirrorLookups = 0;
 std::unordered_map<std::string, Mirror> mirrors;
 // Deaths applied here as a state, outside mirroring (journal.cpp: an NPC that died in another player's region, applied
 // once this machine processes it). They got AIMode 9 and ZS_Dead, which lays nothing down: the body froze in its last
@@ -150,7 +156,7 @@ bool IsNpc(eCEntity* instance)
 
 bool receiving = true;  // QA (invariant self-test): RecvOff drops all NPC snapshots, so both machines simulate
 
-void OnNpcs(net::NpcRecord const* records, int count, uint32_t now, uint8_t owner)
+void OnNpcs(net::NpcRecord const* records, int count, uint32_t now, uint32_t sent, uint8_t owner)
 {
     if (!receiving) return;
     for (int i = 0; i < count; ++i) {
@@ -184,11 +190,14 @@ void OnNpcs(net::NpcRecord const* records, int count, uint32_t now, uint8_t owne
         if (claim != claimedBy.end()) claimSeen[key] = now;
         givenBack.erase(key);  // the host sends it again: mirror it
         Mirror& m = mirrors[key];
+        if (!m.firstSeen) m.firstSeen = now ? now : 1;
         m.owner = owner;
         m.previous = m.latestTicks ? m.latest : records[i];
         m.previousTicks = m.latestTicks ? m.latestTicks : now;
+        m.previousSent = m.latestTicks ? m.latestSent : sent;
         m.latest = records[i];
         m.latestTicks = now;
+        m.latestSent = sent;
     }
 }
 
@@ -507,9 +516,15 @@ void MirrorTick()
     for (auto it = mirrors.begin(); it != mirrors.end();) {
         Mirror& m = it->second;
         if (!m.resolved) {
+            const bool again = m.resolvedAt != 0;
             m.entity = Resolve(m.latest.guid);
             m.resolved = true;
+            m.resolvedAt = now ? now : 1;
             m.missing = !IsNpc(m.entity.GetInstance());  // the host's hero, a chest or a puppet is no mirror (Fable 1.6)
+            if (again && !m.missing) {
+                ++mirrorsFoundLater;
+                Logf("npcs: mirror %s found here, %u ms after its first snapshot", m.entity.GetName().GetText(), now - m.firstSeen);
+            }
             // The game's death and knock-out scripts reward the player (GiveXP) for any NPC not yet marked as
             // defeated by the player, and then mark it. For mirrors that rewarded this client for every NPC the
             // host or anyone else defeated (1250 XP in stage 3c without a single own hit; 500 when marked only
@@ -521,7 +536,22 @@ void MirrorTick()
                 m.guarded = true;
             }
         }
-        if (m.missing || !m.entity.GetInstance()) { ++it; continue; }
+        // Not here (yet), or gone: looked up again every second while its owner sends it, and dropped once stale (Codex
+        // review 22.10.: an NPC missing at its first lookup stayed missing, and its entry stayed for good; only summons were
+        // bound again, through Rebind).
+        if (m.missing || !m.entity.GetInstance()) {
+            if (retryMissing && static_cast<int32_t>(now - m.latestTicks) > static_cast<int32_t>(StaleAfter)) {
+                ++mirrorsExpired;
+                it = mirrors.erase(it);
+                continue;
+            }
+            if (retryMissing && static_cast<int32_t>(now - m.resolvedAt) >= static_cast<int32_t>(RetryLookup)) {
+                m.resolved = false;
+                ++mirrorLookups;
+            }
+            ++it;
+            continue;
+        }
         if (net::IsHost() && !processed.count(m.entity.GetInstance()) &&
             static_cast<int32_t>(now - m.latestTicks) <= static_cast<int32_t>(StaleAfter)) { ++it; continue; }
         const auto claim = claimedBy.find(it->first);
@@ -600,8 +630,7 @@ void MirrorTick()
             m.heldRight = m.latest.heldRight;
             m.heldLeft = m.latest.heldLeft;
         }
-        const uint32_t interval = m.latestTicks - m.previousTicks;
-        const float speed = interval ? body::Distance(m.latest.position, m.previous.position) * 1000.0f / interval : 0.0f;
+        const float speed = body::Speed(m.previous.position, m.latest.position, m.previousSent, m.latestSent, m.previousTicks, m.latestTicks);
         auto name = motionNames.find(m.latest.motion);
         if (name != motionNames.end()) LearnSkeleton(m, name->second.c_str());
         const body::Target target{m.latest.position, m.latest.rotation, m.latest.movementMode,
@@ -966,6 +995,23 @@ void StyleOff(LogFn log)
 {
     style = false;
     log("STYLEOFF ok=1");
+}
+
+void MirrorRetryOff(LogFn log)
+{
+    retryMissing = false;
+    log("MIRRORRETRYOFF ok=1 (a mirror missing at its first lookup stays missing and stays, as before 23.10.)");
+}
+
+void MirrorStats(LogFn log)
+{
+    unsigned missing = 0;
+    for (auto const& entry : mirrors)
+        if (entry.second.resolved && (entry.second.missing || !entry.second.entity.GetInstance())) ++missing;
+    char line[200];
+    sprintf_s(line, "MIRRORSTATS mirrors=%zu missing=%u found_later=%u expired=%u lookups=%u retry=%d", mirrors.size(), missing,
+              mirrorsFoundLater, mirrorsExpired, mirrorLookups, retryMissing ? 1 : 0);
+    log(line);
 }
 }
 

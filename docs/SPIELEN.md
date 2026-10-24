@@ -115,7 +115,7 @@ beschriebenen Tests liefen auf einem PC mit zwei Spielkopien; Spielen über das 
 - Duell und Arena gehören den beiden Kämpfern: Kämpft dein Partner ein Duell oder in der Arena, zählen deine Treffer auf
   seinen Gegner nicht. Der Kampf endet wie im Einzelspiel mit einem Niederschlag, nie mit einem Mord.
 - Aufhelfen kostet einen Heiltrank: Wer tödlich getroffen wird, liegt bewusstlos am Boden, bis ein Mitspieler
-  (verbunden, in derselben Welt, nicht selbst am Boden) sich 3 Sekunden höchstens 2,5 m daneben stellt. Dabei
+  (verbunden, in derselben Welt, nicht selbst am Boden) ihn anspricht und „Ich werde dir helfen.“ wählt. Dabei
   verbraucht er einen Heiltrank aus seinem Inventar (den günstigsten). Hat er keinen, bekommen beide einen Hinweis,
   und der Bewusstlose bleibt liegen, bis der Partner mit einem Trank zurückkommt.
 - Game Over: Kann niemand mehr helfen (alle liegen am Boden, oder man ist allein, weil der Partner nicht verbunden,
@@ -163,7 +163,21 @@ beschriebenen Tests liefen auf einem PC mit zwei Spielkopien; Spielen über das 
 - **Zum Mitspieler springen:** Die Taste **Bild ab** (Page Down) setzt dich 1,5 m hinter deinen Mitspieler, in derselben
   Welt, auch wenn er bewusstlos ist (dann kannst du ihm aufhelfen). Danach 5 Sekunden Pause. So könnt ihr euch trennen und
   jederzeit wieder treffen; am besten bleibt ihr meist zusammen. Andere Taste: `partner_key = F9` in der INI
-  (F1–F24, PAGEUP, HOME, END, INSERT, DELETE oder ein Buchstabe).
+  (F1–F24, PAGEUP, HOME, END, INSERT, DELETE oder ein Buchstabe; Einfg und Entf sind die Handelstasten, siehe unten).
+- **Karte und Kompass:** Dein Mitspieler ist auf deiner Karte mit seinem Namen eingezeichnet und auf dem Kompass in seiner
+  Richtung, von deinem Blick aus gesehen.
+- **Dein Aussehen:** Dein Mitspieler sieht die Rüstung und den Helm, die du trägst. Willst du für ihn wie eine andere Figur
+  aussehen, trag in deiner eigenen INI `look = Diego` ein (eine Figurvorlage des Spiels); ohne den Eintrag entscheidet sein
+  `puppet_template` (Standard: der Held).
+- **Handeln mit deinem Mitspieler:** Sprich seine Figur an und wähle „Zeig mir deine Ware!“. Es öffnet sich der normale
+  Handelsbildschirm mit allem, was dein Mitspieler handeln kann (nicht, was er trägt, keine Questgegenstände), und seinem
+  Gold; die Preise sind in beide Richtungen gleich, eine geschärfte, gesegnete oder geschmiedete Waffe bleibt es. Beim
+  allerersten Handel kommt zuerst ein Tipp: auf „Ok“ klicken.
+  Tausche so oft du willst und schließe dann das Fenster: Dein Mitspieler bekommt ein Angebot und nimmt es innerhalb von
+  30 Sekunden mit Einfg an oder lehnt mit Entf ab. Bis dahin hast du weder, was du bekommst, noch, was du hergegeben hast;
+  danach ist alles beim Richtigen. Andere Tasten: `offer_accept_key = F7` und `offer_decline_key = F8` in der INI
+  (dieselben Namen wie bei `partner_key`). Sind zwei dieser drei Tasten gleich, löst ein Druck beides aus: Die Mod sagt
+  das beim Start auf dem Bildschirm und in `g3together.log`.
 - Dialog-Auswirkungen: Was ein Dialog bei einem NPC ändert (Händler, Lehrer, Wache, Tagesablauf ...), Duelle und
   Angriffe aus Dialogen und das Anwerben von Gefolgsleuten gelten für alle. Gegenstände aus Dialogen bekommt, wer
   den Dialog führt.
@@ -172,7 +186,8 @@ beschriebenen Tests liefen auf einem PC mit zwei Spielkopien; Spielen über das 
   Verbindungsabbruch ohne Laden gehören sie zunächst dem Host.
 - Lädt der Host während des Spiels einen Spielstand, laden die Mitspieler ihn automatisch mit. Bis sie fertig sind,
   seht ihr euch nicht.
-- Handel und Plündern sind mit Bots getestet, nicht mit der echten Handelsoberfläche.
+- Handel und Plündern sind mit Bots über die Handelsfunktionen des Spiels getestet; die Maussteuerung des
+  Handelsfensters (Ziehen, Knöpfe) hat noch kein Mensch ausprobiert.
 - Schlafen: Wer schläft, stellt die Uhr für alle vor (die Heilung durch den Schlaf gilt nur für den Schläfer).
 - Verwandlungen (z. B. in einen Wolf oder eine Blutfliege): Der andere Spieler sieht das Tier, wie es läuft und sich
   bewegt, und nach der Rückverwandlung wieder den Helden. Getestet mit Wolf und Blutfliege, ausgelöst wie der

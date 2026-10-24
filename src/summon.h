@@ -13,6 +13,7 @@ using LogFn = void (*)(char const*);
 void Report(LogFn log);      // QA: SUMMONSTATE line (counters) and SMNHIT lines (hits seen while a summon acts)
 void CopyHeroOff(LogFn log);  // QA negative control: copies belong to our own hero, so their hits count again
 void MirrorOff(LogFn log);    // QA negative control: summons are not announced
+void LateCopyCommand(char const* argument, LogFn log);  // QA (stage W8): "<ms>": copies of others' creatures come that late, no Rebind
 void AreaTickOn(LogFn log);
 void Creatures(LogFn log);    // QA: CREATURE lines, the local hero's summoned creatures   // QA negative control: copies of area spells pick targets and judge hits again
 void WatchHits();             // QA: log the hits of the next 4 s as SMNHIT lines too (after a shot)

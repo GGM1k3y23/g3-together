@@ -9,8 +9,8 @@ class eCEntity;
 namespace g3t::downed {
 // Called by the AI wrapper before an AI state runs for the local hero; true when it replaced a death state.
 bool RedirectDeath(eCEntity* self, char const* state);
-// Once per frame: a knocked-out hero stays down while a partner could help; a partner next to it for 3 s with a
-// healing potion pays it and stands it up. Nobody able to help for 5 s: the hero dies. Other players are told
+// Once per frame: a knocked-out hero stays down while a partner could help; a partner who talks to its puppet and
+// chooses "Ich werde dir helfen." pays a healing potion and stands it up (owner 23.10.). Nobody able to help for 5 s: the hero dies. Other players are told
 // when someone goes down or dies.
 void Tick();
 void Revived(int byPlayer);           // network: that partner paid a potion for us
@@ -24,4 +24,6 @@ void LethalOnlyOff(LogFn log);  // QA negative control: every knock-out waits fo
 void GivePotion(char const* argument, LogFn log);  // QA: "Template[-Amount]" into the hero's inventory ("-0" takes all away)
 void Potions(LogFn log); // QA: POTION lines for the hero's potions
 void Report(LogFn log);  // QA: DOWNED line
+void AutoHelpOn(LogFn log);     // QA: standing next to a downed partner for 3 s helps it up again (as before 23.10.)
+void HelpOptionOff(LogFn log);  // QA negative control: a downed partner's puppet offers no help option
 }

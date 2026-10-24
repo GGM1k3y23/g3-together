@@ -21,6 +21,11 @@ name = Host
 language = en
 # Key that jumps to the other player (default PAGEDOWN): F1-F24, PAGEUP, HOME, END, INSERT, DELETE or a letter
 partner_key = PAGEDOWN
+# Keys that accept / decline the other player's trade offer (same names; the mod warns if two of these keys are the same)
+offer_accept_key = INSERT
+offer_decline_key = DELETE
+# Your own look for the other players (a character template such as Diego; default: their puppet_template)
+# look = Diego
 # For a bug report about NPCs: remove the # below, restart, reproduce (writes g3trace.log, see PLAYING.md)
 # trace = on
 # Town reputation (thefts, murders): shared (one counter per town for both; default), together, personal
@@ -34,6 +39,10 @@ name = Player
 # Mod messages only: en (default) or de. Each player can choose independently.
 language = en
 partner_key = PAGEDOWN
+offer_accept_key = INSERT
+offer_decline_key = DELETE
+# Your own look for the other players (a character template such as Diego; default: their puppet_template)
+# look = Diego
 # For a bug report about NPCs: remove the # below, restart, reproduce (writes g3trace.log, see PLAYING.md)
 # trace = on
 """

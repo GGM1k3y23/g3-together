@@ -36,13 +36,18 @@ Wird der Beitritt abgelehnt, öffne im Gothic-3-Ordner `g3together.log` und such
 
 ## Im Spiel
 
-- Wirst du tödlich getroffen, bleib liegen: Ein verbundener Mitspieler in derselben Welt kann dir aufhelfen, wenn er 3 Sekunden höchstens 2,5 m neben dir steht. Das kostet ihn einen Heiltrank; ohne Trank bleibst du liegen, bis er einen hat. Liegen alle am Boden oder bist du allein, stirbst du wie im Einzelspiel (Game Over, Spielstand laden).
+- Wirst du tödlich getroffen, bleib liegen: Ein verbundener Mitspieler in derselben Welt kann dir aufhelfen: Er spricht dich an und wählt „Ich werde dir helfen.“. Das kostet ihn einen Heiltrank; ohne Trank bleibst du liegen, bis er einen hat. Liegen alle am Boden oder bist du allein, stirbst du wie im Einzelspiel (Game Over, Spielstand laden).
 - Trag deshalb immer ein paar Heiltränke für deinen Partner bei dir.
 - Schlägt dich eine Wache oder ein Duellgegner nur nieder, stehst du wie im Einzelspiel von selbst wieder auf (ausgeraubt wirst du dabei noch nicht).
 - Kämpft dein Partner ein Duell oder in der Arena, halte dich heraus: Deine Treffer auf seinen Gegner zählen nicht.
 - Ab etwa 35 m vom Host erscheint **„Weit weg vom Host“**; unter etwa 25 m **„Wieder beim Host“**.
 - **Bild ab** (Page Down) bringt dich direkt hinter deinen Mitspieler, auch zu ihm, wenn er am Boden liegt. Danach 5 Sekunden
-  Pause. Andere Taste: in der INI `partner_key = F9` (F1–F24, PAGEUP, HOME, END, INSERT, DELETE oder ein Buchstabe).
+  Pause. Andere Taste: in der INI `partner_key = F9` (F1–F24, PAGEUP, HOME, END, INSERT, DELETE oder ein Buchstabe;
+  Einfg und Entf sind die Handelstasten, solange du die nicht änderst).
+- Dein Partner ist auf deiner Karte und deinem Kompass eingezeichnet.
+- Dein Partner sieht die Rüstung und den Helm, die du trägst. Mit `look = Diego` in deiner INI siehst du für ihn wie eine andere Figur aus.
+- Handeln mit deinem Partner: seine Figur ansprechen, „Zeig mir deine Ware!“; er bestätigt mit Einfg (Entf lehnt ab).
+  Andere Tasten: `offer_accept_key` und `offer_decline_key` in der INI; sind zwei deiner Tasten gleich, warnt die Mod beim Start.
 - Gespeichert wird beim Host.
 - Was noch schiefgehen kann und was ihr dann tut: Abschnitt **„Bekannte Probleme“** in der [Spielanleitung](SPIELEN.md).
 

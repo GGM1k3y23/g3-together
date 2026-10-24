@@ -13,18 +13,26 @@ exactly the same version.
 
 ## What works
 
-- Playing the campaign together: you see each other move, fight, cast spells and use the world.
+- Playing the campaign together: you see each other move, fight, cast spells and use the world. Armor and helmet show on
+  the other player, and each player can choose their own look (`look = Diego` in their INI).
 - Fighting together: hits, kills and deaths count on both PCs; experience goes to whoever earned it, quest rewards to everyone.
 - Quests and dialogs are shared; a player standing nearby hears the other player's conversation.
-- Looting corpses and chests, Quick Loot and trading: both players see the same contents, nothing is duplicated.
-- Instead of game over, a knocked-out player waits for the partner to help them up with a healing potion.
+- Looting corpses and chests, Quick Loot and trading with NPCs: both players see the same contents, nothing is duplicated.
+- Trading with your partner: talk to their character and choose "Show me your wares!". The game's own trade window opens
+  with their goods and gold; your partner confirms every trade.
+- Your partner on the map and the compass: an arrow with their name on the map, an arrow at the compass's edge.
+- Instead of game over, a knocked-out player waits; the partner helps them up by talking to them and choosing
+  "I will help you." (costs a healing potion).
 - Duels and the arena work as in single-player.
 - Saving and loading: the host saves; when the host loads a save, the other player is loaded into it automatically.
-- The host checks that both installations match (patches, difficulty, balancing) and says what differs.
+- The host checks that both installations match (patches, difficulty, balancing) and says what differs; on-screen messages
+  tell you when the connection is lost or back.
 
 ## Known limitations
 
 - A guard of the host does not yet rob a knocked-out partner.
+- Trading was tested by bots through the game's own trade functions; dragging items with the mouse in the trade window has
+  not been tried by a person yet.
 - Only two players have been tested; more may work but are untested.
 
 Found a bug? Note the time and what happened, then send both players' logs (`tools/collect_logs.py` in the package).
