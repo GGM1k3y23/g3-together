@@ -17,6 +17,7 @@ void Tick();
 void OnWorldChange();  // open offers and the open trade are forgotten (a decline must not undo on the new world's hero)
 // PlayerOpenTrade with a puppet as partner (containers.cpp): fill it with its player's goods. False: not a puppet.
 bool OnOpen(eCEntity* partner);
+void RestoreGold(eCEntity* puppet, int player);  // ransack.cpp: the puppet's gold as trade last put it there
 using LogFn = void (*)(char const*);
 void Report(LogFn log);                   // QA: TRADESYNC line
 // QA (playergoods): PLAYERGOODS line of player <id>'s goods as received here ("0": this machine's own; "puppet<id>": what

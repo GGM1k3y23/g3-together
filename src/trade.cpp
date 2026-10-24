@@ -31,6 +31,7 @@ struct Wares {
     Content items;
 };
 Wares received[net::MaxPlayers];  // what each other player can trade, as it last sent it
+int32_t filledGold[net::MaxPlayers] = {};  // the gold the last Fill put on each player's puppet (RestoreGold)
 
 // This machine's own goods as last sent.
 Content sentItems;
@@ -205,6 +206,7 @@ void Fill(Entity& puppet, Wares const& goods)
     eCTemplateEntityProxy gold;
     gold.SetEntity(bCString(Gold));
     CreateMerchandise(puppet, gold, 0, goods.gold);
+    if (const int id = remote::PuppetOwner(puppet.GetInstance())) filledGold[id] = goods.gold;
     ++fills;
 }
 
@@ -583,6 +585,23 @@ void OnWorldChange()
     expected.clear();
     expectedGold = 0;
     idleSince = 0;
+    for (auto& gold : filledGold) gold = 0;
+}
+
+// While its player lay knocked out, a puppet carried that player's gold for a robber (ransack.cpp); then it gets the gold
+// back that trade put there (merchandise, as Fill makes it).
+void RestoreGold(eCEntity* body, int player)
+{
+    if (!body || player <= 0 || player >= net::MaxPlayers) return;
+    Entity puppet(body);
+    for (int i = puppet.Inventory.GetStackCount() - 1; i >= 0; --i) {
+        Entity item = puppet.Inventory.GetTemplateItem(i);
+        if (item.GetInstance() && !std::strcmp(item.GetName().GetText(), Gold) && puppet.Inventory.GetSlotFromStack(i) == gESlot_None)
+            puppet.Inventory.DeleteStack(i);
+    }
+    eCTemplateEntityProxy gold;
+    gold.SetEntity(bCString(Gold));
+    CreateMerchandise(puppet, gold, 0, filledGold[player]);
 }
 
 void FillOff(LogFn log)

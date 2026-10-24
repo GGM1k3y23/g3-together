@@ -293,6 +293,8 @@ void Report(LogFn log)
     log(line);
 }
 
+bool Together() { return mode == Mode::Together; }
+
 void SyncOff(LogFn log)
 {
     sync = false;

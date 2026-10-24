@@ -21,6 +21,13 @@ Stand: Testversion. Was geht und was nicht, steht unten unter „Bekannte Grenze
 
 ## Installieren
 
+**Einrichten:** Sind Gothic 3 und beide Patches installiert, das ganze Paket irgendwohin entpacken und `Einrichten.cmd`
+doppelklicken (`Setup.cmd` auf Englisch). Es erledigt das Kopieren und die INI: Es findet Gothic 3 (Steam, GOG oder der
+Ordner, den du angibst), prüft Community Patch 1.75.14 und Parallel Universe Patch 1.1.1, nimmt eine andere Koop-Mod aus
+`scripts`, kopiert die Mod nach `scripts` und schreibt `g3together.ini` nach deinen Antworten (Host oder Mitspieler, dein
+Name, die Adresse des Hosts). Ersetzte Dateien liegen danach in `G3Together-backup` im Spielordner. Das Einrichten wurde
+an Testordnern geprüft, noch nicht von Spielern; die Schritte unten machen dasselbe von Hand.
+
 1. Gothic 3 von Steam installieren, danach den **Community Patch 1.75.14**.
 2. Den [Parallel Universe Patch **1.1.1**](https://www.worldofgothic.de/dl/download_678.htm) in dieselbe Spielinstallation installieren. Beide Spieler verwenden denselben Patchstand.
 3. Aus demselben G3-Together-Paket `Script_G3Together.dll` in den Ordner `<Gothic 3>\scripts\` kopieren.
@@ -71,6 +78,8 @@ Alternativ leitet der Host UDP-Port 34567 in seinem Router auf seinen PC weiter.
    Gothic 3 die Firewall-Frage, das von Hamachi verwendete Netzwerkprofil erlauben, gegebenenfalls auch **„Öffentliche Netzwerke“**.
 5. Probe: Der Mitspieler tippt in der Eingabeaufforderung `ping 25.x.x.x` (Adresse des Hosts). Damit lassen sich Verbindung
    und Verzögerung prüfen. Eine geringe Verzögerung ist besser; eine Ping-Antwort allein bestätigt noch keine erlaubte UDP-Spielverbindung.
+6. Erreicht das Spiel des Mitspielers den Host nicht, sagt das nach etwa 15 Sekunden die oberste Zeile seines Hauptmenüs, mit der
+   eingetragenen Adresse und dem Port (im Spiel: alle 30 Sekunden eine Meldung).
 
 Die Mod nimmt auf dem Host Verbindungen über jeden Netzwerkadapter an, also auch über Hamachi. Die in diesen Anleitungen
 beschriebenen Tests liefen auf einem PC mit zwei Spielkopien; Spielen über das echte Internet bleibt ungeprüft.
@@ -110,8 +119,13 @@ beschriebenen Tests liefen auf einem PC mit zwei Spielkopien; Spielen über das 
 - Uhrzeit: Es ist für alle dieselbe Tageszeit; wer schläft, stellt die Zeit für alle vor.
 - Tote NPCs liegen bei allen am Boden, auch wenn sie weit weg vom Host gestorben sind und man erst später hinkommt.
 - Niederschlag wie im Einzelspiel: Schlägt dich eine Wache, ein Duell- oder Arenagegner bewusstlos (ohne dass du sterben
-  würdest), läuft es wie im Einzelspiel: Du stehst von selbst wieder auf, Aufhelfen gibt es dabei nicht. Dass der Sieger
-  den Mitspieler dabei ausraubt, ist noch nicht umgesetzt (beim Host läuft es wie im Einzelspiel).
+  würdest), läuft es wie im Einzelspiel: Du stehst von selbst wieder auf, Aufhelfen gibt es dabei nicht, und der Sieger
+  kann dir die Hälfte deines Goldes abnehmen. Tut das ein NPC aus dem Spiel des anderen Rechners, siehst du „<Name> hat
+  dir N Gold abgenommen.“ Dein Mitspieler kann dich nicht ausplündern.
+- Zeugen: Sieht ein NPC einen Spieler stehlen, reagiert er wie im Einzelspiel, auch wenn der andere Rechner ihn berechnet:
+  Er geht auf den Dieb los.
+- Mithören: Wer höchstens etwa 20 m entfernt steht, hört den Dialog des Mitspielers. Sind die Untertitel des Spiels an,
+  erscheint auch der Text, in der eigenen Spielsprache, solange man nicht selbst in einem Dialog ist.
 - Duell und Arena gehören den beiden Kämpfern: Kämpft dein Partner ein Duell oder in der Arena, zählen deine Treffer auf
   seinen Gegner nicht. Der Kampf endet wie im Einzelspiel mit einem Niederschlag, nie mit einem Mord.
 - Aufhelfen kostet einen Heiltrank: Wer tödlich getroffen wird, liegt bewusstlos am Boden, bis ein Mitspieler
@@ -154,7 +168,7 @@ beschriebenen Tests liefen auf einem PC mit zwei Spielkopien; Spielen über das 
 | Betäubung und Hypnose, vom Mitspieler gezaubert, wirken nur über den Host. | Wirkt es nicht, notieren; der Host kann den Zauber selbst sprechen. |
 | Eine beschworene Kreatur bleibt beim anderen Spieler stehen, wenn ihr euch weit entfernt. | Beschwörungen nur nutzen, wenn ihr zusammen seid. Passiert es doch, Ort und Kreatur notieren. |
 | Gift und Krankheit sind beim Partner nicht vollständig zu erkennen; für einen Gifttod kann Erfahrung fehlen. | Abweichungen notieren. |
-| Obwohl die Stadtzähler gemeinsam sind, kann eine Wache noch den falschen Spieler beschuldigen oder verfolgen. | Diebstähle und absichtliche Angriffe auf friedliche Bewohner vorerst vermeiden. Bei einem Vorfall festhalten, wer gehandelt hat und wen die Wache angesprochen oder angegriffen hat. |
+| Spricht dich eine Wache auf Verbrechen an, zählt sie den ganzen Ruf der Stadt (bei `shared` und `together` also auch die Taten deines Mitspielers). | Diebstähle und absichtliche Angriffe auf friedliche Bewohner vermeiden, wenn euch das stört. Bei einem Vorfall festhalten, wer gehandelt hat und wen die Wache angesprochen oder angegriffen hat. |
 
 ## Bekannte Grenzen
 
@@ -195,12 +209,15 @@ beschriebenen Tests liefen auf einem PC mit zwei Spielkopien; Spielen über das 
   und Speichern während einer Verwandlung; dabei kann es noch Fehler geben.
 - Gegner greifen beide Spieler an. Wie ein NPC zum Mitspieler steht, richtet sich nach dem Helden des Rechners, der dieses
   NPC gerade berechnet: Hat der Host bei den Orks einen schlechten Ruf, gilt der beim Host auch für den Mitspieler.
-- Ruf bei Städten und Lagern: Diebstähle und Morde zählt jede Stadt für euch beide gemeinsam, auch was der Mitspieler
-  getan hat (Einstellung `reputation = shared` in der INI des Hosts). Noch nicht angepasst: welche Wache was sieht und wen
-  sie verfolgt oder zur Rede stellt; die Einstellungen `together` und `personal` sind vorbereitet, wirken aber noch wie
-  `shared` bzw. wie früher (jeder Rechner zählt für sich).
-- Nicht getestet: Monster, die auf einen am Boden liegenden Helden weiter einschlagen; Ausrauben eines
-  bewusstlosen Helden; Spielen über das echte Internet (getestet wurde auf einem PC mit zwei Spielkopien);
+- Ruf bei Städten und Lagern, einzustellen mit `reputation` in der INI des Hosts:
+  - `shared` (Standard): ein Ruf pro Stadt für beide; Diebstähle beider Spieler zählen, und eine Wache, die dich auf
+    Verbrechen anspricht, zählt die Taten aller. Ein NPC, der eine Tat gesehen hat, hält sie dem vor, der sie begangen hat.
+  - `together`: wie `shared`, und ein NPC, der einen von euch bei einer Tat gesehen hat, hält sie euch beiden vor (er
+    weist beide ab).
+  - `personal`: jeder hat seinen eigenen Ruf; was dein Mitspieler tut, ändert deinen nie.
+  Noch nicht gezählt: ein Mord an einem NPC, den der Rechner des anderen Spielers berechnet (im Test gesehen: der
+  Mitspieler tötete einen NPC nahe beim Host, und keine Stadt zählte ihn).
+- Nicht getestet: Monster, die auf einen am Boden liegenden Helden weiter einschlagen; Spielen über das echte Internet (getestet wurde auf einem PC mit zwei Spielkopien);
   mehr als zwei Spieler. Alles hier wurde mit Bots getestet. Ein erster kurzer Test mit Menschen (zwei Fenster auf einem
   PC) fand zwei Fehler: Gegner ignorierten den Mitspieler, und Kämpfe waren beim Mitspieler nicht zu sehen. Beide sind
   behoben und mit Bots geprüft, aber noch nicht erneut von Menschen.

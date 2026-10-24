@@ -19,6 +19,8 @@
 #include "containers.h"
 #include "trade.h"
 #include "mapmarks.h"
+#include "ransack.h"
+#include "witness.h"
 #include "dialogaudio.h"
 #include "config.h"
 #include "trace.h"
@@ -124,6 +126,7 @@ class Module : public eCEngineComponentBase
         g3t::enclaves::OnWorldChange();
         g3t::dialogaudio::OnWorldChange();
         g3t::containers::OnWorldChange();
+        g3t::ransack::OnWorldChange();
         g3t::trade::OnWorldChange();  // before offer: its declines must not undo anything on the hero of the new world
         g3t::offer::OnWorldChange();
     }
@@ -180,6 +183,8 @@ class Module : public eCEngineComponentBase
         g3t::containers::Tick();
         g3t::trade::Tick();
         g3t::mapmarks::Tick();
+        g3t::ransack::Tick();
+        g3t::witness::Tick();
         g3t::dialogaudio::Tick();
         g3t::offer::Tick();
         g3t::qa::Tick();
@@ -219,6 +224,8 @@ extern "C" __declspec(dllexport) gSScriptInit const* GE_STDCALL ScriptInit()
     g3t::containers::Start();
     g3t::trade::Start();
     g3t::mapmarks::Start();
+    g3t::ransack::Start();
+    g3t::witness::Start();
     g3t::dialogaudio::Start();
     g3t::offer::Start();
     g3t::journal::Start();

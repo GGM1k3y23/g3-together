@@ -107,5 +107,5 @@ Der Dokumente-Ordner ist standardmäßig `%USERPROFILE%\Documents`; ein abweiche
 - Gefolgsleute nach dem Laden findet der Host über den Spielernamen; wer seinen Namen ändert, verliert sie.
 - Lädt der Host während des Spiels einen Spielstand, laden die Mitspieler ihn automatisch mit (Stufe S1); ein Mitspieler
   in einer anderen Welt spielt nicht mit, bis er den Stand des Hosts hat (Stufen S2, S3).
-- Nicht geprüft: Monster, die auf bewusstlose Helden einschlagen; Ausrauben Bewusstloser; der echte Bett-Dialog; die
+- Nicht geprüft: Monster, die auf bewusstlose Helden einschlagen; der echte Bett-Dialog; die
   Maussteuerung des Handelsfensters (Ziehen, Knöpfe; die Bots handeln über die Handelsfunktionen des Spiels).

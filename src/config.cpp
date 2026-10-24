@@ -76,6 +76,7 @@ Config const& LoadConfig()
         else if (!_stricmp(key, "offer_accept_key")) strncpy_s(config.offerAcceptKey, value, _TRUNCATE);
         else if (!_stricmp(key, "offer_decline_key")) strncpy_s(config.offerDeclineKey, value, _TRUNCATE);
         else if (!_stricmp(key, "qa_keycheck")) config.qaKeyCheckOff = !_stricmp(value, "off");
+        else if (!_stricmp(key, "qa_hosthint")) strncpy_s(config.qaHostHint, value, _TRUNCATE);
         else if (!_stricmp(key, "trace")) strncpy_s(config.trace, value, _TRUNCATE);
         else if (!_stricmp(key, "reputation")) strncpy_s(config.reputation, value, _TRUNCATE);
     }

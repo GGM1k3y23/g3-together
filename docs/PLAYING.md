@@ -23,6 +23,13 @@ This is a test version. See the known issues and limitations below.
 
 ## Installation
 
+**Setup:** once Gothic 3 and both patches are installed, unpack the whole package anywhere and double-click
+`Setup.cmd` (`Einrichten.cmd` for German). It does the copying and the INI for you: it finds Gothic 3 (Steam, GOG or the
+folder you name), checks Community Patch 1.75.14 and Parallel Universe Patch 1.1.1, moves another co-op mod out of
+`scripts`, copies the mod into `scripts` and writes `g3together.ini` from your answers (host or joining player, your name,
+the host's address). Replaced files are kept in `G3Together-backup` in the game folder. The setup was checked on test
+folders, not yet by players; the steps below do the same by hand.
+
 1. Install Gothic 3 from Steam, then **Community Patch 1.75.14**.
 2. Install [Parallel Universe Patch **1.1.1**](https://www.worldofgothic.de/dl/download_678.htm)
    into the same game installation. Both players must use the same patch versions.
@@ -76,6 +83,8 @@ Alternatively, the host can forward UDP port 34567 on their router to their PC.
 5. The joining player can run `ping 25.x.x.x` in a command prompt, using the host's address, to check
    connectivity and latency. Lower latency is preferable; a ping reply alone does not verify that
    the game's UDP connection is allowed.
+6. If the joining player's game cannot reach the host, the top line of their main menu says so after about 15 seconds,
+   with the address and port they entered (in the game: a message every 30 seconds).
 
 The host accepts connections through any network adapter, including Hamachi. Testing described by
 these guides used two game copies on one PC; play over the real internet remains unverified.
@@ -115,6 +124,13 @@ these guides used two game copies on one PC; play over the real internet remains
 - If nobody can help because everyone is down, or the partner is disconnected, in another world
   or out of the game for more than five seconds, the hero dies as in single-player. The host loads a
   save; the other player is loaded into it automatically.
+- A knock-out of the game's own works as in single-player: when a guard or another person beats you in a fight (without
+  killing you), you stand up by yourself after a while, nobody needs to help, and the winner may rob you of half your gold.
+  When an NPC of the other player's game does it, you see "<Name> robbed you of N gold." Your partner cannot loot you.
+- An NPC that sees a player steal reacts as in single-player, also when the other player's PC simulates it: it goes after
+  the thief.
+- A player within about 20 m hears the other player's dialog. With the game's subtitles on, the lines' text shows as
+  well, in your own game language, unless you are in a dialog yourself.
 - Dead NPCs remain dead, including those killed far from the host.
 - Opening a door or picking a lock opens it for everyone, including players who join later.
 - NPCs respond to attacks from either player as in single-player: they fight, flee or call for help.
@@ -147,7 +163,7 @@ these guides used two game copies on one PC; play over the real internet remains
 | Stun and hypnosis cast by the joining player only take effect through the host. | Record failures; the host can cast the spell instead. |
 | A summoned creature stops moving on the other PC when players move far apart. | Use summons while together. Record the location and creature if this occurs. |
 | Poison or disease is not fully visible on the other PC, and a poison death may award no experience. | Record the discrepancy. |
-| Town counters are shared, but a guard may still accuse or pursue the wrong player. | Avoid theft and deliberate attacks on peaceful residents for now. Record who acted and whom the guard addressed or attacked. |
+| A guard who talks to you about crimes counts the town's whole record (with `shared` or `together`: your partner's deeds too). | Avoid theft and deliberate attacks on peaceful residents if that bothers you. Record who acted and whom the guard addressed or attacked. |
 
 ## Known limitations
 
@@ -187,11 +203,15 @@ these guides used two game copies on one PC; play over the real internet remains
 - Enemies attack both players. Their attitude toward a joining player comes from the hero on the
   PC currently simulating the NPC. For example, the host's poor standing with orcs also applies
   to the other player for NPCs simulated by the host.
-- Town and camp reputation: thefts and murders by either player contribute to shared town
-  counters (`reputation = shared` in the host's INI). Which guard sees what, and whom they pursue
-  or question, has not been adapted yet. The `together` and `personal` modes are prepared but
-  still behave like `shared` or like the previous independent counters, respectively.
-- Untested: monsters continuing to attack a downed hero, robbing a downed hero, real internet
+- Town and camp reputation, chosen with `reputation` in the host's INI:
+  - `shared` (default): one record per town for both players; thefts by either player count, and a guard who talks to
+    you about crimes counts everybody's deeds. An NPC that saw a crime holds it against the one who did it.
+  - `together`: as `shared`, and an NPC that saw one of you commit a crime holds it against both of you (both are
+    refused).
+  - `personal`: each player keeps their own record; what your partner does never changes yours.
+  Not counted yet: a murder of an NPC that the other player's PC simulates (seen in a test: the joining player killed an
+  NPC near the host, and no town counted it).
+- Untested: monsters continuing to attack a downed hero, real internet
   play, and more than two players. The features above were checked with bots. A first short human
   test with two windows on one PC found two bugs: enemies ignored the joining player, and combat
   was not visible on that player's PC. Both were fixed and checked with bots, but have not yet

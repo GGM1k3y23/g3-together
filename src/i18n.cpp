@@ -77,6 +77,11 @@ constexpr Translation Messages[] = {
     {L"%s is deciding on another trade; this one is undone.", L"%s entscheidet gerade über einen anderen Handel; dieser wird rückgängig gemacht."},
     {L"The key %s is set for %s: one press does all of them. Choose different keys in g3together.ini.",
      L"Die Taste %s ist für %s eingestellt: ein Druck löst alles davon aus. Wähle in g3together.ini verschiedene Tasten."},
+    {L"G3 Together: host %s:%u not reachable for %u s. Is its game running? Check address and port in g3together.ini and the host's firewall (UDP %u).",
+     L"G3 Together: Host %s:%u seit %u s nicht erreichbar. Läuft sein Spiel? Prüfe Adresse und Port in g3together.ini und die Firewall beim Host (UDP %u)."},
+    {L"Connected to the host.", L"Mit dem Host verbunden."},
+    {L"%s robbed you of %d gold.", L"%s hat dir %d Gold abgenommen."},
+    {L"You were robbed of %d gold.", L"Dir wurden %d Gold abgenommen."},
 };
 static_assert(sizeof(Messages) / sizeof(Messages[0]) == MessageCount, "Missing HUD translation");
 }

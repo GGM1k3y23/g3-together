@@ -1,5 +1,5 @@
-"""Build a player package: the mod DLL, example configuration, the player guides, the test plan, the log
-collector and the licences.
+"""Build a player package: the mod DLL, the setup (Setup.cmd, Einrichten.cmd, tools/setup.ps1), example configuration,
+the player guides, the test plan, the log collector and the licences.
 
     python tools/package.py <built Script_G3Together.dll> <output folder>
 
@@ -28,7 +28,7 @@ offer_decline_key = DELETE
 # look = Diego
 # For a bug report about NPCs: remove the # below, restart, reproduce (writes g3trace.log, see PLAYING.md)
 # trace = on
-# Town reputation (thefts, murders): shared (one counter per town for both; default), together, personal
+# Town reputation: shared (one record per town for both; default), together (shared guilt), personal (each their own)
 # reputation = shared
 """
 CLIENT_INI = """# G3 Together: this player joins the host.
@@ -62,6 +62,9 @@ def main():
                       'SPIELEN.md', 'MITSPIELER.md', 'TESTPLAN.md'):
             z.write(ROOT / 'docs' / guide, guide)
         z.write(ROOT / 'tools/collect_logs.py', 'tools/collect_logs.py')
+        z.write(ROOT / 'tools/setup.ps1', 'tools/setup.ps1')
+        for launcher in ('Setup.cmd', 'Einrichten.cmd'):
+            z.write(ROOT / launcher, launcher)
         z.write(ROOT / 'COPYING', 'COPYING')
         enet = ROOT / 'thirdparty/enet/LICENSE'
         if enet.exists():

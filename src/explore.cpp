@@ -469,6 +469,22 @@ void Aggro(char const* argument, LogFn log)
     sprintf_s(line, "AGGRO name=%s reason=%d result=%d task=%s", name, reason, result, npc.Routine.GetCurrentTask().GetText());
     log(line);
 }
+
+// The same against this machine's own hero (stage Ransack: the host's baseline of a robbery).
+void AssessHero(char const* argument, LogFn log)
+{
+    char line[300], name[96] = {};
+    char const* sep = std::strrchr(argument, '_');
+    if (!sep || sep - argument >= static_cast<ptrdiff_t>(sizeof(name))) { log("REFUSED assesshero: Name_Reason"); return; }
+    std::memcpy(name, argument, sep - argument);
+    const int reason = std::atoi(sep + 1);
+    Entity npc = Entity::GetEntity(bCString(name));
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    if (!npc.GetInstance() || !hero) { log("REFUSED assesshero: no such NPC or no hero"); return; }
+    const GEInt result = GetScriptAdminExt().CallScript(bCString("AssessTarget"), npc.GetInstance(), hero, reason);
+    sprintf_s(line, "ASSESSHERO name=%s reason=%d result=%d task=%s", name, reason, result, npc.Routine.GetCurrentTask().GetText());
+    log(line);
+}
 }
 
 namespace g3t::explore {

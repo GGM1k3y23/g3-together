@@ -14,6 +14,7 @@
 #include <cstring>
 #include <memory>
 #include <new>
+#include <string>
 #include <vector>
 
 namespace g3t::dialogaudio {
@@ -74,6 +75,13 @@ std::vector<Playing> playing;
 unsigned sentStarts = 0, sentEnds = 0, thirdSpeakers = 0, received = 0, played = 0, droppedFar = 0, droppedOwnDialog = 0,
          droppedNoSpeaker = 0, droppedFailed = 0, stoppedFar = 0, finished = 0;
 char lastSample[128] = "-";
+// Subtitles (owner 24.10.): the line whose text the game's dialog subtitle shows now (GUI2::StartSay, as _AI_Say_Ex does;
+// C dialog-listen-c.md). Never stopped while the listener has a dialog of its own: GUI2::StopSay would end that one's.
+bool subtitles = true;  // QA negative control: subtitlesoff
+uint8_t subtitleFrom = 0;
+uint32_t subtitleLine = 0;
+unsigned subtitlesShown = 0, subtitlesMissing = 0;
+char lastSubtitle[96] = "-";
 
 void GuidOf(eCEntity* entity, uint8_t out[16])
 {
@@ -94,6 +102,54 @@ bool OwnDialog()
 {
     gCInfoManager_PS* infos = Infos();
     return infos && infos->AccessIsRunning();
+}
+
+// The text id inside a voice file name. FormatSampleName (Game+0x18bb90, C dialog-audio-c.md) makes
+// INFO_<voice>_<speaker's name>_<text id without INFO_>_<audio language>.wav; the speaking machine knows voice and name.
+void TextIdOf(eCEntity* speaker, char const* sample, char* out, size_t size)
+{
+    out[0] = 0;
+    std::string s(sample);
+    if (s.size() < 10 || _strnicmp(s.c_str(), "INFO_", 5) != 0 || _stricmp(s.c_str() + s.size() - 4, ".wav") != 0) return;
+    s = s.substr(5, s.size() - 9);
+    const size_t language = s.rfind('_');
+    if (language == std::string::npos) return;
+    s.resize(language);
+    std::string prefix;
+    if (auto* npc = static_cast<gCNPC_PS*>(speaker->GetPropertySet(eEPropertySetType_NPC)))
+        prefix = std::string(npc->AccessVoice().GetText()) + "_" + speaker->GetName().GetText() + "_";
+    if (prefix.size() > 2 && s.size() > prefix.size() && !_strnicmp(s.c_str(), prefix.c_str(), prefix.size())) s = s.substr(prefix.size());
+    else if (const size_t cut = s.rfind('_'); cut != std::string::npos) s = s.substr(cut + 1);  // text ids seen have no _
+    strncpy_s(out, size, s.c_str(), _TRUNCATE);
+}
+
+void HideSubtitle()
+{
+    if (subtitleLine && !OwnDialog()) gui2.StopSay();
+    subtitleFrom = 0;
+    subtitleLine = 0;
+}
+
+// The line's text in this game's language, as the game shows its own dialog's (when the player has subtitles on).
+void ShowSubtitle(uint8_t from, net::DialogLineNote const& note, eCEntity* speaker)
+{
+    if (!subtitles || !note.text[0] || !eCApplication::GetInstance().GetEngineSetup().ShowSubtitle) return;
+    const std::string id = std::string("INFO_") + note.text;
+    const bCUnicodeString text = eCLocString(bCString(id.c_str()));
+    char utf8[96] = {};
+    WideCharToMultiByte(CP_UTF8, 0, reinterpret_cast<wchar_t const*>(text.GetText()), -1, utf8, sizeof(utf8) - 1, nullptr, nullptr);
+    if (!text.GetLength() || !std::strcmp(utf8, id.c_str())) {
+        ++subtitlesMissing;
+        Logf("dialogaudio: line %u from player %u: no text %s here", note.lineId, from, id.c_str());
+        return;
+    }
+    gui2.StartSay(Entity(speaker), text, GEFalse);
+    subtitleFrom = from;
+    subtitleLine = note.lineId;
+    ++subtitlesShown;
+    for (char* c = utf8; *c; ++c)
+        if (*c == ' ') *c = '_';  // one word for the QA line
+    strncpy_s(lastSubtitle, utf8, _TRUNCATE);
 }
 
 void SendEnd(uint8_t reason)
@@ -131,6 +187,7 @@ void OnLocalLine(gCScriptProcessingUnit* spu, bCString const& sample)
         GuidOf(speaker, note.speaker);
     }
     strncpy_s(note.sample, sample.GetText(), _TRUNCATE);
+    TextIdOf(speaker, note.sample, note.text, sizeof(note.text));
     net::SendDialogLine(note);
     ++sentStarts;
     strncpy_s(lastSample, note.sample, _TRUNCATE);
@@ -195,6 +252,7 @@ eCEntity* SpeakerOf(uint8_t from, uint8_t kind, uint8_t const guid[16])
 
 void Stop(Playing& line)
 {
+    if (line.from == subtitleFrom && line.lineId == subtitleLine) HideSubtitle();
     line.audio.reset();
 }
 
@@ -273,6 +331,7 @@ void OnLine(uint8_t from, net::DialogLineNote const& note)
     ++played;
     strncpy_s(lastSample, note.sample, _TRUNCATE);
     Logf("dialogaudio: line %u from player %u plays at %s: %s", note.lineId, from, speaker->GetName().GetText(), note.sample);
+    ShowSubtitle(from, note, speaker);
     playing.push_back(std::move(line));
 }
 
@@ -295,6 +354,7 @@ void TickPlaying()
     if (playing.empty()) return;
     eCEntity* hero = gCSession::GetInstance().GetHero();
     if (!hero || !net::Connected() || OwnDialog()) {
+        if (OwnDialog()) subtitleLine = 0;  // the player's own dialog shows its own text now: never stop that one
         StopAll();
         return;
     }
@@ -343,9 +403,11 @@ void Report(LogFn log)
     char line[600];
     sprintf_s(line,
               "DIALOGAUDIO hooked=%d sent_starts=%u sent_ends=%u third_speakers=%u received=%u played=%u playing=%zu finished=%u "
-              "stopped_far=%u dropped_far=%u dropped_own_dialog=%u dropped_no_speaker=%u dropped_failed=%u last=%s",
+              "stopped_far=%u dropped_far=%u dropped_own_dialog=%u dropped_no_speaker=%u dropped_failed=%u subtitles=%u subtitles_missing=%u "
+              "subtitle_on=%d last=%s last_subtitle=%s",
               hooked, sentStarts, sentEnds, thirdSpeakers, received, played, playing.size(), finished, stoppedFar, droppedFar,
-              droppedOwnDialog, droppedNoSpeaker, droppedFailed, lastSample);
+              droppedOwnDialog, droppedNoSpeaker, droppedFailed, subtitlesShown, subtitlesMissing,
+              subtitles && eCApplication::GetInstance().GetEngineSetup().ShowSubtitle ? 1 : 0, lastSample, lastSubtitle);
     log(line);
 }
 
@@ -354,6 +416,12 @@ void Disable(LogFn log)
     disabled = true;
     StopAll();
     log("DIALOGAUDIOOFF ok=1");
+}
+
+void SubtitlesOff(LogFn log)
+{
+    subtitles = false;
+    log("SUBTITLESOFF ok=1");
 }
 
 void MuteGame(char const* on, LogFn log)

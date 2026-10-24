@@ -612,6 +612,13 @@ void Opened(gCScriptProcessingUnit* spu, GELPVoid other, bool trade)
 
 GEInt GE_STDCALL OpenLoot(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid other, GEInt args)
 {
+    // A knocked-out partner's puppet lies down like a plunderable body and carries its gold for a robber (ransack.cpp):
+    // nobody plunders it; what it carries is the partner's.
+    Entity partner = other ? *static_cast<Entity*>(other) : Entity(spu ? spu->GetOtherEntity() : nullptr);
+    if (remote::PuppetOwner(partner.GetInstance())) {
+        Note("containers: loot of %s refused (another player)", NameOf(partner).c_str());
+        return 0;
+    }
     Opened(spu, other, false);
     return originalLoot(spu, self, other, args);
 }
@@ -636,6 +643,7 @@ GEBool __fastcall QuickTake(PSInventory* self, void*, GEInt stack, GEInt amount,
 {
     eCEntity* owner = nullptr;
     if (auto* set = reinterpret_cast<EntityPropertySet*>(self)->m_pEngineEntityPropertySet) owner = set->GetEntity();
+    if (remote::PuppetOwner(owner)) { ++quickRefused; return GEFalse; }  // another player's puppet (ransack.cpp): never looted
     if (!net::IsHost() && !disabled && net::Connected() && owner && to.GetInstance() == gCSession::GetInstance().GetHero()) {
         uint8_t guid[16];
         GuidOf(owner, guid);
@@ -792,7 +800,8 @@ void Open(char const* guid, LogFn log)
 {
     uint8_t raw[16];
     eCDynamicEntity* hero = gCSession::GetInstance().GetHero();
-    Entity container = ParseGuid(guid, raw) ? Resolve(raw) : Entity();
+    // "puppet<id>": another player's puppet (stage Ransack: nobody plunders a knocked-out partner)
+    Entity container = !std::strncmp(guid, "puppet", 6) ? Entity(remote::PuppetOf(std::atoi(guid + 6))) : ParseGuid(guid, raw) ? Resolve(raw) : Entity();
     if (!hero || !container.GetInstance()) { log("REFUSED lootopen: no hero or container"); return; }
     // Stand next to it first, as a player does.
     const bCVector& c = container.GetInstance()->GetWorldPosition();

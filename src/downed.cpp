@@ -391,6 +391,16 @@ void HelperHasNoPotion(int byPlayer)
 
 bool Held() { return held; }
 
+// Not a death the mod turned into a knock-out (that one waits for help, and nobody robs it): RedirectDeath sets lethal
+// before the hero lies down.
+bool NativeDown()
+{
+    eCDynamicEntity* instance = gCSession::GetInstance().GetHero();
+    if (!instance || held || lethal || dying || !gCSession::GetInstance().IsGameRunning()) return false;
+    Entity hero(instance);
+    return hero.IsDown() && !hero.IsDead();
+}
+
 void Off(LogFn log)
 {
     enabled = false;

@@ -20,6 +20,9 @@ void ContinueRoutineReport(void (*log)(char const*));  // QA: CONTINUEROUTINE li
 void ContinueRoutineOn(void (*log)(char const*));      // QA negative control: ContinueRoutine runs for puppets again
 void MoveLengthReport(void (*log)(char const*));       // QA: MOVELENGTH line (GetCombatMoveLength without the fight target)
 void MoveLengthOff(void (*log)(char const*));          // QA negative control: the original binds the target again
+// Jump from a native function whose first 6 bytes are complete, position-independent instructions (push ebp; mov ebp,esp;
+// and esp,-8) to `detour`; returns the trampoline that runs the original, or null.
+void* JumpTo(unsigned char* target, void* detour);
 // GetAttitude wrapper: an NPC judging a puppet judges the local hero instead.
 bool AttitudeInstalled();
 bool AttitudeNative();          // jump in the native function (all callers), not only the script table

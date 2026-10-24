@@ -84,8 +84,11 @@ bool LocalState(net::PlayerState& state)
     state.rotation[1] = q.GetY();
     state.rotation[2] = q.GetZ();
     state.rotation[3] = q.GetW();
-    // bit 1: knocked out, bit 2: dead, bit 3: waiting for help (an intercepted death, downed.cpp)
-    state.flags = 1 | (Entity(own).IsDown() ? 2 : 0) | (Entity(own).IsDead() ? 4 : 0) | (downed::Held() ? 8 : 0);
+    // bit 1: knocked out, bit 2: dead, bit 3: waiting for help (an intercepted death, downed.cpp), bit 4: knocked out by
+    // the game's own rules, with the gold a robber would find (ransack.cpp)
+    const bool robbable = downed::NativeDown();
+    state.flags = 1 | (Entity(own).IsDown() ? 2 : 0) | (Entity(own).IsDead() ? 4 : 0) | (downed::Held() ? 8 : 0) | (robbable ? 16 : 0);
+    state.gold = robbable ? Entity(own).Inventory.GetItemAmount(Template("It_Gold")) : 0;
     state.movementMode = static_cast<uint8_t>(Entity(hero).CharacterMovement.GetMovementMode());
     state.aniState = static_cast<uint8_t>(static_cast<int>(Entity(hero).Routine.AniState));
     body::CurrentMotion(hero, state.animation, sizeof(state.animation));

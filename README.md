@@ -6,7 +6,8 @@ Tested with Steam, Community Patch 1.75.14 and Parallel Universe Patch 1.1.1, bu
 Bundles [ENet](https://github.com/lsalzman/enet) 1.3.18 (MIT, thirdparty/enet/LICENSE).
 
 **Download:** the newest package is under [Releases](https://github.com/GGM1k3y23/g3-together/releases). Both players need
-exactly the same version.
+exactly the same version. Unpack it and run `Setup.cmd` (German: `Einrichten.cmd`): it finds Gothic 3, checks the patches,
+copies the mod and writes `g3together.ini`.
 
 > **Alpha.** Tested with bots that drive two real game clients on one PC and with one evening of human play. Nobody has
 > finished the story in co-op yet and play over the internet is barely tested. Expect bugs and back up your saves.
@@ -23,6 +24,10 @@ exactly the same version.
 - Your partner on the map and the compass: an arrow with their name on the map, an arrow at the compass's edge.
 - Instead of game over, a knocked-out player waits; the partner helps them up by talking to them and choosing
   "I will help you." (costs a healing potion).
+- Knocked out by a guard: as in single-player, you stand up by yourself and the guard may rob you of half your gold;
+  an NPC that sees a player steal goes after the thief, whichever PC simulates it.
+- Town reputation as one record for both, with shared guilt, or each player's own (`reputation` in the host's INI).
+- Overheard dialogs show their subtitles (with the game's subtitles on).
 - Duels and the arena work as in single-player.
 - Saving and loading: the host saves; when the host loads a save, the other player is loaded into it automatically.
 - The host checks that both installations match (patches, difficulty, balancing) and says what differs; on-screen messages
@@ -30,7 +35,7 @@ exactly the same version.
 
 ## Known limitations
 
-- A guard of the host does not yet rob a knocked-out partner.
+- A murder of an NPC that the other player's PC simulates is not counted for the town yet.
 - Trading was tested by bots through the game's own trade functions; dragging items with the mouse in the trade window has
   not been tried by a person yet.
 - Only two players have been tested; more may work but are untested.

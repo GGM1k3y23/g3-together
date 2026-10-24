@@ -10,6 +10,13 @@
 
 ## Installieren
 
+**Einrichten:** Sind Gothic 3 und beide Patches installiert, das ganze Paket irgendwohin entpacken und `Einrichten.cmd`
+doppelklicken (`Setup.cmd` auf Englisch). Es erledigt das Kopieren und die INI: Es findet Gothic 3 (Steam, GOG oder der
+Ordner, den du angibst), prüft Community Patch 1.75.14 und Parallel Universe Patch 1.1.1, nimmt eine andere Koop-Mod aus
+`scripts`, kopiert die Mod nach `scripts` und schreibt `g3together.ini` nach deinen Antworten (Host oder Mitspieler, dein
+Name, die Adresse des Hosts). Ersetzte Dateien liegen danach in `G3Together-backup` im Spielordner. Das Einrichten wurde
+an Testordnern geprüft, noch nicht von Spielern; die Schritte unten machen dasselbe von Hand.
+
 1. Installiere Gothic 3 von Steam, danach **Community Patch 1.75.14**, danach den [Parallel Universe Patch **1.1.1**](https://www.worldofgothic.de/dl/download_678.htm) in dieselbe Spielinstallation.
 2. Kopiere `Script_G3Together.dll` aus demselben Paket wie beim Host nach `<Gothic-3-Ordner>\scripts\`.
 3. Kopiere `g3together.ini.client-example` aus dem Paket als `g3together.ini` nach `<Gothic-3-Ordner>\` und trage deine Daten ein:
@@ -33,6 +40,11 @@ Die Sprache kann jeder unabhängig wählen. Die Spielsprache von Gothic 3 bleibt
 Der Host startet Gothic 3 und beginnt eine neue Kampagne oder lädt seine Koop-Kampagne. Starte danach Gothic 3. Hat der Host eine Kampagne geladen oder gespeichert, bleib im Hauptmenü und warte, bis sie übertragen und geladen wurde. Bei einem neuen Spiel startest auch du ein neues Spiel. Lädt der Host später einen Spielstand, wirst du automatisch mitgeladen; du musst nichts tun. Lade selbst keinen eigenen Spielstand, solange du verbunden bist: Dann spielst du in einer anderen Welt, bis du wieder den Stand des Hosts hast.
 
 Wird der Beitritt abgelehnt, öffne im Gothic-3-Ordner `g3together.log` und suche die Zeile `REFUSED by host`. Prüfe Versionen und Spieloptionen.
+Der Grund steht auch in der obersten Zeile des Hauptmenüs.
+
+Erreicht dein Spiel den Host gar nicht, sagt das nach etwa 15 Sekunden die oberste Zeile des Hauptmenüs, mit Adresse und Port aus
+deiner INI (im Spiel: alle 30 Sekunden eine Meldung). Prüfe, ob das Spiel des Hosts läuft, Adresse und Port und die Firewall beim
+Host. Die Mod versucht es weiter; sobald sie den Host erreicht, ist die Zeile wieder wie vorher.
 
 ## Im Spiel
 

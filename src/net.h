@@ -16,7 +16,8 @@ struct PlayerState
     float position[3] = {};
     float rotation[4] = {};  // quaternion x, y, z, w
     uint8_t flags = 0;       // bit 0: in game (hero present, session running), bit 1: knocked out, bit 2: dead,
-                             // bit 3: waiting for help (a death turned into a knock-out, downed.cpp)
+                             // bit 3: waiting for help (a death turned into a knock-out, downed.cpp), bit 4: knocked out
+                             // by the game's own rules (a guard, not a death): the winner may rob it (ransack.cpp)
     uint8_t movementMode = 0;  // gECharMovementMode of the hero: stand, sneak, walk, run, sprint, jump, swim
     uint8_t aniState = 0;      // gEAniState of the hero (stand 2, lying knocked out 16, ...): which motions fit
     char name[24] = {};
@@ -28,6 +29,7 @@ struct PlayerState
                              // empty = none (23.10.: not shown before)
     char helmet[40] = {};
     char look[32] = {};      // template the player chose to be seen as (INI look); empty = the receiver's puppet_template
+    int32_t gold = 0;        // the hero's gold while flag bit 4 is set (what a robber finds on its puppet), else 0
 };
 #pragma pack(pop)
 
@@ -79,6 +81,7 @@ uint32_t JoinCount();
 void SetInWorld(uint8_t id, bool in);  // host: that client entered (left) the host's world; client: id = LocalId(), this machine
 bool InWorld(uint8_t id);
 bool Joined();                   // client: welcomed by the host, in its world or not
+uint32_t ConnectingFor();        // client: ms since it began to connect, while it never reached the host; else 0
 char const* RefusalReason();     // client: why the host refused this machine (empty if it did not), as the host wrote it
 void ClaimVersionForTest(uint16_t version);  // QA stage W7 only: the next hello claims this protocol version (0: ours)
 uint32_t WelcomeSerial();        // client: counts the welcomes this machine got, local only (persist binds an autoload to one)
@@ -314,6 +317,37 @@ void SetPlayerSpellHandler(PlayerSpellHandler handler);
 void SendNpcSpell(uint8_t to, char const* script, uint8_t const target[16], int32_t args);
 using NpcSpellHandler = void (*)(uint8_t from, char const* script, uint8_t const target[16], int32_t args);
 void SetNpcSpellHandler(NpcSpellHandler handler);
+// Robbery (ransack.cpp; owner 24.10.: a guard robs a knocked-out partner as in single-player), reliable, through the host.
+// The machine whose NPC robs a player's puppet -> that player: RansackHold (the robber is at work: stay down, as the game
+// resets a robbed body's knock-out timer), RansackTake (it took `amount` gold from the puppet: pay it). The robbed player
+// -> that machine: RansackPaid (`amount` paid for `seq`; less if the hero no longer had that much).
+enum : uint8_t { RansackHold = 1, RansackTake = 2, RansackPaid = 3 };
+#pragma pack(push, 1)
+struct RansackNote {
+    uint8_t op = 0;
+    uint32_t seq = 0;         // the robbing machine's number for one robbery (take and paid)
+    int32_t amount = 0;       // gold taken (take) or paid (paid)
+    uint8_t robber[16] = {};  // GUID of the robbing NPC
+};
+#pragma pack(pop)
+void SendRansack(uint8_t to, RansackNote const& note);
+using RansackHandler = void (*)(uint8_t from, RansackNote const& note);
+void SetRansackHandler(RansackHandler handler);
+// Witnesses (witness.cpp, owner 24.10.), reliable, through the host. WitnessSaw -> the machine that runs the NPC (`to`):
+// it saw the sender's player commit a crime (value: the attack reason its game chose); it reacts there, to the sender's
+// puppet. WitnessHolds -> everyone (`to` 0; reputation = together): the NPC now holds crime `value` (gEPlayerCrime)
+// against the sender's player, and so against everybody's.
+enum : uint8_t { WitnessSaw = 1, WitnessHolds = 2 };
+#pragma pack(push, 1)
+struct WitnessNote {
+    uint8_t op = 0;
+    uint8_t npc[16] = {};  // GUID of the witness
+    int32_t value = 0;
+};
+#pragma pack(pop)
+void SendWitness(uint8_t to, WitnessNote const& note);  // to 0: everybody else
+using WitnessHandler = void (*)(uint8_t from, WitnessNote const& note);
+void SetWitnessHandler(WitnessHandler handler);
 // Town reputation (enclaves.cpp), reliable. Host -> clients (`to`, 0 = all): EnclaveState, the host's counters of one
 // enclave, and the host's reputation mode. Client -> host: EnclaveDelta (what this player's own deeds added to the
 // counters; suspect/known: the new values) or EnclaveRequest (send me every enclave).
@@ -344,6 +378,7 @@ struct DialogLineNote {
     uint32_t lineId = 0;        // per sender, counts up
     uint8_t speaker[16] = {};
     char sample[128] = {};      // the voice file the game resolved (INFO_..._GER.wav), start only
+    char text[64] = {};         // start: the line's text id; its text is INFO_<text> in the receiver's language (empty: none)
 };
 #pragma pack(pop)
 void SendDialogLine(DialogLineNote const& note);

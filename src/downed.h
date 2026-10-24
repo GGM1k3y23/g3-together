@@ -16,6 +16,7 @@ void Tick();
 void Revived(int byPlayer);           // network: that partner paid a potion for us
 void HelperHasNoPotion(int byPlayer); // network: that partner stood next to us without one
 bool Held();             // the local hero lies knocked out, waiting for help
+bool NativeDown();       // ... or knocked out by the game's own rules (a guard, a duel): it stands up by itself; a winner may rob it
 using LogFn = void (*)(char const*);
 void Off(LogFn log);     // QA negative control: let the hero die again
 void HoldOff(LogFn log); // QA negative control: the hero gets up by itself again

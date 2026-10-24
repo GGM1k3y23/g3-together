@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "persist.h"
 
+#include "config.h"
 #include "containers.h"
 #include "dialogaudio.h"
 #include "hero.h"
@@ -9,6 +10,7 @@
 #include "journal.h"
 #include "net.h"
 #include "npcs.h"
+#include "qa.h"
 #include "log.h"
 #include "remote.h"
 #include "explore.h"
@@ -715,29 +717,67 @@ void WaitForRecord()
 }
 
 // Client: the connection on the screen (owner 23.10., point 10): lost and back again, and why the host refused this machine.
+// A player whose game never reached the host saw nothing at all (owner 24.10., BERICHT-2026-10-24 point 6), also where it
+// waits for the host's campaign: the main menu, where the game's messages do not show (menutextdiag). There the menu's top
+// line says so (hud::MenuLine), in the game a message every 30 s; a refusal stays in that line too.
 void StatusHints()
 {
-    static bool wasJoined = false, everJoined = false;
+    static bool wasJoined = false, everJoined = false, unreachableHinted = false, menuSet = false;
     static std::string shown;
+    static std::wstring refusal;
+    static uint32_t menuAt = 0, hintedAt = 0;
     const bool joined = net::Joined();
     if (wasJoined && !joined) hud::Message(hud::Warning, i18n::Text(i18n::ConnectionLost));
     else if (!wasJoined && joined && everJoined) hud::Message(hud::Good, i18n::Text(i18n::Reconnected));
     everJoined = everJoined || joined;
     wasJoined = joined;
     char const* reason = net::RefusalReason();
-    if (!*reason || shown == reason) return;
-    shown = reason;
-    static char const install[] = "install differs from the host: ";
-    wchar_t text[400], wide[200] = {};
-    unsigned mine = 0, host = 0;
-    if (sscanf_s(reason, "different G3 Together version (protocol %u, host %u)", &mine, &host) == 2) {
-        _snwprintf_s(text, _TRUNCATE, i18n::Text(i18n::RefusedVersion), mine, host);
-    } else {
-        char const* list = std::strstr(reason, install);
-        MultiByteToWideChar(CP_UTF8, 0, list ? list + sizeof(install) - 1 : reason, -1, wide, 199);
-        _snwprintf_s(text, _TRUNCATE, i18n::Text(list ? i18n::RefusedInstall : i18n::RefusedOther), wide);
+    if (*reason && shown != reason) {
+        shown = reason;
+        static char const install[] = "install differs from the host: ";
+        wchar_t text[400], wide[200] = {};
+        unsigned mine = 0, host = 0;
+        if (sscanf_s(reason, "different G3 Together version (protocol %u, host %u)", &mine, &host) == 2) {
+            _snwprintf_s(text, _TRUNCATE, i18n::Text(i18n::RefusedVersion), mine, host);
+        } else {
+            char const* list = std::strstr(reason, install);
+            MultiByteToWideChar(CP_UTF8, 0, list ? list + sizeof(install) - 1 : reason, -1, wide, 199);
+            _snwprintf_s(text, _TRUNCATE, i18n::Text(list ? i18n::RefusedInstall : i18n::RefusedOther), wide);
+        }
+        hud::Message(hud::Bad, text);
+        refusal = text;
     }
-    hud::Message(hud::Bad, text);
+    const uint32_t now = GetTickCount();
+    if (now - menuAt < 1000) return;  // the menu line is looked up by its position: once a second is enough
+    menuAt = now;
+    const bool running = gCSession::GetInstance().IsGameRunning();
+    const uint32_t trying = net::ConnectingFor();
+    Config const& config = GetConfig();
+    const bool hintsOff = qa::Enabled() && !_stricmp(config.qaHostHint, "off");
+    const bool refusalOff = hintsOff || (qa::Enabled() && !_stricmp(config.qaHostHint, "norefusal"));
+    if (!hintsOff && trying >= 15000 && refusal.empty()) {
+        wchar_t text[400], address[80] = {};
+        MultiByteToWideChar(CP_UTF8, 0, config.address, -1, address, 79);
+        _snwprintf_s(text, _TRUNCATE, i18n::Text(i18n::HostUnreachable), address, config.port, trying / 1000, config.port);
+        if (!unreachableHinted) Logf("net: host %s:%u not reachable for %u s; still trying (said in the menu and the game)", config.address, config.port, trying / 1000);
+        unreachableHinted = true;
+        if (!running && hud::MenuLine(text)) menuSet = true;
+        if (running && (!hintedAt || now - hintedAt >= 30000)) {
+            hintedAt = now ? now : 1;
+            hud::Message(hud::Warning, text);
+        }
+        return;
+    }
+    if (unreachableHinted && !trying) {
+        unreachableHinted = false;
+        Log("net: host reached after the not-reachable hint");
+        if (running) hud::Message(hud::Good, i18n::Text(i18n::HostReached));
+    }
+    if (!refusal.empty() && !running && !refusalOff) {
+        if (hud::MenuLine(refusal.c_str())) menuSet = true;
+    } else if (menuSet && !running && hud::MenuLine(nullptr)) {
+        menuSet = false;
+    }
 }
 
 // Client: the host saved the campaign; this player's own hero is kept for that save.

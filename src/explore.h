@@ -23,6 +23,7 @@ void NearNpcs(LogFn log);  // QA: NPCs near the hero with target and visible mot
 void NpcFight(char const* argument, LogFn log);  // QA: "Attacker_Target": an NPC attacks another NPC
 void DuelHero(char const* name, LogFn log);  // QA: that NPC attacks the local hero for a duel (a knock-out, not a death)
 void Aggro(char const* argument, LogFn log);  // QA: "Name_Reason": an NPC attacks player 2's puppet (AssessTarget)
+void AssessHero(char const* argument, LogFn log);  // QA: "Name_Reason": an NPC attacks the local hero (AssessTarget)
 void InfoDescribe(char const* name, LogFn log);  // QA: a dialog option's conditions and script lines
 void XpInfos(LogFn log);  // QA: XPINFO lines, dialog options that give experience under simple conditions
 void NativeSave(char const* name, LogFn log);  // the game's own save (gCHUDFileManager::SaveGame)

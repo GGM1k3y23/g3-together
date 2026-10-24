@@ -13,6 +13,13 @@
 
 ## Installation
 
+**Setup:** once Gothic 3 and both patches are installed, unpack the whole package anywhere and double-click
+`Setup.cmd` (`Einrichten.cmd` for German). It does the copying and the INI for you: it finds Gothic 3 (Steam, GOG or the
+folder you name), checks Community Patch 1.75.14 and Parallel Universe Patch 1.1.1, moves another co-op mod out of
+`scripts`, copies the mod into `scripts` and writes `g3together.ini` from your answers (host or joining player, your name,
+the host's address). Replaced files are kept in `G3Together-backup` in the game folder. The setup was checked on test
+folders, not yet by players; the steps below do the same by hand.
+
 1. Install Gothic 3 from Steam, then **Community Patch 1.75.14**, then
    [Parallel Universe Patch **1.1.1**](https://www.worldofgothic.de/dl/download_678.htm)
    into the same game installation.
@@ -43,7 +50,11 @@ afterwards. If the host has loaded or saved a campaign, stay in the main menu an
 campaign to transfer and load. If the host starts a completely new game, start a new game too.
 
 If joining is refused, open `g3together.log` in the Gothic 3 folder and find the line containing
-`REFUSED by host`. Compare versions and game options with the host.
+`REFUSED by host`. Compare versions and game options with the host. The reason also stays in the top line of the main menu.
+
+If your game cannot reach the host at all, the top line of the main menu says so after about 15 seconds, with the address
+and port from your INI (in the game: a message every 30 seconds). Check that the host's game is running, the address and port,
+and the host's firewall. The mod keeps trying; once it reaches the host, the line is back to normal.
 
 ## While playing
 

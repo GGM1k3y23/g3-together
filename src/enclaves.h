@@ -17,4 +17,5 @@ void SyncOff(LogFn log);  // QA negative control: no reputation sync on this mac
 void KeepLocalOff(LogFn log);                      // QA negative control: host counters overwrite unreported deeds
 void PauseScan(char const* ms, LogFn log);         // QA: no scan for ms milliseconds
 void AddCrime(char const* argument, LogFn log);    // QA: "<enclave>-<crime>-<n>", a deed counted here
+bool Together();  // reputation = together (the host's mode): what a witness holds against one player, it holds against all
 }

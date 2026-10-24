@@ -125,5 +125,5 @@ share unredacted INI files, saves, campaign sidecars or a complete Documents fol
 - Only two players were tested.
 - Companions are restored after loading by player name. Changing your name loses that association.
 - If the host loads another save during a session, the other player must disconnect and rejoin.
-- Untested: monsters attacking downed heroes, robbing downed heroes, the actual bed dialog, and the
+- Untested: monsters attacking downed heroes, the actual bed dialog, and the
   mouse controls of the trade window (dragging items, its buttons). Bots trade through the game's own trade functions.

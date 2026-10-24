@@ -52,6 +52,10 @@ enum Message
     OfferUnavailableBuyer,
     OfferBusyBuyer,
     KeyClash,
+    HostUnreachable,
+    HostReached,
+    RobbedBy,
+    Robbed,
     MessageCount
 };
 

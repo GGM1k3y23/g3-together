@@ -12,7 +12,7 @@
 
 namespace g3t::net {
 namespace {
-constexpr uint16_t ProtocolVersion = 46;  // 46: item quality in goods and offers; 45: send times in PlayerState and NpcsHeader (glide), armor/helmet/look, MsgGoods (31) and A's offers (32, 33); 36: MsgSummon; 37: MsgShot; 38: spell projectiles, MsgPlayerSpell; 39: MsgNpcSpell; 40: creatures; 41: town reputation (MsgEnclave); 42: world gate (MsgWorld); 43: MsgDialogLine; 44: up to 250 container entries
+constexpr uint16_t ProtocolVersion = 47;  // 47: robbery (MsgRansack 34, gold and flag bit 4 in PlayerState), witnesses (MsgWitness 35), subtitles (DialogLineNote.text); 46: item quality in goods and offers; 45: send times in PlayerState and NpcsHeader (glide), armor/helmet/look, MsgGoods (31) and A's offers (32, 33); 36: MsgSummon; 37: MsgShot; 38: spell projectiles, MsgPlayerSpell; 39: MsgNpcSpell; 40: creatures; 41: town reputation (MsgEnclave); 42: world gate (MsgWorld); 43: MsgDialogLine; 44: up to 250 container entries
 enum : uint8_t { MsgHello = 1, MsgWelcome = 2, MsgState = 3, MsgLeave = 4, MsgNpcs = 5, MsgMotionName = 6, MsgHitNpc = 7, MsgHitPlayer = 8, MsgStates = 9, MsgTalk = 10, MsgItem = 11, MsgContents = 12, MsgContainerTx = 13, MsgTxResult = 14, MsgWatch = 15, MsgKilled = 16, MsgRefused = 17, MsgDeath = 18, MsgCampaign = 19, MsgFileChunk = 20, MsgFileDone = 21, MsgClock = 22, MsgWorldState = 23, MsgSummon = 24, MsgShot = 25, MsgPlayerSpell = 26, MsgNpcSpell = 27, MsgEnclave = 28, MsgWorld = 29, MsgDialogLine = 30, MsgGoods = 31 };
 // UDP payload per datagram (ENet default 1392 = up to 1420-byte IP packets): VPNs such as Hamachi carry about 1400, so
 // stay well below (C, re/findings/hamachi-net-c.md, 21.10.). ENet splits larger messages into fragments of this size.
@@ -53,6 +53,9 @@ enum : uint8_t { MsgOffer = 32, MsgOfferResult = 33 };  // offer.cpp (A); 31 is 
 struct OfferMsg { uint8_t type; OfferNote note; };      // 1164 bytes: under the 1200-byte datagram
 struct OfferResultMsg { uint8_t type; OfferResultNote note; };
 struct PlayerSpellMsg { uint8_t type; uint8_t from; uint8_t to; char script[32]; };
+enum : uint8_t { MsgRansack = 34, MsgWitness = 35 };  // ransack.cpp, witness.cpp
+struct RansackMsg { uint8_t type; uint8_t from; uint8_t to; RansackNote note; };
+struct WitnessMsg { uint8_t type; uint8_t from; uint8_t to; WitnessNote note; };
 struct NpcSpellMsg { uint8_t type; uint8_t from; uint8_t to; char script[32]; uint8_t target[16]; int32_t args; };
 struct EnclaveMsg { uint8_t type; EnclaveNote note; };
 struct WorldMsg { uint8_t type; WorldNote note; };
@@ -62,6 +65,8 @@ ENetHost* host = nullptr;
 ENetPeer* server = nullptr;  // client side: the connection to the host
 ENetAddress target{};        // client side: where to (re)connect
 uint32_t lastConnectAttempt = 0;
+uint32_t startedAt = 0;      // client: when it began to connect (enet_time_get)
+bool everConnected = false;  // client: an ENet connection to the host came up once (owner 24.10.: "host not reachable")
 bool isHost = false;
 uint8_t localId = 0;
 bool connected = false;
@@ -101,6 +106,8 @@ DialogLineHandler dialogLineHandler = nullptr;
 OfferHandler offerHandler = nullptr;
 OfferResultHandler offerResultHandler = nullptr;
 PlayerSpellHandler playerSpellHandler = nullptr;
+RansackHandler ransackHandler = nullptr;
+WitnessHandler witnessHandler = nullptr;
 NpcSpellHandler npcSpellHandler = nullptr;
 EnclaveHandler enclaveHandler = nullptr;
 WorldHandler worldHandler = nullptr;
@@ -148,6 +155,7 @@ bool Sane(PlayerState& state)
     state.armor[sizeof(state.armor) - 1] = 0;
     state.helmet[sizeof(state.helmet) - 1] = 0;
     state.look[sizeof(state.look) - 1] = 0;
+    if (state.gold < 0) state.gold = 0;
     for (float v : state.position) if (!std::isfinite(v) || std::fabs(v) > 1e7f) return false;
     for (float v : state.rotation) if (!std::isfinite(v) || std::fabs(v) > 2.0f) return false;
     return true;
@@ -333,6 +341,31 @@ void OnReceive(ENetPeer* peer, ENetPacket* packet)
             }
         }
         if (playerSpellHandler && message.from && message.to == localId) playerSpellHandler(message.from, message.script);
+    } else if (type == MsgRansack && packet->dataLength == sizeof(RansackMsg)) {
+        RansackMsg message;
+        std::memcpy(&message, packet->data, sizeof(message));
+        if (isHost) {
+            message.from = static_cast<uint8_t>(reinterpret_cast<uintptr_t>(peer->data));
+            if (message.to > 1 && message.to < MaxPlayers && peers[message.to]) {
+                Send(peers[message.to], &message, sizeof(message), ChannelReliable, true);
+                return;
+            }
+        }
+        if (ransackHandler && message.from && message.to == localId) ransackHandler(message.from, message.note);
+    } else if (type == MsgWitness && packet->dataLength == sizeof(WitnessMsg)) {
+        WitnessMsg message;
+        std::memcpy(&message, packet->data, sizeof(message));
+        if (isHost) {
+            message.from = static_cast<uint8_t>(reinterpret_cast<uintptr_t>(peer->data));
+            if (message.to > 1 && message.to < MaxPlayers) {
+                if (peers[message.to]) Send(peers[message.to], &message, sizeof(message), ChannelReliable, true);
+                return;
+            }
+            if (message.to == 0)  // to everybody: the other clients too, and the host itself below
+                for (uint8_t i = 2; i < MaxPlayers; ++i)
+                    if (peers[i] && i != message.from) Send(peers[i], &message, sizeof(message), ChannelReliable, true);
+        }
+        if (witnessHandler && message.from && (message.to == 0 || message.to == localId)) witnessHandler(message.from, message.note);
     } else if (type == MsgNpcSpell && packet->dataLength == sizeof(NpcSpellMsg)) {
         NpcSpellMsg message;
         std::memcpy(&message, packet->data, sizeof(message));
@@ -543,6 +576,7 @@ void SetInWorld(uint8_t id, bool in)
 bool InWorld(uint8_t id) { return isHost ? (id == 1 || (id < MaxPlayers && clientInWorld[id])) : inWorld; }
 bool Joined() { return connected; }
 char const* RefusalReason() { return refusalReason; }
+uint32_t ConnectingFor() { return isHost || everConnected || !host ? 0 : enet_time_get() - startedAt; }
 void ClaimVersionForTest(uint16_t version) { helloVersion = version; }
 uint32_t WelcomeSerial() { return welcomes; }
 void AdvanceWelcomeSerialForTest() { ++welcomes; }
@@ -808,6 +842,8 @@ void SetOfferHandlers(OfferHandler offer, OfferResultHandler result)
     offerResultHandler = result;
 }
 void SetPlayerSpellHandler(PlayerSpellHandler handler) { playerSpellHandler = handler; }
+void SetRansackHandler(RansackHandler handler) { ransackHandler = handler; }
+void SetWitnessHandler(WitnessHandler handler) { witnessHandler = handler; }
 void SetNpcSpellHandler(NpcSpellHandler handler) { npcSpellHandler = handler; }
 
 void SendNpcSpell(uint8_t to, char const* script, uint8_t const target[16], int32_t args)
@@ -841,6 +877,23 @@ void SendPlayerSpell(uint8_t to, char const* script)
     strncpy_s(message.script, script, _TRUNCATE);
     if (!isHost) { if (server && connected) Send(server, &message, sizeof(message), ChannelReliable, true); return; }
     if (peers[to]) Send(peers[to], &message, sizeof(message), ChannelReliable, true);
+}
+
+void SendRansack(uint8_t to, RansackNote const& note)
+{
+    if (!host || to == localId || to >= MaxPlayers) return;
+    const RansackMsg message{MsgRansack, localId, to, note};
+    if (!isHost) { if (server && connected) Send(server, &message, sizeof(message), ChannelReliable, true); return; }
+    if (peers[to]) Send(peers[to], &message, sizeof(message), ChannelReliable, true);
+}
+
+void SendWitness(uint8_t to, WitnessNote const& note)
+{
+    if (!host || to == localId || to >= MaxPlayers) return;
+    const WitnessMsg message{MsgWitness, localId, to, note};
+    if (!isHost) { if (server && connected) Send(server, &message, sizeof(message), ChannelReliable, true); return; }
+    for (uint8_t i = 2; i < MaxPlayers; ++i)
+        if (peers[i] && (to == 0 || to == i)) Send(peers[i], &message, sizeof(message), ChannelReliable, true);
 }
 
 void SendShot(ShotNote const& note)
@@ -976,6 +1029,7 @@ bool Start(bool asHost, char const* address, unsigned short port, char const* na
         target.port = port;
         server = host ? enet_host_connect(host, &target, ChannelCount, 0) : nullptr;
         lastConnectAttempt = enet_time_get();
+        startedAt = enet_time_get();
         Logf("net: connecting to %s:%u: %s", address, port, server ? "pending" : "FAILED");
     }
     return host != nullptr;
@@ -996,6 +1050,7 @@ void Tick(PlayerState const& local, bool haveLocal)
             // player id made the hello guard refuse every rejoin (stageU1, 22.10.).
             event.peer->data = nullptr;
             if (!isHost) {
+                everConnected = true;
                 Hello hello{MsgHello, helloVersion ? helloVersion : ProtocolVersion, {}, {}};
                 strncpy_s(hello.name, localName, _TRUNCATE);
                 std::memcpy(hello.parity, parity::Local(), sizeof(hello.parity));

@@ -15,6 +15,8 @@
 #include "containers.h"
 #include "trade.h"
 #include "mapmarks.h"
+#include "ransack.h"
+#include "witness.h"
 #include "dialogaudio.h"
 #include "explore.h"
 #include "npcs.h"
@@ -286,6 +288,10 @@ bool RunReviewAction(const char* action)
         g3t::offer::CountCommand(argument, &Log);
     } else if (!std::strcmp(action, "keycheck")) {
         g3t::offer::KeyCheck(&Log);
+    } else if (!std::strcmp(action, "menutext")) {
+        g3t::hud::Probe(argument, &Log);
+    } else if (!std::strcmp(action, "menuline")) {
+        g3t::hud::MenuLineReport(&Log);
     } else if (!std::strcmp(action, "stacks")) {
         g3t::containers::Stacks(argument, &Log);
     } else if (!std::strcmp(action, "holditem")) {
@@ -331,6 +337,22 @@ bool RunPlayerAction(const char* action)
         g3t::trade::CloseCommand(&Log);
     } else if (!std::strcmp(action, "tradeholdoff")) {
         g3t::trade::HoldOff(&Log);
+    } else if (!std::strcmp(action, "ransack")) {
+        g3t::ransack::Report(&Log);
+    } else if (!std::strcmp(action, "ransackoff")) {
+        g3t::ransack::Off(&Log);
+    } else if (!std::strcmp(action, "npcgold")) {
+        g3t::ransack::NpcGold(argument, &Log);
+    } else if (!std::strcmp(action, "subtitlesoff")) {
+        g3t::dialogaudio::SubtitlesOff(&Log);
+    } else if (!std::strcmp(action, "witness")) {
+        g3t::witness::Saw(argument, &Log);
+    } else if (!std::strcmp(action, "witnesses")) {
+        g3t::witness::Report(&Log);
+    } else if (!std::strcmp(action, "witnessoff")) {
+        g3t::witness::Off(&Log);
+    } else if (!std::strcmp(action, "assesshero")) {
+        g3t::explore::AssessHero(argument, &Log);
     } else if (!std::strcmp(action, "mapmarks")) {
         g3t::mapmarks::Report(&Log);
     } else if (!std::strcmp(action, "mapmarksoff")) {

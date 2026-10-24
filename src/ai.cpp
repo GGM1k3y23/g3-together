@@ -8,6 +8,7 @@
 #include "items.h"
 #include "downed.h"
 #include "infocmd.h"
+#include "ransack.h"
 
 #include <Game.h>
 #include <Script.h>
@@ -102,6 +103,7 @@ GEBool Run(std::unordered_map<std::string, Fn> const& originals, bTObjStack<gScr
     if (it == originals.end()) { ++unknown; return GEFalse; }
     if (downed::RedirectDeath(self, name)) return GEFalse;  // the local hero is knocked out instead of dying
     if (strcmp(name, "IS_Running_ProcessInfo") == 0) infocmd::Observe(spu);  // a dialog script line runs
+    if (strcmp(name, "ZS_RansackBody") == 0) ransack::OnRobbing(spu);         // one of our NPCs robs a body (a puppet?)
     if (self && self == gCSession::GetInstance().GetHero() && strcmp(name, "_AI_TakeItem") == 0) {
         // The world item this hero takes vanishes into a stack (its GUID is gone afterwards): note it first.
         items::BeforeTake(spu);
@@ -167,6 +169,8 @@ unsigned char* NativeAttitude()
     return std::memcmp(code, expected, sizeof(expected)) == 0 ? code : nullptr;
 }
 
+}
+
 // Jump from `target` to `detour`; the returned trampoline runs the 6 stolen bytes and continues in the original.
 void* JumpTo(unsigned char* target, void* detour)
 {
@@ -187,6 +191,8 @@ void* JumpTo(unsigned char* target, void* detour)
     FlushInstructionCache(GetCurrentProcess(), target, Stolen);
     return trampoline;
 }
+
+namespace {
 
 GEInt GE_STDCALL FilterAttitude(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid other, GEInt args)
 {
