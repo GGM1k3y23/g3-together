@@ -546,9 +546,31 @@ void CheckCreatureCopies()
     }
 }
 
+// P6: a hailstorm's copy spawns its weather (Wth_Hailstorm, the copy's Interaction user) at Entity::GetPlayer and its states
+// pull it there every 400 ms: on the other PC the hail fell around that PC's own hero (re/findings/p6-magic-b.md). Each
+// frame the weather of another player's copy is put back on that player's puppet, the caster.
+bool weatherFollow = true;  // QA negative control: weatherfollowoff
+unsigned weatherMoved = 0;
+
+void FollowWeather()
+{
+    for (Known const& k : known) {
+        if (k.own) continue;
+        Entity copy = ByGuid(k.guid);
+        if (!copy.GetInstance() || !copy.GetInstance()->GetPropertySet(eEPropertySetType_Interaction)) continue;
+        Entity weather = copy.Interaction.GetUser();
+        eCEntity* caster = copy.Interaction.GetOwner().GetInstance();
+        if (!weather.GetInstance() || !caster || !remote::PuppetOwner(caster)) continue;
+        if (std::strncmp(weather.GetName().GetText(), "Wth_", 4) != 0) continue;
+        weather.GetInstance()->SetWorldPosition(caster->GetWorldPosition());  // Entity::MoveTo left it at the hero (24.10.)
+        ++weatherMoved;
+    }
+}
+
 void Tick()
 {
     Install();
+    if (weatherFollow && !known.empty()) FollowWeather();
     for (size_t i = 0; i < lateCopies.size();) {
         if (static_cast<int32_t>(GetTickCount() - lateCopies[i].due) < 0) { ++i; continue; }
         const LateCopy late = lateCopies[i];
@@ -558,6 +580,19 @@ void Tick()
     if (!pending.empty()) Resolve();
     CheckKnown();
     CheckCreatureCopies();
+}
+
+void WeatherFollowOff(LogFn log)
+{
+    weatherFollow = false;
+    log("WEATHERFOLLOWOFF ok=1");
+}
+
+void WeatherReport(LogFn log)
+{
+    char line[120];
+    sprintf_s(line, "WEATHER follow=%d moved=%u known=%u", weatherFollow ? 1 : 0, weatherMoved, static_cast<unsigned>(known.size()));
+    log(line);
 }
 
 void Report(LogFn log)

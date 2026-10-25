@@ -33,8 +33,8 @@ void Adopt(uint8_t const guid[16]);    // client: a companion from the host's sa
 unsigned WriteCompanions(FILE* file);
 unsigned ReadCompanions(FILE* file);
 void ClearCompanions();
-void CompanionsOff(LogFn log);
-void StyleOff(LogFn log);
+void CompanionsOff(LogFn log);  // QA negative control: saved companions are not handed over
+void StyleOff(LogFn log);  // QA negative control: mirrors hold no weapons and keep their stance
 void MirrorRetryOff(LogFn log);  // QA negative control (stage W8): a mirror missing at its first lookup stays missing (as before 23.10.)
 void MirrorStats(LogFn log);     // QA (stage W8): MIRRORSTATS line (mirrors, missing ones, found later, expired)
 void RecvOn(LogFn log);   // QA: take NPC snapshots again (stageM1: the host's win over this machine's own simulation)
@@ -42,7 +42,7 @@ void RecvOff(LogFn log);  // QA: ignore every NPC snapshot from now on (invarian
 void DeadPoseOff(LogFn log);     // QA negative control: dead mirrors are not laid down
 void DeadPoseReport(LogFn log);  // QA: DEADPOSE line
 void LayDownCorpse(eCEntity* entity);  // a death applied here outside mirroring (journal.cpp): lay the body down like a dead mirror
-unsigned HoldChanges();  // QA: weapons put into mirrors' hands so far  // QA negative control: mirrors hold no weapons and keep their stance  // QA negative control: saved companions are not handed over
+unsigned HoldChanges();  // QA: weapons put into mirrors' hands so far
 bool Claimed(eCEntity const* entity);  // client: taken over by this player
 void SendInfo(char const* name, LogFn log);  // QA: NPCSEND line, why this machine last did not send the NPC (name or GUID), or sent
 void JoinGraceOff(LogFn log);  // QA negative control (host): take a joining client's snapshots of NPCs near the host

@@ -16,6 +16,7 @@ void HitPuppet(char const* id, LogFn log);  // QA: hit player <id>'s puppet the 
 void HitNpc(char const* guid, LogFn log);  // QA: hit the NPC (GUID as the npcs report prints it) the way gCEntity::DoDamage does
 void HitNpcBurst(char const* argument, LogFn log);  // QA, client (stage W5): "<guid>_<count>" lethal hit claims in one frame
 void KillOnceOff(LogFn log);   // QA negative control (stage W5): kills and rewards not counted per victim (as before 23.10.)
+void KillConfirmOff(LogFn log);  // QA negative control (stageLiberate): a kill here that did not take keeps its victim from hits
 void KillReport(LogFn log);    // QA: KILLONCE line
 void OnWorldChange();          // a load or another world: the dead of the last one are forgotten
 void GameString(char const* rva, LogFn log);  // QA: text of a bCString global in Game.dll
@@ -28,16 +29,15 @@ void HitPuppetBy(char const* guid, LogFn log);  // QA stage A: an NPC hits playe
 void FleeFrom(char const* guid, LogFn log);     // QA stage V5: an NPC flees from player 2's puppet; FLEE line with its attitude
 void Report(LogFn log);                    // QA: HP of the local hero and counters
 void Uninstall(LogFn log);                  // QA negative control: let every hit through
-void NpcHitsOff(LogFn log);
-void RemoteKnockOutsOff(LogFn log);
-void ShapeHitsOff(LogFn log);  // QA negative control (P6): an animal form's hits go out as one of our NPCs' (as before 24.10.)  // QA negative control (P7): a client's lethal claim kills, never knocks out (as before 24.10.)
-void ReactHitsOff(LogFn log);
+void NpcHitsOff(LogFn log);  // QA negative control: our NPCs' hits on others' NPCs are dropped
+void RemoteKnockOutsOff(LogFn log);  // QA negative control (P7): a client's lethal claim kills, never knocks out (as before 24.10.)
+void ShapeHitsOff(LogFn log);  // QA negative control (P6): an animal form's hits go out as one of our NPCs' (as before 24.10.)
+void ReactHitsOff(LogFn log);  // QA negative control: a client's hit does not make the host's NPC judge its attacker
 void ArenaRuleOff(LogFn log);  // QA negative control: hits on an NPC in a duel or arena bout count from anyone (as before)
-void ArenaReport(char const* name, LogFn log);
-void NpcHp(char const* argument, LogFn log);  // QA: "Name_HP" sets an NPC's hit points  // QA: ARENA line (attack reason, target, refused hits, knock-outs)  // QA negative control: a client's hit does not make the host's NPC judge its attacker
-void PartyXpOff(LogFn log);  // QA negative control: kills by our companions/summons pay no one                 // QA negative control: our NPCs' hits on others' NPCs are dropped
-void Arm(char const* item, LogFn log);
+void ArenaReport(char const* name, LogFn log);  // QA: ARENA line (attack reason, target, refused hits, knock-outs)
+void NpcHp(char const* argument, LogFn log);  // QA: "Name_HP" sets an NPC's hit points
+void PartyXpOff(LogFn log);  // QA negative control: kills by our companions/summons pay no one
+void Arm(char const* item, LogFn log);  // QA: give the hero this item template and hold it in the right hand
 bool LethalHit(eCEntity* victim);  // QA: kill through the game's own hit judgement
-      // QA: give the hero this item template and hold it in the right hand
 void Swing(char const* state, LogFn log);  // QA: the local hero swings as a key press would
 }

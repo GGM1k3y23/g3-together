@@ -205,11 +205,13 @@ these guides used two game copies on one PC; play over the real internet remains
   In creature form you fight as yourself: your hits count as yours (knock-outs, kills, experience, murders), and an
   enemy's hits hurt the creature, not your hidden human body (Wolf tested by bots). Saving while transformed remains
   untested.
-- A partner's hailstorm shows its hail around your own hero on your PC; it does no damage there (only the caster's
-  hailstorm does, as in single-player).
+- A partner's hailstorm: its weather now stays at your partner on your PC (it used to darken the sky and strike around your
+  own hero; checked by bots by position and screenshot). Damage comes only from the caster's own hailstorm, as in
+  single-player.
 - Enemies attack both players. Their attitude toward a joining player comes from the hero on the
   PC currently simulating the NPC. For example, the host's poor standing with orcs also applies
   to the other player for NPCs simulated by the host.
+- A town or camp freed (or taken) by either player is freed for both: the town's state comes from the host.
 - Town and camp reputation, chosen with `reputation` in the host's INI:
   - `shared` (default): one record per town for both players; thefts by either player count, and a guard who talks to
     you about crimes counts everybody's deeds. An NPC that saw a crime holds it against the one who did it.

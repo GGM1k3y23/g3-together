@@ -212,10 +212,12 @@ beschriebenen Tests liefen auf einem PC mit zwei Spielkopien; Spielen über das 
   Verwandlungszauber des Spiels. In Tiergestalt kämpfst du als du selbst: Deine Treffer zählen als deine (Niederschlag,
   Tötung, Erfahrung, Mord), und Treffer von Gegnern verletzen das Tier, nicht deinen versteckten Menschenkörper (mit Bots
   geprüft: Wolf). Noch nicht getestet: Speichern während einer Verwandlung.
-- Zaubert dein Mitspieler Hagelsturm, zeigt dein Rechner den Hagel um deinen eigenen Helden; Schaden macht er dort keinen
-  (nur der Hagel des Zaubernden trifft, wie im Einzelspiel).
+- Hagelsturm des Mitspielers: Sein Wetter bleibt auf deinem Rechner jetzt beim Mitspieler (vorher verdunkelte es den
+  Himmel und blitzte um deinen eigenen Helden; von Bots über Position und Screenshot geprüft). Schaden macht nur der Hagel
+  des Zaubernden, wie im Einzelspiel.
 - Gegner greifen beide Spieler an. Wie ein NPC zum Mitspieler steht, richtet sich nach dem Helden des Rechners, der dieses
   NPC gerade berechnet: Hat der Host bei den Orks einen schlechten Ruf, gilt der beim Host auch für den Mitspieler.
+- Befreit (oder erobert) einer eine Stadt oder ein Lager, gilt das für beide: Den Zustand der Stadt führt der Host.
 - Ruf bei Städten und Lagern, einzustellen mit `reputation` in der INI des Hosts:
   - `shared` (Standard): ein Ruf pro Stadt für beide; Diebstähle beider Spieler zählen, und eine Wache, die dich auf
     Verbrechen anspricht, zählt die Taten aller. Ein NPC, der eine Tat gesehen hat, hält sie dem vor, der sie begangen hat.

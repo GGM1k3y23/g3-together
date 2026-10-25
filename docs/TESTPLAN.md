@@ -83,7 +83,8 @@ Wenn nur 60 Minuten verfügbar sind: zuerst Beitritt, Kampf, Aufhelfen, Gefolgsm
 | Taschendiebstahl | Einer bestiehlt einen Bürger (braucht das Talent): Der andere kann denselben Bürger nicht mehr bestehlen. |
 | Sitzplatz | Einer setzt sich auf einen Hocker oder eine Bank, der andere versucht denselben Platz: „<Name> benutzt das gerade.“, und er setzt sich nicht. Steht der Erste auf, kann der andere sich setzen. |
 | Tiergestalt | Ein Spieler in Wolfsgestalt (Zauber oder Trank) kämpft gegen einen Gegner: Treffer und Kill zählen für diesen Spieler, Treffer des Gegners verletzen den Wolf. |
-| Seltene Orte | Wer auf einen Orkfelsen zum Heben, eine Innos- oder Beliar-Statue zum Beten oder einen Piratenschatz zum Ausgraben stößt: Einer benutzt ihn, der andere schaut zu, dann versucht es der andere. Notieren, was jeder sieht (Lage des Felsens, Wirkung, Beute). Die Bots haben diese Orte noch nicht gefunden. |
+| Seelenwanderung | Einer zaubert Seelenwanderung in der Nähe von Gegnern und lässt den Geist zu ihnen schweben. Bekannt: Der andere sieht den Geist sich bewegen, nicht den zurückgelassenen Körper. Notieren, ob die Gegner den Geist angreifen und was mit dem Körper geschieht. |
+| Seltene Orte | Wer auf einen Orkfelsen zum Heben (laut Skriptname einer in Faring; die Bots fanden ihn nicht) oder eine Innos- oder Beliar-Statue zum Beten stößt: Einer benutzt ihn, der andere schaut zu, dann versucht es der andere. Notieren, was jeder sieht (Lage des Felsens, Wirkung). Piratenschätze (einer liegt 46 m von Tarok in Faring, mit Schaufel graben) haben die Bots geprüft: die Beute gibt es einmal. |
 
 ## Bei einem Fehler
 

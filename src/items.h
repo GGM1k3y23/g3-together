@@ -19,9 +19,9 @@ void AfterTake(gCScriptProcessingUnit* spu);
 void Pick(char const* guid, LogFn log);  // QA: take an item the player's way (target + PS_Normal_Take)
 void TookReport(LogFn log);
 void Count(char const* templateName, LogFn log);  // QA: how many of these the hero carries
-void Disable(LogFn log);
+void Disable(LogFn log);  // QA negative control: no item sync
 unsigned Returned();  // client: how many takes the host gave to someone else (enclaves.cpp takes the theft back)
 unsigned TakesBegun();  // this hero's _AI_TakeItem calls on a world item
 unsigned TakesDone();   // ... after which the item was in the hero's inventory
-void Containers(LogFn log);  // QA: chests and corpses near the hero with their contents                          // QA negative control: no item sync
+void Containers(LogFn log);  // QA: chests and corpses near the hero with their contents
 }

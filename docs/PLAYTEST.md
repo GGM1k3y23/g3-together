@@ -97,7 +97,8 @@ and saving on the host. Test separate regions and rejoining in a follow-up sessi
 | Pickpocketing | One player picks a citizen's pocket (needs the skill): the other can no longer pick the same citizen. |
 | Seat | One player sits on a stool or bench; the other tries the same seat: "<Name> is using this." and they do not sit down. When the first stands up, the other can sit. |
 | Animal form | A player turned into a wolf (spell or potion) fights an enemy: hits and kills count for that player, and enemy hits hurt the wolf. |
-| Rare places | If you come across an orc boulder you can lift, an Innos or Beliar statue to pray at, or a pirate treasure to dig up: one player uses it while the other watches, then the other tries the same. Note what each of you sees (the boulder's position, the effect, the loot). Bots have not found these places yet. |
+| Soul travel | One player casts soul travel near enemies and floats the ghost toward them. Known: the other player sees the ghost moving, not the body left behind. Note whether the enemies attack the ghost, and what happens to the body. |
+| Rare places | If you come across an orc boulder you can lift (by its script name one is in Faring; the bots did not find it) or an Innos or Beliar statue to pray at: one player uses it while the other watches, then the other tries the same. Note what each of you sees (the boulder's position, the effect). Pirate treasures (one is 46 m from Tarok in Faring, dig with a shovel) are checked by the bots: the loot is there once. |
 
 ## Recording a bug
 

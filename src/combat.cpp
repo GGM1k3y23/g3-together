@@ -17,6 +17,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace g3t::combat {
 eCEntity* DamageSource(eCDynamicEntity* hero, char const** name);  // below
@@ -28,8 +29,8 @@ namespace {
 // one place where host authority is enforced. (Some judgement outcomes, e.g. parries, call AddHitPoints
 // directly inside Script_Game.dll and bypass the admin; they are not covered.)
 bool installed = false;
-bool bypass = false;
-bool forwarded = false;  // client: applying a hit the host forwarded, judged here (Filter lets it through)  // negative control: the filter lets everything through
+bool bypass = false;     // negative control: the filter lets everything through
+bool forwarded = false;  // client: applying a hit the host forwarded, judged here (Filter lets it through)
 DWORD lastTry = 0;
 gFScript original = nullptr;
 unsigned filterCalls = 0;
@@ -49,6 +50,14 @@ std::unordered_set<std::string> killedHere;  // host: victims killed here for a 
 std::unordered_set<std::string> rewarded;    // client: victims this player was rewarded for
 bool killOnce = true;  // QA negative control: killonceoff
 unsigned killsRepeated = 0, rewardsRepeated = 0;
+// A kill here that did not take kept its victim in killedHere: no later hit of any client counted on it (stageLiberate
+// 24.10.: three raiders far from both players, killed by claims, were not dead 2 s later, without a task at 0 hit points or
+// fighting on, and took claims for 14 rounds; the host's game probably does not process NPCs that far, not proven). Each
+// such kill is looked at again 2 s later; a victim alive and not in a death task counts as not killed.
+struct Unconfirmed { uint8_t guid[16]; DWORD due; };
+std::vector<Unconfirmed> unconfirmed;
+unsigned killsUndone = 0;
+bool confirmKills = true;  // QA negative control: killconfirmoff
 std::string KillKey(uint8_t const guid[16]) { return std::string(reinterpret_cast<char const*>(guid), 16); }
 // Arena and duel (owner's decision 22.10., variant b; re/findings/defeat-arena-c.md): an NPC fighting a duel or an arena
 // bout (attack reason Duel or Arena) takes hits only from its opponent there; a second player's hits do not count. Its
@@ -113,6 +122,30 @@ uint8_t Outcome(Entity& victim)
     for (char const* dead : {"ZS_RagDollDead", "ZS_PiercedDead", "ZS_Dead"})
         if (task == bCString(dead)) return net::HitDeath;
     return net::HitUnjudged;
+}
+
+void Expect(uint8_t const guid[16])
+{
+    if (!confirmKills) return;
+    Unconfirmed u{{}, GetTickCount() + 2000};
+    std::memcpy(u.guid, guid, 16);
+    unconfirmed.push_back(u);
+}
+
+void ConfirmKills()
+{
+    const DWORD now = GetTickCount();
+    for (auto it = unconfirmed.begin(); it != unconfirmed.end();) {
+        if (static_cast<int32_t>(now - it->due) < 0) { ++it; continue; }
+        Entity victim(npcs::NpcByGuid(it->guid));
+        if (victim.GetInstance() && !victim.IsDead() && Outcome(victim) != net::HitDeath) {
+            killedHere.erase(KillKey(it->guid));
+            ++killsUndone;
+            Logf("combat: the kill of %s did not take (task %s, %d hit points); its next hit counts again", victim.GetName().GetText(),
+                 victim.Routine.GetCurrentTask().GetText(), HitPoints(victim));
+        }
+        it = unconfirmed.erase(it);
+    }
 }
 
 // The species the game knocks out instead of killing (OnCheatDefeat: human and orc go to ZS_Unconscious).
@@ -247,6 +280,7 @@ void OnNpcHit(uint8_t from, Entity& target, int32_t delta, uint8_t const npc[16]
     target.NPC.DefeatedByPlayer = GETrue;
     CallScript("AddHitPoints", victim, victim, -HitPoints(target));
     CallScript("OnCheatKill", victim, victim, 0);
+    Expect(guid);
     ++npcKills;
     if (party) {  // the sender's companion or summon killed it: the sender's hero earns the experience
         net::SendKilled(from, guid);
@@ -352,6 +386,7 @@ void OnHitNpc(uint8_t from, uint8_t const guid[16], int32_t delta, uint8_t const
     target.NPC.DefeatedByPlayer = GETrue;
     CallScript("AddHitPoints", victim, victim, -HitPoints(target));
     CallScript("OnCheatKill", victim, victim, 0);  // like the console: self = the one who kills, other = the target
+    Expect(guid);
     ++kills;
     net::SendKilled(from, guid);  // the killer earns the experience on its own machine
     Logf("combat: player %u killed %s (OnCheatKill%s)", from, target.GetName().GetText(), finishing ? ", finishing blow" : "");  // ZS_RagDollDead takes effect next frame
@@ -420,6 +455,7 @@ void Start()
 
 void Tick()
 {
+    if (!unconfirmed.empty()) ConfirmKills();
     if (installed || !gCSession::GetInstance().IsGameRunning()) return;
     const DWORD now = GetTickCount();
     if (now - lastTry < 1000) return;
@@ -507,11 +543,17 @@ void KillOnceOff(LogFn log)
     log("KILLONCEOFF ok=1 (kills and rewards are not counted per victim, as before 23.10.)");
 }
 
+void KillConfirmOff(LogFn log)
+{
+    confirmKills = false;
+    log("KILLCONFIRMOFF ok=1 (a kill here that did not take keeps its victim from further hits, as before 24.10.)");
+}
+
 void KillReport(LogFn log)
 {
     char line[200];
-    sprintf_s(line, "KILLONCE killed=%zu rewarded=%zu repeated_kills=%u repeated_rewards=%u xp_awarded=%u kills=%u", killedHere.size(),
-              rewarded.size(), killsRepeated, rewardsRepeated, xpAwarded, kills);
+    sprintf_s(line, "KILLONCE killed=%zu rewarded=%zu repeated_kills=%u repeated_rewards=%u xp_awarded=%u kills=%u undone=%u",
+              killedHere.size(), rewarded.size(), killsRepeated, rewardsRepeated, xpAwarded, kills, killsUndone);
     log(line);
 }
 
@@ -519,6 +561,7 @@ void KillReport(LogFn log)
 void OnWorldChange()
 {
     killedHere.clear();
+    unconfirmed.clear();
     rewarded.clear();
     knockedAt.clear();
 }

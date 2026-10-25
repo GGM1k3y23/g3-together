@@ -17,7 +17,7 @@ void Contents(char const* guid, LogFn log);  // QA: CONTENTS line for a containe
 void Open(char const* guid, LogFn log);      // QA: open a container the player's way (PlayerOpenLoot)
 void Take(char const* guid, LogFn log);      // QA: move the first stack of a container to the hero
 void Report(LogFn log);                      // QA: CONTAINERSYNC counters
-void Disable(char const* what, LogFn log);    // QA negative control ("trader": only the host's trader filling; "hands": a corpse's hand keeps its prop)
+void Disable(char const* what, LogFn log);    // QA negative control ("trader": only the host's trader filling; "hands": a corpse's hand keeps its prop; "interact": a dug treasure's loot is not this player's open container)
 void Silent(char const* guid, LogFn log);    // QA (host): drop a stack without telling the clients
 void TradeOpen(char const* guid, LogFn log);  // QA: open trade with an NPC (PlayerOpenTrade)
 void TradeBuy(char const* argument, LogFn log);  // QA: buy one piece ("GUID" or "GUID_Template[-q<quality>]") and pay

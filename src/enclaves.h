@@ -30,9 +30,15 @@ bool Together();  // reputation = together (the host's mode): what a witness hol
 // three orcs, GetPoliticalAttitude(victim, town) == 1, the killer not Montera_Orc_02..05), before the game's own steps.
 // shared/together: into this machine's counters (the sync carries it); personal: to the killer's machine (EnclaveCredit).
 void NoteRemoteKill(uint8_t const victim[16], uint8_t player, eCEntity* actor);
-void RemoteMurdersOff(LogFn log);  // QA negative control: such murders count nowhere (as before 24.10.)
+void RemoteMurdersOff(LogFn log);            // QA negative control: such murders count nowhere (as before 24.10.)
+void TownStatusOff(LogFn log);               // QA negative control (stageLiberate): a town's status stays where it turned
+void CreditHold(char const* ms, LogFn log);  // QA (credithold <ms>): personal credits count the killer as out of the world that long
+void CreditQueueOff(LogFn log);              // QA negative control: a credit for a killer out of the world is lost (as before 24.10.)
 // QA murdercand "<enclave>": its members with the game's own murder conditions. QA cheatkill "<NPC>": this machine's hero
 // kills it with OnCheatKill (which names no killer: it counted nothing, murderdiag 24.10.).
 void MurderCandidates(char const* enclave, LogFn log);
 void CheatKill(char const* name, LogFn log);
+// QA (stageLiberate): "<enclave>": this machine's hero kills every living member farther than 40 m (as farkill), so that
+// the ones near it are left for the other player; a town flees once fewer than a fifth of its defenders live.
+void TownFarKill(char const* enclave, LogFn log);
 }

@@ -401,6 +401,19 @@ void NpcState(char const* name, bool change, LogFn log)
 }
 
 namespace g3t::explore {
+// QA (followdiag): the NPC stops and chooses its routine again, as at a dialog's end (FullStop, ContinueRoutine): with a
+// follow quest running, SelectRoutineTask starts its guiding.
+void NpcRoutine(char const* name, LogFn log)
+{
+    char line[200];
+    Entity npc = Entity::GetEntity(bCString(name));
+    if (!npc.GetInstance() || !npc.GetInstance()->GetPropertySet(eEPropertySetType_NPC)) { log("REFUSED npcroutine: no such NPC"); return; }
+    npc.Routine.FullStop();
+    npc.Routine.ContinueRoutine();
+    sprintf_s(line, "NPCROUTINE name=%s task=%s", name, npc.Routine.GetCurrentTask().GetText());
+    log(line);
+}
+
 // QA, stage H3: every dialog option whose script contains `command` (Give, Attack, JoinNPC, Spawn, ...), with
 // its owner's distance from the hero, nearest first: candidates for tests with real dialogs.
 void InfoScan(char const* command, LogFn log)

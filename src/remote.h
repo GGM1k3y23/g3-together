@@ -21,13 +21,13 @@ void NoteContact(eCEntity* npc, eCEntity* puppet);
 bool TraceEnabled();
 using LogFn = void (*)(char const*);
 void Report(LogFn log);   // QA: one REMOTE line per known player
-void PuppetPartyOff(LogFn log);
-void ForgetNpcListOn(LogFn log);
-void ContactsOff(LogFn log);
-void BadStates(char const* argument, LogFn log);  // QA (stage X1): "on" sends NaN positions and unterminated strings, "off" stops  // QA negative control: no NPC is noted as a puppet's contact  // QA negative control: forget puppets by walking Entity::GetNPCs (before 22.10.)
-void PuppetHoldOff(LogFn log);
-void PuppetCombatOff(LogFn log);
-void ShapeOff(LogFn log);  // QA negative control of stage T  // QA negative control: puppets replay swings by motion name  // QA negative control: puppets hold no weapons  // QA negative control: puppets do not join the local hero's party
+void PuppetPartyOff(LogFn log);  // QA negative control: puppets do not join the local hero's party
+void ForgetNpcListOn(LogFn log);  // QA negative control: forget puppets by walking Entity::GetNPCs (before 22.10.)
+void ContactsOff(LogFn log);  // QA negative control: no NPC is noted as a puppet's contact
+void BadStates(char const* argument, LogFn log);  // QA (stage X1): "on" sends NaN positions and unterminated strings, "off" stops
+void PuppetHoldOff(LogFn log);  // QA negative control: puppets hold no weapons
+void PuppetCombatOff(LogFn log);  // QA negative control: puppets replay swings by motion name
+void ShapeOff(LogFn log);  // QA negative control of stage T
 void Step(int index, LogFn log);  // QA: move the local hero to point `index` of a 3 m circle
 void WalkTo(int index, LogFn log); // QA: let the local hero run (game AI goto) to point `index` of a 15 m circle
 void WearHero(char const* argument, LogFn log);  // QA: the local hero wears an armor/helmet by name, -armor/-helmet takes it off

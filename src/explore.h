@@ -12,7 +12,8 @@ void LookAt(char const* name, LogFn log);   // put the hero 4 m from a named ent
 void Near(char const* xyz, LogFn log);      // NEAR lines: NPCs within 40 m of "X_Y_Z", then "NEAR end"
 void FarNpcs(LogFn log);                    // FARNPC lines: NPCs anywhere, found via dialog owners
 void Find(char const* name, LogFn log);     // FIND line: one named entity wherever it is
-void FarKill(char const* name, LogFn log);    // kill a named NPC wherever it is (hit points 0, OnCheatKill)
+void FarKill(char const* name, LogFn log);
+void NpcRoutine(char const* name, LogFn log);  // QA (followdiag): FullStop and ContinueRoutine, as at a dialog's end    // kill a named NPC wherever it is (hit points 0, OnCheatKill)
 void FarMove(char const* argument, LogFn log);  // "X_Y_Z_<name>": move a named entity wherever it is
 void TeleportTo(char const* name, LogFn log);  // the game's own teleport to a named entity
 void Page(char const* what, LogFn log);     // inventory|menu|close|state: GUI pages that may pause the game
@@ -23,8 +24,8 @@ void NearNpcs(LogFn log);  // QA: NPCs near the hero with target and visible mot
 void NpcFight(char const* argument, LogFn log);  // QA: "Attacker_Target": an NPC attacks another NPC
 void DuelHero(char const* name, LogFn log);  // QA: that NPC attacks the local hero for a duel (a knock-out, not a death)
 void Aggro(char const* argument, LogFn log);  // QA: "Name_Reason": an NPC attacks player 2's puppet (AssessTarget)
-void AssessHero(char const* argument, LogFn log);
-void QuestDump(char const* path, LogFn log);  // QA (questdump): every quest of the game as TSV (plan P0: chapter checklist)  // QA: "Name_Reason": an NPC attacks the local hero (AssessTarget)
+void AssessHero(char const* argument, LogFn log);  // QA: "Name_Reason": an NPC attacks the local hero (AssessTarget)
+void QuestDump(char const* path, LogFn log);  // QA (questdump): every quest of the game as TSV (plan P0: chapter checklist)
 void InfoDescribe(char const* name, LogFn log);  // QA: a dialog option's conditions and script lines
 void XpInfos(LogFn log);  // QA: XPINFO lines, dialog options that give experience under simple conditions
 void NativeSave(char const* name, LogFn log);  // the game's own save (gCHUDFileManager::SaveGame)

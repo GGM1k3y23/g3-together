@@ -23,6 +23,6 @@ void Talk(char const* npcName, LogFn log);  // QA diagnostic: start a dialog bet
 void TalkState(LogFn log);
 void EndTalk(LogFn log);
 void AssessTalk(char const* npcName, LogFn log);  // QA: address an NPC like the player's talk action
-void KillRaiders(LogFn log);
-void Approach(char const* npcName, LogFn log);  // QA: stand 1.5 m from an NPC                      // QA (host): end the opening raid
+void KillRaiders(LogFn log);  // QA (host): end the opening raid
+void Approach(char const* npcName, LogFn log);  // QA: stand 1.5 m from an NPC
 }

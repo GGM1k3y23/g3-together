@@ -134,12 +134,12 @@ def prepare():
         receipt = json.loads(T.RECEIPT.read_text())
         assert any(e['file'] == T.OURS for e in receipt['files']), 'Run profile.py together first'
         mod_sha = next(e['sha256'] for e in receipt['files'] if e['file'] == T.OURS)
-        checks = ('verify.py', 'verify_client.py')
+        checks = (('verify.py',), ('verify_client.py',))
     else:
-        deployed = T.WORKSPACE/'runtime/pair2-deployment.json'
+        deployed = T.WORKSPACE/f'runtime/pair{T.PAIR}-deployment.json'
         assert deployed.is_file(), 'Run runtime/install_pair2.py first'
         mod_sha = json.loads(deployed.read_text())['sha256']
-        checks = ('verify_pair2.py',)
+        checks = (('verify_pair2.py', T.PAIR),)
     kernel = ctypes.WinDLL('kernel32', use_last_error=True)
     kernel.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
     kernel.CreateMutexW.restype = ctypes.c_void_p
@@ -147,8 +147,8 @@ def prepare():
     handle = kernel.CreateMutexW(None, True, lock)
     assert handle and ctypes.get_last_error() != 183, 'Another QA runner is active'
     (T.WORKSPACE/f'runtime/pair{T.PAIR}-runner.pid').write_text(str(os.getpid()))
-    for name in checks:
-        subprocess.run([sys.executable, str(T.WORKSPACE/'isolation'/name)], cwd=T.WORKSPACE.parent, capture_output=True, check=True)
+    for name, *check_args in checks:
+        subprocess.run([sys.executable, str(T.WORKSPACE/'isolation'/name), *check_args], cwd=T.WORKSPACE.parent, capture_output=True, check=True)
     protected = Path(json.loads((T.WORKSPACE/'project.json').read_text(encoding='utf-8-sig'))['protected_save_dir'])
     return kernel, handle, protected, T.snapshot(protected), mod_sha
 

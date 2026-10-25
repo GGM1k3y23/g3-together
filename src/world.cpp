@@ -131,7 +131,7 @@ void Usables(char const* radiusText, LogFn log)
 
 void UseInfo(char const* name, LogFn log)
 {
-    char line[400], text[360];
+    char line[560], text[360];  // text and the hero's part: more than 400 (sprintf_s ends the game on overflow)
     eCEntity* target = Nearest(name);
     if (!target) { log("REFUSED useinfo: no such entity"); return; }
     Describe(target, text, sizeof(text));
@@ -142,10 +142,33 @@ void UseInfo(char const* name, LogFn log)
     Entity focus = hero ? self.Focus.GetFocusEntity() : Entity();
     // The game's own rule for what the hero may choose (-1: never; an interact object with a user, re/out/p1-focus.c).
     const GEInt priority = hero ? GetScriptAdminExt().CallScript(bCString("GetFocusEntityPriority"), hero, target, 0) : -2;
-    sprintf_s(line, "USEINFO %s hero_task=%s hero_state=%s hero_pos=%.0f_%.0f_%.0f hero_ani=%d focus=%s focus_is_it=%d focus_priority=%d", text,
-              self.Routine.GetCurrentTask().GetText(), self.Routine.GetCurrentState().GetText(), at[0], at[1], at[2],
-              hero ? static_cast<int>(self.Routine.AniState) : -1, focus.GetInstance() ? focus.GetName().GetText() : "-",
-              focus.GetInstance() == target ? 1 : 0, priority);
+    const eCEntityProxy proxy(target);
+    bCPropertyID::bSCore g;  // for the loot QA (contents, loottake) on an interact object (treasurediag)
+    std::memcpy(&g, &proxy.GetEntityID().GetCore(), 16);
+    sprintf_s(line, "USEINFO %s hero_task=%s hero_state=%s hero_pos=%.0f_%.0f_%.0f hero_ani=%d focus=%s focus_is_it=%d focus_priority=%d "
+              "guid=%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", text, self.Routine.GetCurrentTask().GetText(),
+              self.Routine.GetCurrentState().GetText(), at[0], at[1], at[2], hero ? static_cast<int>(self.Routine.AniState) : -1,
+              focus.GetInstance() ? focus.GetName().GetText() : "-", focus.GetInstance() == target ? 1 : 0, priority, g.Data1, g.Data2,
+              g.Data3, g.Data4[0], g.Data4[1], g.Data4[2], g.Data4[3], g.Data4[4], g.Data4[5], g.Data4[6], g.Data4[7]);
+    log(line);
+}
+
+void FindEntities(char const* prefix, LogFn log)
+{
+    char line[200];
+    int count = 0;
+    bTSmallArray<eCEntity*> const* every = Processed();
+    const size_t length = std::strlen(prefix);
+    for (GEU16 i = 0; every && i < every->GetCount() && count < 30; ++i) {
+        eCEntity* instance = every->GetAt(i);
+        if (!instance || std::strncmp(instance->GetName().GetText(), prefix, length) != 0) continue;
+        float p[3];
+        PositionOf(instance, p);
+        sprintf_s(line, "FINDENT name=%s pos=%.0f_%.0f_%.0f", instance->GetName().GetText(), p[0], p[1], p[2]);
+        log(line);
+        ++count;
+    }
+    sprintf_s(line, "FINDENTS end count=%d", count);
     log(line);
 }
 

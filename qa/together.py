@@ -32,7 +32,7 @@ import hangstack  # noqa: E402
 # Two pairs of test copies so that two agents can test in parallel (G3_PAIR=1 or 2; owner's approval 2026-10-18). Each pair
 # has its own copies, port and QA lock; pair 2 is created by runtime/make_pair2.py and checked by isolation/verify_pair2.py.
 PAIR = os.environ.get('G3_PAIR', '1')
-assert PAIR in ('1', '2'), 'G3_PAIR must be 1 or 2'
+assert PAIR.isdigit() and int(PAIR) >= 1, 'G3_PAIR must be 1, 2 or a further pair of runtime/make_pair.py (owner 24.10.)'
 _SUFFIX = '' if PAIR == '1' else PAIR
 COPIES = {'host': WORKSPACE/f'test-install{_SUFFIX}', 'client': WORKSPACE/f'test-client{_SUFFIX}'}
 PORT = 34566 + int(PAIR)
@@ -138,6 +138,28 @@ class NetSim:
         return self.stats
 
 
+class LaunchLock:
+    """One Gothic start at a time on this PC, across all QA runners (named mutex; Windows frees it if a runner dies)."""
+
+    def __init__(self, seconds=600):
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+        kernel.CreateMutexW.restype = ctypes.c_void_p
+        kernel.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        kernel.ReleaseMutex.argtypes = [ctypes.c_void_p]
+        kernel.CloseHandle.argtypes = [ctypes.c_void_p]
+        self.kernel = kernel
+        self.handle = kernel.CreateMutexW(None, False, r'Local\CoopAnything_Gothic3QA_Launch')
+        self.held = bool(self.handle) and kernel.WaitForSingleObject(self.handle, int(seconds * 1000)) in (0, 0x80)  # signaled or abandoned
+
+    def release(self):
+        if self.handle:
+            if self.held:
+                self.kernel.ReleaseMutex(self.handle)
+            self.kernel.CloseHandle(self.handle)
+            self.handle, self.held = None, False
+
+
 class Copy:
     def __init__(self, tag, run, deadline, report):
         self.tag, self.root, self.run, self.deadline, self.report = tag, COPIES[tag], run, deadline, report
@@ -154,7 +176,10 @@ class Copy:
         # Gothic 3 allows one running game per PC (named mutex GenomeMutex); a game that finds it exits at once with
         # code 0. With two pairs of test copies (two agents) any game may be the one holding it, so every game
         # releases it as soon as its QA hook answers, and a start that exits early is retried after a random pause.
+        # With three pairs side by side (24.10.) the starts kept colliding (a client: six starts, all at once gone): every
+        # runner of this PC starts its games one at a time, under one launch lock held until the game let go of the mutex.
         import random
+        launch_lock = LaunchLock()
         for attempt in range(6):
             for name in ('g3together.log', 'qa-engine.log', 'g3trace.log'):
                 (self.root/name).unlink(missing_ok=True)
@@ -177,9 +202,12 @@ class Copy:
             time.sleep(random.uniform(3, 12))
         place_on_second_screen(self.process.pid, 0 if self.tag == 'host' else 1)
         self.bot = Bot(self.process, self.run, self.deadline, root=self.root, name=self.tag)
-        if ready:
-            start = self.bot.send('releaselock')
-            self.bot.line('LOCK scan complete', 10, 'lock scan', start)
+        try:
+            if ready:
+                start = self.bot.send('releaselock')
+                self.bot.line('LOCK scan complete', 10, 'lock scan', start)
+        finally:
+            launch_lock.release()
         self.report['processes'][self.tag+'_pid'] = self.process.pid
         emit({'event': self.tag+'-started', 'pid': self.process.pid})
         return self
@@ -377,7 +405,7 @@ def stage2(copies, report, negative=False):
 # does (autoload). Stages that look at the raid itself (its orcs, kills, corpses or plunder) start a new game as before.
 POSTRAID_SLOT = 'G3T_PostRaid'
 POSTRAID_FIXTURE = WORKSPACE/f'runtime/fixtures/postraid-p{PAIR}'
-LIVE_RAID = {'animalscandiag', 'stageRaid', 'stageControl', 'stageNpcSpell', 'stagePoison', 'syncdiag', 'raiddiag', 'aggrodiag', 'soak',
+LIVE_RAID = {'stageLiberate', 'animalscandiag', 'stageRaid', 'stageControl', 'stageNpcSpell', 'stagePoison', 'syncdiag', 'raiddiag', 'aggrodiag', 'soak',
              'stage3c', 'stage5b', 'chestdiag', 'stageChest', 'quicklootdiag', 'stageQuickLoot', 'stageU1', 'stageReloadLoot', 'postraidsave'}
 # Stages that need the host in a new game nobody saved (stageS3: from the post-raid save the client's "own" save was made in
 # the host's campaign, so the host rightly let it in; regression 24.10.).
@@ -579,6 +607,395 @@ def use_field(line, key):
     return m[1] if m else None
 
 
+def quest_status(bot, quest):
+    line = report_line(bot, 'quest ' + quest, 'QUEST ')
+    m = re.search(r' status=(-?\d+)', line)
+    return int(m[1]) if m else None
+
+
+def stageEnterPlace(copies, report, negative=False):
+    """Quest type 8, enter a place (8 quests, Kapitel-Checkliste): one player reaching the destination fulfils the quest for
+    both. From the post-raid save the main quest Xardas_FindXardas ("Find Xardas!", destination Xardas_Tower) is running;
+    the client alone goes to Xardas and walks about there (the area's trigger fires on movement, a teleport alone did not
+    on 24.10.): on both machines the quest is a success, and both earn its experience (owner 21.10.: quest rewards for
+    everyone). G3_WHO=host: the host goes (positive control of the game's own trigger). G3_QUEST / G3_PLACE_AT pick another
+    quest and an NPC at its destination. Negative control: storyoff on both (the other one never hears of it)."""
+    quest = os.environ.get('G3_QUEST', 'Xardas_FindXardas')
+    spot = os.environ.get('G3_PLACE_AT', 'Xardas')
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    goer = host if os.environ.get('G3_WHO') == 'host' else client
+    other = client if goer is host else host
+    report['goer'] = goer.tag
+    if negative:
+        report['negative'] = [report_line(c.bot, 'storyoff', 'STORY') for c in (host, client)]
+    before = report['before'] = {c.tag: quest_status(c.bot, quest) for c in (host, client)}
+    assert before == {'host': 1, 'client': 1}, f'{quest} is not running on both: {before}'
+    xp = {c.tag: xp_of(c.bot) for c in (host, client)}
+    report['teleport'] = teleport_to(goer.bot, spot)
+    time.sleep(3)
+    report['walks'] = []
+    done = False
+    for index in (0, 2, 4, 6, 1, 5):
+        report['walks'].append(report_line(goer.bot, f'walkto {index}', ('WALKTO ', 'REFUSED walkto')))
+        until = time.monotonic() + 7
+        while time.monotonic() < until and not done:
+            done = quest_status(goer.bot, quest) == 2
+            time.sleep(1)
+        if done:
+            break
+    try:
+        assert done, f'{goer.tag}: {quest} not fulfilled at {spot}'
+        wait_for(lambda: quest_status(other.bot, quest) == 2, 20, f'the {other.tag} has {quest} fulfilled too')
+    finally:
+        report['after'] = {c.tag: quest_status(c.bot, quest) for c in (host, client)}
+        report['xp'] = {c.tag: (xp[c.tag], xp_of(c.bot)) for c in (host, client)}
+    assert all(a < b for a, b in report['xp'].values()), f"not both earned the quest's experience: {report['xp']}"
+
+
+def stageArtifactFound(copies, report, negative=False):
+    """Quest type 0 with the hero as destination (the main story's artefacts, Kapitel-Checkliste): the quest is fulfilled
+    when the hero holds the item. The host starts PC_Hero_FindAmulet ("The divine artefact of Trelis"), it runs on both;
+    the client alone comes by It_Artefact_Amulet: the quest is a success on both machines, and both earn its experience.
+    G3_QUEST / G3_ITEM pick another. Negative control: storyoff on both."""
+    quest = os.environ.get('G3_QUEST', 'PC_Hero_FindAmulet')
+    item = os.environ.get('G3_ITEM', 'It_Artefact_Amulet')
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    if negative:
+        report['negative'] = [report_line(c.bot, 'storyoff', 'STORY') for c in (host, client)]
+    report['run'] = report_line(host.bot, 'runquest ' + quest, 'QUEST ')
+    if not negative:
+        wait_for(lambda: quest_status(client.bot, quest) == 1, 20, f'the client has {quest} running too')
+    else:
+        report_line(client.bot, 'runquest ' + quest, 'QUEST ')
+    report['before'] = {c.tag: quest_status(c.bot, quest) for c in (host, client)}
+    xp = {c.tag: xp_of(c.bot) for c in (host, client)}
+    report['found'] = report_line(client.bot, 'receiveitem ' + item, ('RECEIVEITEM ', 'REFUSED receiveitem'))  # as a pickup: OnReceiveItem
+    try:
+        wait_for(lambda: quest_status(client.bot, quest) == 2, 30, f'the client fulfils {quest}')
+        wait_for(lambda: quest_status(host.bot, quest) == 2, 20, f'the host has {quest} fulfilled too')
+    finally:
+        report['after'] = {c.tag: quest_status(c.bot, quest) for c in (host, client)}
+        report['xp'] = {c.tag: (xp[c.tag], xp_of(c.bot)) for c in (host, client)}
+    assert all(a < b for a, b in report['xp'].values()), f"not both earned the quest's experience: {report['xp']}"
+
+
+def town_status(bot, town):
+    start = bot.send('enclaves', 20)
+    bot.line('ENCLAVES end', 15, 'enclaves', start)
+    m = re.search(r'ENCLAVE members=\d+ first=\S+ status=(\d+) enclave=' + re.escape(town) + ' ', bot.log()[start:])
+    return int(m[1]) if m else None
+
+
+def town_members(bot, town):
+    """QA murdercand: the town's members, [{'member', 'alive', 'counts', 'guid', ...}]."""
+    start = bot.send('murdercand ' + town, 20)
+    bot.line('MURDERCAND end', 15, 'murdercand', start)
+    return [dict(re.findall(r'(\w+)=(\S+)', l)) for l in bot.log()[start:].splitlines() if l.startswith('MURDERCAND enclave=')]
+
+
+def stageLiberate(copies, report, negative=False):
+    """Quest type 10, free a town (31 quests, Kapitel-Checkliste), as the game's opening does it: Ardea occupied by the raid's
+    orcs, the quest Ardea_Revolution ("Free Ardea from the orcs!"). From a new game, the joining player kills the raiders:
+    the host's with lethal claims (NotifyEnclave runs on the host for each death), the ones it simulates itself on its own
+    PC (NotifyEnclave there); when the raid is over, Ardea's status and the quest are the same on both PCs (the post-raid
+    save has Ardea at 2, Flee: freed). G3_WHO=host: the host ends the raid itself (QA killraiders, positive control).
+    G3_TOWN, G3_QUEST: another town. Negative control: townstatusoff on both, and the host ends the raid (the town turns
+    there only; before 24.10. its status never travelled). Not with the client's kills: when the last raider dies on the
+    client (one it simulates), both PCs turn the town themselves (negative control green 24.10. 19:35)."""
+    town = os.environ.get('G3_TOWN', 'Ardea')
+    quest = os.environ.get('G3_QUEST', 'Ardea_Revolution')
+    host, client = join_both(copies)
+    if negative:
+        report['negative'] = [report_line(c.bot, 'townstatusoff', 'TOWNSTATUSOFF ') for c in (host, client)]
+    if os.environ.get('G3_KILLCONFIRM') == 'off':  # the kill check's negative control (claims on raiders out of range)
+        report['killconfirm'] = report_line(host.bot, 'killconfirmoff', 'KILLCONFIRMOFF ')
+    report['before'] = {c.tag: {'status': town_status(c.bot, town), 'quest': quest_status(c.bot, quest)} for c in (host, client)}
+    if os.environ.get('G3_WHO') == 'host' or negative:
+        clear_raid(host, report)
+    else:
+        report_line(client.bot, 'arm ' + WEAPON, 'ARM ')
+        kills, quiet, claimed = [], 0, {}
+        for _ in range(30):
+            # The host's raiders near the host (lethal claims), the client's own near the client (it kills them itself, the
+            # game's way), and the town's raiders far from both (40 m lists; one walked off in a netsim run: claims by GUID).
+            near = {g: v for g, v in npcs(host.bot).items() if v['name'].startswith('Orc_') and not v['dead'] and v['hp'] > 0}
+            raiders = [g for g, v in near.items() if not v['mirrored']]
+            own = {g: v['name'] for g, v in npcs(client.bot).items() if v['name'].startswith('Orc_') and not v['dead'] and v['hp'] > 0
+                   and not v['mirrored'] and g not in raiders}
+            far = [m['guid'] for m in town_members(host.bot, town) if m['member'].startswith('Orc_') and m['alive'] == '1'
+                   and m['guid'] not in near and m['guid'] not in own]
+            if far:
+                report.setdefault('far', []).append(len(far))
+            for guid in raiders + far:
+                claimed[guid] = claimed.get(guid, 0) + 1
+                report_line(client.bot, f'hitnpcburst {guid}_1', ('HITNPCBURST ', 'REFUSED hitnpcburst'))
+                time.sleep(0.3)
+            for name in own.values():
+                report.setdefault('client_own', []).append(report_line(client.bot, 'farkill ' + name, ('FARKILL ', 'REFUSED farkill')))
+            raiders += far + list(own)
+            kills.append(len(raiders))
+            quiet = quiet + 1 if not raiders else 0
+            if quiet >= 3:
+                break
+            time.sleep(5)
+        report['client_kills'] = kills
+        report['host_killonce'] = report_line(host.bot, 'killreport', 'KILLONCE ')  # undone=: claim kills that did not take
+        assert quiet >= 3, f'the raid did not end: {kills}'
+        stubborn = {g: n for g, n in claimed.items() if n > 5}  # before 24.10.: three raiders took claims for 14 rounds
+        assert not stubborn, f'raiders the client claimed in more than five rounds without dying: {stubborn}'
+    time.sleep(8)
+    try:
+        wait_for(lambda: town_status(host.bot, town) == 2, 30, f'{town} is freed (Flee) on the host')
+        wait_for(lambda: quest_status(host.bot, quest) == 2, 20, f'{quest} is a success on the host')
+        wait_for(lambda: quest_status(client.bot, quest) == 2, 20, f'{quest} is a success on the client')
+        wait_for(lambda: town_status(client.bot, town) == 2, 20, f'{town} is freed on the client too')
+    finally:
+        report['after'] = {c.tag: {'status': town_status(c.bot, town), 'quest': quest_status(c.bot, quest)} for c in (host, client)}
+
+
+def stageDefeatQuest(copies, report, negative=False):
+    """Quest types 3 and 4, defeat or drive away (13 quests, Kapitel-Checkliste): a knock-out of the quest's NPC fulfils the
+    quest, also when the joining player beats it (the host knocks it out for that player's claim, with the puppet as the
+    attacker, stageMurder). Default Otis_DriveAwayMerc01 ("Drive the tired mercenary away", Trano in Montera). G3_WHO=host:
+    the host beats Trano itself (positive control). G3_QUEST, G3_TARGET: another quest; G3_DUEL=1: a duel (duelhero), as the
+    duel quests (Folleck_DefeatHim, Sivert_Defeat ...) start it. Negative control: storyoff on both."""
+    quest = os.environ.get('G3_QUEST', 'Otis_DriveAwayMerc01')
+    name = os.environ.get('G3_TARGET', 'Trano')
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    striker = host if os.environ.get('G3_WHO') == 'host' else client
+    other = client if striker is host else host
+    report['striker'] = striker.tag
+    if negative:
+        report['negative'] = [report_line(c.bot, 'storyoff', 'STORY') for c in (host, client)]
+    report['teleport'] = [teleport_to(c.bot, name) for c in (host, client)]
+    if striker is client:  # the host stays near (it simulates Trano), out of the fight
+        x, y, z = hero_pos(host.bot)
+        move_hero(host.bot, (x + 700, y, z))
+    time.sleep(6)
+    report['run'] = report_line(host.bot, 'runquest ' + quest, 'QUEST ')
+    if not negative:
+        wait_for(lambda: quest_status(client.bot, quest) == 1, 20, f'the client has {quest} running too')
+    report['before'] = {c.tag: quest_status(c.bot, quest) for c in (host, client)}
+    guid = next((g for g, v in npcs(host.bot).items() if v['name'] == name and not v['dead']), None)
+    assert guid, f'{name} is not among the host NPCs'
+    report_line(striker.bot, 'arm ' + WEAPON, 'ARM ')
+    if os.environ.get('G3_DUEL') == '1':  # a duel quest: the fight starts as the quest's dialog starts it (stageA4)
+        report['duel'] = report_line(striker.bot, 'duelhero ' + name, 'DUELHERO ')
+        time.sleep(3)
+    report_line(host.bot, f'npchp {name}_30', 'NPCHP ')
+    report['hits'] = []
+    state = {}
+    for _ in range(25):
+        hit = hit_npc(striker.bot, guid)
+        report['hits'].append(hit['line'][-90:])
+        time.sleep(0.8)
+        state = npcs(host.bot).get(guid, {})
+        if state.get('dead') or state.get('task') in KO_TASKS:
+            break
+        time.sleep(0.6)
+    report['state'] = state
+    assert state.get('task') in KO_TASKS and not state.get('dead'), f'{name} was not knocked out: {state}'
+    try:
+        wait_for(lambda: quest_status(striker.bot, quest) == 2, 30, f'{quest} is a success for the {striker.tag}')
+        wait_for(lambda: quest_status(other.bot, quest) == 2, 20, f'{quest} is a success for the {other.tag} too')
+    finally:
+        report['after'] = {c.tag: quest_status(c.bot, quest) for c in (host, client)}
+
+
+def find_ents(bot, prefix):
+    start = bot.send('findents ' + prefix, 20)
+    bot.line('FINDENTS end', 10, 'findents', start)
+    return [tuple(float(v) for v in m[1].split('_')) for m in re.finditer(r'FINDENT name=\S+ pos=(\S+)', bot.log()[start:])]
+
+
+def stageHailCopy(copies, report, negative=False):
+    """P6, a partner's hailstorm falls where the partner is: the copy of a summon (MagicSummon replayed by the caster's puppet)
+    spawns its weather Wth_Hailstorm at Entity::GetPlayer and pulls it there; summon.cpp puts it back on the puppet every frame.
+    The client, 30 m from the host, casts a hailstorm; on the host the hail stands at the client's puppet, not at the host's
+    hero. Negative control: weatherfollowoff on the host."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    if negative:
+        report['negative'] = report_line(host.bot, 'weatherfollowoff', 'WEATHERFOLLOWOFF ')
+    x, y, z = hero_pos(host.bot)
+    move_hero(client.bot, (x + 3000, y, z))
+    time.sleep(4)
+    near = min(((g, v) for g, v in npcs(client.bot).items() if not v['dead']), key=lambda gv: distance(gv[1]['pos'], hero_pos(client.bot)))
+    report['ready'] = report_line(client.bot, 'ready It_Spell_Hailstorm', 'READY ')[6:200]
+    report['cast'] = report_line(client.bot, 'castat ' + near[0], 'CASTAT ')[7:300]
+    time.sleep(6)
+    snap(host, 'hail', report)  # for a look at the picture: where the host sees the client's hail
+    snap(client, 'hail', report)
+    host_hero, client_hero = hero_pos(host.bot), hero_pos(client.bot)
+    hail = report['host_hail'] = find_ents(host.bot, 'Wth_Hail')
+    report['client_hail'] = find_ents(client.bot, 'Wth_Hail')
+    report['weather'] = report_line(host.bot, 'weather', 'WEATHER ')
+    assert hail, 'no hailstorm weather on the host'
+    report['distances'] = [(round(distance(h, client_hero)), round(distance(h, host_hero))) for h in hail]
+    assert all(dc < dh for dc, dh in report['distances']), f"on the host the hail is at the host's hero, not at the caster: {report['distances']}"
+
+
+def followdiag(copies, report, negative=False):
+    """P9 measurement (Kapitel-Checkliste: Folgen, 57 quests): with a follow quest running, the guide NPC on the host picks its
+    guiding by the running quest (SelectRoutineTask) and guides Entity::GetPlayer, the host's hero. Here the client stands at
+    the guide, the host 30 m away; the guide's task and position on the host over 40 s, and the quest on both. G3_QUEST,
+    G3_GUIDE: another follow quest (default Gorn_ShowReddock). G3_WHO=host: the host stands at the guide instead. Diagnostic."""
+    quest = os.environ.get('G3_QUEST', 'Gorn_ShowReddock')
+    guide = os.environ.get('G3_GUIDE', 'Gorn')
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    near, far = (host, client) if os.environ.get('G3_WHO') == 'host' else (client, host)
+    report['near'] = near.tag
+    teleport_to(near.bot, guide)
+    teleport_to(far.bot, guide)
+    x, y, z = hero_pos(far.bot)
+    move_hero(far.bot, (x + 3000, y, z))
+    time.sleep(4)
+    report['run'] = report_line(host.bot, 'runquest ' + quest, 'QUEST ')
+    report['routine'] = report_line(host.bot, 'npcroutine ' + guide, ('NPCROUTINE ', 'REFUSED npcroutine'))  # as at the dialog's end
+    report['samples'] = []
+    for _ in range(20):
+        time.sleep(2)
+        state = next((v for v in npcs(host.bot).values() if v['name'] == guide), {})
+        report['samples'].append((state.get('task'), [round(c) for c in state.get('pos', ())], [round(c) for c in hero_pos(near.bot)],
+                                  [round(c) for c in hero_pos(far.bot)]))
+    report['quest'] = {c.tag: quest_status(c.bot, quest) for c in (host, client)}
+    report['status_note'] = 'diagnostic only'
+
+
+def soultraveldiag(copies, report, negative=False):
+    """P6 measurement (soul travel, MagicSoulTravel: a ghost PC_Hero_Ghost through StartTransform, the body stays where it
+    was cast): the client casts it 10 m from the host and walks the ghost away; per sample the client's body (findnpc PC_Hero),
+    its controlled body (HEROPOS: the ghost), and on the host the client's puppet (position, shape). Diagnostic."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    x, y, z = hero_pos(host.bot)
+    move_hero(client.bot, (x + 1000, y, z))
+    time.sleep(3)
+    find_pos = lambda bot, name: (lambda l: tuple(round(float(v)) for v in l.split('pos=')[1].split()[0].split('_')) if 'found=1' in l else None)(
+        report_line(bot, 'findnpc ' + name, 'FIND '))
+
+    def sample(tag):
+        r = remotes(host.bot).get(2, {})
+        pose = puppet_pose(host.bot, 2) or {}
+        report['samples'].append({'at': tag, 'client_body': find_pos(client.bot, 'PC_Hero'),
+                                  'client_controlled': [round(c) for c in hero_pos(client.bot)],
+                                  'host_puppet': [round(c) for c in r.get('puppet_pos', ())], 'host_shape': pose.get('shape'),
+                                  'host_body': pose.get('body')})
+
+    report['samples'] = []
+    sample('before')
+    report_line(client.bot, 'mana', 'MANA ')
+    report['ready'] = report_line(client.bot, 'ready It_Spell_SoulTravel', 'READY ')[6:200]
+    near = min(((g, v) for g, v in npcs(client.bot).items() if not v['dead']), key=lambda gv: distance(gv[1]['pos'], hero_pos(client.bot)))
+    report['cast'] = report_line(client.bot, 'castat ' + near[0], 'CASTAT ')[7:300]
+    time.sleep(2)
+    report['state'] = report_line(client.bot, 'transformstate', 'TRANSFORMSTATE ')
+    sample('cast')
+    for i in range(4):
+        report_line(client.bot, 'walkby 0', ('WALKBY ',))
+        time.sleep(3)
+        sample(f'walk{i}')
+    for i in range(4):
+        time.sleep(5)
+        sample(f'later{i}')
+    report['state_after'] = report_line(client.bot, 'transformstate', 'TRANSFORMSTATE ')
+    report['status_note'] = 'diagnostic only'
+
+
+def inventory_of(bot):
+    start = bot.send('inventory', 20)
+    bot.line('INV end', 10, 'inventory', start)
+    found = {}
+    for m in re.finditer(r'INV name=(\S+) amount=(-?\d+)', bot.log()[start:]):
+        found[m[1]] = found.get(m[1], 0) + int(m[2])
+    return found
+
+
+def treasurediag(copies, report, negative=False, prepare=None):
+    """P1 measurement, a pirate treasure (PS_Interact_PirateTreasure: a shovel in hand, the treasure's loot from the game's
+    treasure sets, a game event): the one in Faring (objectscan 24.10.: 46 m from Tarok). Both stand at it; the host digs,
+    then the client; per player what it gained and the treasure as both machines see it. Can both dig up the same
+    treasure? G3_TREASURE, G3_TREASURE_AT ("x_y_z"), G3_NEAR (an NPC to teleport to first), G3_TREASURE_ITEM (given to the
+    digger first; default It_Shovel, - for none), G3_FIRST=client: the client digs first. Diagnostic."""
+    name = os.environ.get('G3_TREASURE', 'G3_Object_Interact_PirateTreasure_01')
+    at = tuple(float(v) for v in os.environ.get('G3_TREASURE_AT', '59531_4645_57760').split('_'))
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    if prepare:
+        prepare(host, client)
+    for c, dz in ((host, 80), (client, -80)):  # both west of it: the host east of it (+150) did not start digging (20:16)
+        teleport_to(c.bot, os.environ.get('G3_NEAR', 'Tarok'))
+        time.sleep(3)
+        move_hero(c.bot, (at[0] - 150, at[1] + 50, at[2] + dz))
+    time.sleep(6)
+    report['before'] = {c.tag: use_info(c.bot, name) for c in (host, client)}
+    order = ((client, host), (host, client)) if os.environ.get('G3_FIRST') == 'client' else ((host, client), (client, host))
+    for digger, other in order:
+        tool = os.environ.get('G3_TREASURE_ITEM', 'It_Shovel')  # the first run without one: PS_Interact, then back at once
+        if tool != '-':
+            report[digger.tag + '_tool'] = report_line(digger.bot, 'receiveitem ' + tool, ('RECEIVEITEM ', 'REFUSED receiveitem'))
+        before = inventory_of(digger.bot)
+        report[digger.tag + '_use'] = report_line(digger.bot, 'use ' + name, ('USE ', 'REFUSED use'))
+        states = []
+        for _ in range(15):
+            time.sleep(1)
+            states.append(use_field(use_info(digger.bot, name), 'hero_state'))
+        report[digger.tag + '_states'] = sorted(set(s for s in states if s))
+        # The loot lies in the treasure (GeneratePlunderInvFromTreasureSets): what each machine sees in it, then the digger
+        # takes it all (QA loottake, as from the loot window).
+        guid = use_field(use_info(digger.bot, name), 'guid')
+        report[digger.tag + '_loot'] = {c.tag: report_line(c.bot, 'contents ' + guid, ('CONTENTS ', 'REFUSED contents')) for c in (host, client)}
+        taken = report[digger.tag + '_taken'] = []
+        for _ in range(12):
+            line = report_line(digger.bot, 'loottake ' + guid, ('LOOTTAKE ', 'REFUSED loottake'))
+            if 'REFUSED' in line:
+                break
+            taken.append(line[9:])
+        time.sleep(2)
+        report[digger.tag + '_loot_after'] = {c.tag: report_line(c.bot, 'contents ' + guid, ('CONTENTS ', 'REFUSED contents')) for c in (host, client)}
+        after = inventory_of(digger.bot)
+        report[digger.tag + '_gained'] = {k: after.get(k, 0) - before.get(k, 0) for k in set(after) | set(before) if after.get(k, 0) != before.get(k, 0)}
+        report[digger.tag + '_dug_sees'] = {c.tag: use_info(c.bot, name) for c in (host, client)}
+        # The loot window (PS_HUD_Loop) keeps the digger the treasure's user, so the other is refused ("... is using this.",
+        # 20:20): close it as the Escape key does, then the other tries the same treasure.
+        post_key(digger.process.pid, 0x1B)
+        time.sleep(3)
+        report[digger.tag + '_closed'] = {c.tag: use_info(c.bot, name) for c in (host, client)}
+        # Single-player check: may the digger dig it again?
+        report[digger.tag + '_again'] = report_line(digger.bot, 'use ' + name, ('USE ', 'REFUSED use'))
+        again = []
+        for _ in range(8):
+            time.sleep(1)
+            again.append(use_field(use_info(digger.bot, name), 'hero_state'))
+        report[digger.tag + '_again_states'] = sorted(set(a for a in again if a))
+        post_key(digger.process.pid, 0x1B)
+        time.sleep(3)
+    report['status_note'] = 'diagnostic only'
+
+
+def stageTreasure(copies, report, negative=False):
+    """P1, a pirate treasure is looted once: the joining player digs up the one in Faring (treasurediag) and takes all
+    its loot; it gains each item once, the treasure is empty on both PCs, and the host, digging after it, finds nothing.
+    Before 24.10. the client's loot window of a treasure was not its open container: its takes were never sent, the
+    host's contents came back, and it took them again (ore 10 of 5; the host then took all 5 as well). Negative control:
+    containersyncoff interact on the client."""
+    os.environ.setdefault('G3_FIRST', 'client')
+    prepare = (lambda host, client: report.__setitem__('negative', report_line(client.bot, 'containersyncoff interact', 'CONTAINERSYNCOFF '))) if negative else None
+    treasurediag(copies, report, prepare=prepare)
+    report.pop('status_note', None)
+    items = lambda line: {} if line.endswith('items=-') else {k: int(v) for k, v in (x.split(':') for x in line.split(' items=')[1].split(','))}
+    loot = items(report['client_loot']['client'])
+    assert loot, f"the client's dig found no loot: {report['client_loot']}"
+    assert report['client_gained'] == loot, f"the client gained {report['client_gained']} from loot {loot}"
+    after = {tag: items(line) for tag, line in report['client_loot_after'].items()}
+    assert after == {'host': {}, 'client': {}}, f'the treasure is not empty after the take: {after}'
+    assert not report['host_gained'], f"the host took the treasure's loot again: {report['host_gained']}"
+
+
 def hp_counters(bot):
     line = report_line(bot, 'hp', 'HP ')
     return {k: int(v) for k, v in re.findall(r' (claims_sent|npc_hits_sent|xp_awarded|xp)=(-?\d+)', line)}
@@ -774,7 +1191,7 @@ def stageMurder(copies, report, negative=False):
     town, good = murder_town(host, report)
     local_victim, remote_victim = good[0], good[1]
     if negative:
-        off = 'remotekooff' if os.environ.get('G3_MURDER_OFF') == 'ko' else 'remotemurdersoff'
+        off = {'ko': 'remotekooff', 'queue': 'creditqueueoff'}.get(os.environ.get('G3_MURDER_OFF', ''), 'remotemurdersoff')
         report['negative'] = report_line(host.bot, off, off.upper() + ' ')
     # (1) Positive control: the host's hero, with its own hits, until the game sets a death task.
     teleport_to(host.bot, local_victim)
@@ -837,6 +1254,9 @@ def stageMurder(copies, report, negative=False):
     report['ko_by'] = 'host' if host_ko else 'client'
     # (3) The client finishes it.
     time.sleep(4)
+    hold = os.environ.get('G3_CREDIT_HOLD')  # personal: the killer counts as out of the host's world that many ms
+    if hold:
+        report['credit_hold'] = report_line(host.bot, 'credithold ' + hold, 'CREDITHOLD ')
     report['finish_hits'] = []
     for _ in range(30):
         hit = hit_npc(client.bot, guid)
@@ -903,21 +1323,24 @@ def stage3b(copies, report, negative=False):
     client_at = remotes(host.bot)[2]['pos']
     near = [g for g in candidates if distance(client_npcs[g]['pos'], client_at) < 2000] or candidates
     orcs = [g for g in near if host_npcs[g]['name'].startswith('Orc_')] or near
-    target = max(orcs, key=lambda g: (host_npcs[g]['hp'], g))
-    report['target'] = {'guid': target, 'name': host_npcs[target]['name'], 'hp': host_npcs[target]['hp']}
     if negative:
         start = client.bot.send('combatoff', 20)
         assert 'ok=1' in client.bot.line('COMBATOFF ', 10, 'combatoff', start)
     # A: one client hit. Undone locally at once, applied on the host, mirrored back.
-    host_before = host_npcs[target]['hp']
-    first = hit_npc(client.bot, target)
-    # A raider in a fight may parry (task ZS_Parade*): no damage, so nothing to claim. Game behaviour, swing again.
-    for _ in range(3):
+    # A raider in a fight may parry (task ZS_Parade*): no damage, so nothing to claim. Game behaviour, swing again; one that
+    # parried four hits in a row goes on parrying for a while (Scout_01 twice on 24.10.): the next sturdiest then.
+    for target in sorted(orcs, key=lambda g: (host_npcs[g]['hp'], g), reverse=True)[:3]:
+        report['target'] = {'guid': target, 'name': host_npcs[target]['name'], 'hp': host_npcs[target]['hp']}
+        host_before = npcs(host.bot).get(target, host_npcs[target])['hp']
+        first = hit_npc(client.bot, target)
+        for _ in range(3):
+            if first['claim_sent'] or 'task=ZS_Parade' not in first['line']:
+                break
+            report.setdefault('parried', []).append(first['line'])
+            time.sleep(2)
+            first = hit_npc(client.bot, target)
         if first['claim_sent'] or 'task=ZS_Parade' not in first['line']:
             break
-        report.setdefault('parried', []).append(first['line'])
-        time.sleep(2)
-        first = hit_npc(client.bot, target)
     report['first_hit'] = first['line']
     assert first['after'] == first['before'], 'Client changed the NPC\'s hit points itself: '+first['line']
     assert first['claim_sent'] == 1, 'No hit claim sent: '+first['line']
@@ -8780,13 +9203,16 @@ def objectscan(copies, report, negative=False):
     """P1: where are the orc boulders, the Innos and Beliar statues (shrines), anvils and pirate treasures? Their templates
     (Templates.pak: G3_Object_Interact_Animated_OrcBoulder_*, *_Innos_Statue_01, *_Beliar_Statue_01, *_Anvil_01,
     *_PirateTreasure_01) say what to look for; the world data does not say where. The host alone teleports to the first
-    member of every town (QA enclaves) and lists those objects within 80 m. Diagnostic."""
+    member of every town (QA enclaves) and lists those objects within 80 m, by name or use script (OB_Faring_Boulder: a
+    boulder in Faring). G3_AT: NPC names (comma separated) to look around instead of the towns. Diagnostic."""
     host = copies['host'].launch()
     enter_world(host)
     start = host.bot.send('enclaves', 20)
     host.bot.line('ENCLAVES end', 15, 'enclaves', start)
     towns = [m.groups() for m in re.finditer(r'ENCLAVE members=\d+ first=(\S+) status=\d+ enclave=(\S+)', host.bot.log()[start:])]
-    wanted = ('OrcBoulder', 'Statue', 'Anvil', 'PirateTreasure', 'Shrine', 'Altar')
+    if os.environ.get('G3_AT'):
+        towns = [(name, name) for name in os.environ['G3_AT'].split(',')]
+    wanted = ('OrcBoulder', 'Boulder', 'Statue', 'Anvil', 'PirateTreasure', 'Shrine', 'Altar')
     report['found'] = {}
     report['spots'] = {}
     for first, town in towns:
@@ -8798,7 +9224,7 @@ def objectscan(copies, report, negative=False):
             continue
         time.sleep(6)
         for u in usables(host.bot, 'all8000'):
-            if any(w in u['name'] for w in wanted):
+            if any(w in u['name'] or w in u['usefunc'] for w in wanted):
                 report['found'].setdefault(u['name'], []).append({'town': town, 'at': first, 'pos': u['pos'], 'usetype': u['usetype'],
                                                                    'usefunc': u['usefunc'], 'distance': u['distance']})
     report['status_note'] = 'diagnostic only'
@@ -8966,7 +9392,7 @@ def parity(copies, report, negative=False):
     report['client_connect_attempts'] = client.mod_log().count('net: connecting to')
 
 
-SUITES = {'stageShapeFight': stageShapeFight, 'objectscan': objectscan, 'stageEdgeClaim': stageEdgeClaim, 'stageSharedUse': stageSharedUse, 'stagePickPocket': stagePickPocket, 'stageMurder': stageMurder, 'questdumpdiag': questdumpdiag, 'stageHostUnreachable': stageHostUnreachable, 'menutextdiag': menutextdiag, 'stageSubtitles': stageSubtitles, 'stageWitness': stageWitness, 'stageTogether': stageTogether, 'stageRansack': stageRansack, 'stageMapMarks': stageMapMarks, 'stageTradeQuality': stageTradeQuality, 'stageTradeKeys': stageTradeKeys, 'fakebreaddiag': fakebreaddiag, 'stageCorpseProp': stageCorpseProp, 'fakebreadlivediag': fakebreadlivediag, 'stagePlayerTrade': stagePlayerTrade, 'stageTradePrice': stageTradePrice, 'skilldiag': skilldiag, 'stageW10': stageW10, 'stageW8': stageW8, 'stageW9': stageW9, 'stageTradeGoods': stageTradeGoods, 'postraidsave': postraidsave, 'puppettalkdiag': puppettalkdiag, 'stageGlide': stageGlide, 'stageWear': stageWear, 'stageW1': stageW1, 'stageW2': stageW2, 'stageW3': stageW3, 'stageW4': stageW4, 'stageW5': stageW5, 'stageW6': stageW6, 'stageW7': stageW7, 'stageX1': stageX1, 'stageF1': stageF1, 'brentondiag': brentondiag, 'xpinfodiag': xpinfodiag, 'stageA4': stageA4, 'stageA3': stageA3, 'stageQ2': stageQ2, 'stageK1': stageK1, 'stageS1': stageS1, 'stageS2': stageS2, 'stageS3': stageS3, 'stageCallAnimals': stageCallAnimals, 'callanimals2diag': callanimals2diag, 'animalscandiag': animalscandiag, 'callanimalsdiag': callanimalsdiag, 'stageOpenLocks': stageOpenLocks, 'stageSelfSpell': stageSelfSpell, 'selfspelldiag': selfspelldiag, 'stageNetOutage': stageNetOutage, 'stageR2': stageR2, 'stageM2': stageM2, 'stageRaid': stageRaid, 'stageM1': stageM1, 'stageR1': stageR1, 'theftdiag': theftdiag, 'stageCreature': stageCreature, 'stageCreatureLife': stageCreatureLife, 'stageControl': stageControl, 'stageNpcSpell': stageNpcSpell, 'stagePoison': stagePoison, 'theftscan': theftscan, 'doorlatediag': doorlatediag, 'doordiag': doordiag, 'worldscan': worldscan, 'usediag': usediag, 'friendlydiag': friendlydiag, 'parity': parity, 'scriptfinddiag': scriptfinddiag, 'tracediag': tracediag, 'deaddiag': deaddiag, 'stageL': stageL, 'stageP3a': stageP3a, 'invariantself': invariantself, 'puppetposediag': puppetposediag, 'syncdiag': syncdiag, 'ownerdiag': ownerdiag, 'potiondiag': potiondiag, 'transformdiag': transformdiag, 'rangeddiag': rangeddiag, 'rangedbot': rangedbot, 'stageP1': stageP1, 'stageP2': stageP2, 'stageP2hit': stageP2hit, 'stageP2fire': stageP2fire, 'stageHealOther': stageHealOther, 'raiddiag': raiddiag, 'arrowtouchdiag': arrowtouchdiag, 'scriptdumpdiag': scriptdumpdiag, 'stageT': stageT, 'stageV5': stageV5, 'stageV4': stageV4, 'posediag': posediag, 'stageV3': stageV3, 'stageV1': stageV1, 'stageV2': stageV2, 'viewdiag': viewdiag, 'stageE5': stageE5, 'stageQ': stageQ, 'questdiag': questdiag, 'stageE4': stageE4, 'infodescdiag': infodescdiag, 'stageE3': stageE3, 'stageE2': stageE2, 'stageE1': stageE1, 'aggrodiag': aggrodiag, 'stageH3b': stageH3b, 'infoscandiag': infoscandiag, 'gotodiag2': gotodiag2, 'walkdiag': walkdiag, 'gotodiag': gotodiag, 'navdiag': navdiag, 'soak': soak, 'stageH2': stageH2, 'stageH1': stageH1, 'infodiag': infodiag, 'stageG2': stageG2, 'stageG': stageG, 'stageD3b': stageD3b, 'stageD3a': stageD3a, 'stageD2': stageD2, 'stageD1': stageD1, 'stageC': stageC, 'stageB': stageB, 'stageA2': stageA2, 'stageA': stageA, 'herodeathdiag': herodeathdiag, 'herodiag': herodiag, 'givexpdiag': givexpdiag, 'stage3c': stage3c, 'farwritediag': farwritediag, 'stage1': stage1, 'stage2': stage2, 'animdiag': animdiag, 'stage3a': stage3a, 'scriptdiag': scriptdiag,
+SUITES = {'stageTreasure': stageTreasure, 'treasurediag': treasurediag, 'soultraveldiag': soultraveldiag, 'followdiag': followdiag, 'stageHailCopy': stageHailCopy, 'stageDefeatQuest': stageDefeatQuest, 'stageLiberate': stageLiberate, 'stageArtifactFound': stageArtifactFound, 'stageEnterPlace': stageEnterPlace, 'stageShapeFight': stageShapeFight, 'objectscan': objectscan, 'stageEdgeClaim': stageEdgeClaim, 'stageSharedUse': stageSharedUse, 'stagePickPocket': stagePickPocket, 'stageMurder': stageMurder, 'questdumpdiag': questdumpdiag, 'stageHostUnreachable': stageHostUnreachable, 'menutextdiag': menutextdiag, 'stageSubtitles': stageSubtitles, 'stageWitness': stageWitness, 'stageTogether': stageTogether, 'stageRansack': stageRansack, 'stageMapMarks': stageMapMarks, 'stageTradeQuality': stageTradeQuality, 'stageTradeKeys': stageTradeKeys, 'fakebreaddiag': fakebreaddiag, 'stageCorpseProp': stageCorpseProp, 'fakebreadlivediag': fakebreadlivediag, 'stagePlayerTrade': stagePlayerTrade, 'stageTradePrice': stageTradePrice, 'skilldiag': skilldiag, 'stageW10': stageW10, 'stageW8': stageW8, 'stageW9': stageW9, 'stageTradeGoods': stageTradeGoods, 'postraidsave': postraidsave, 'puppettalkdiag': puppettalkdiag, 'stageGlide': stageGlide, 'stageWear': stageWear, 'stageW1': stageW1, 'stageW2': stageW2, 'stageW3': stageW3, 'stageW4': stageW4, 'stageW5': stageW5, 'stageW6': stageW6, 'stageW7': stageW7, 'stageX1': stageX1, 'stageF1': stageF1, 'brentondiag': brentondiag, 'xpinfodiag': xpinfodiag, 'stageA4': stageA4, 'stageA3': stageA3, 'stageQ2': stageQ2, 'stageK1': stageK1, 'stageS1': stageS1, 'stageS2': stageS2, 'stageS3': stageS3, 'stageCallAnimals': stageCallAnimals, 'callanimals2diag': callanimals2diag, 'animalscandiag': animalscandiag, 'callanimalsdiag': callanimalsdiag, 'stageOpenLocks': stageOpenLocks, 'stageSelfSpell': stageSelfSpell, 'selfspelldiag': selfspelldiag, 'stageNetOutage': stageNetOutage, 'stageR2': stageR2, 'stageM2': stageM2, 'stageRaid': stageRaid, 'stageM1': stageM1, 'stageR1': stageR1, 'theftdiag': theftdiag, 'stageCreature': stageCreature, 'stageCreatureLife': stageCreatureLife, 'stageControl': stageControl, 'stageNpcSpell': stageNpcSpell, 'stagePoison': stagePoison, 'theftscan': theftscan, 'doorlatediag': doorlatediag, 'doordiag': doordiag, 'worldscan': worldscan, 'usediag': usediag, 'friendlydiag': friendlydiag, 'parity': parity, 'scriptfinddiag': scriptfinddiag, 'tracediag': tracediag, 'deaddiag': deaddiag, 'stageL': stageL, 'stageP3a': stageP3a, 'invariantself': invariantself, 'puppetposediag': puppetposediag, 'syncdiag': syncdiag, 'ownerdiag': ownerdiag, 'potiondiag': potiondiag, 'transformdiag': transformdiag, 'rangeddiag': rangeddiag, 'rangedbot': rangedbot, 'stageP1': stageP1, 'stageP2': stageP2, 'stageP2hit': stageP2hit, 'stageP2fire': stageP2fire, 'stageHealOther': stageHealOther, 'raiddiag': raiddiag, 'arrowtouchdiag': arrowtouchdiag, 'scriptdumpdiag': scriptdumpdiag, 'stageT': stageT, 'stageV5': stageV5, 'stageV4': stageV4, 'posediag': posediag, 'stageV3': stageV3, 'stageV1': stageV1, 'stageV2': stageV2, 'viewdiag': viewdiag, 'stageE5': stageE5, 'stageQ': stageQ, 'questdiag': questdiag, 'stageE4': stageE4, 'infodescdiag': infodescdiag, 'stageE3': stageE3, 'stageE2': stageE2, 'stageE1': stageE1, 'aggrodiag': aggrodiag, 'stageH3b': stageH3b, 'infoscandiag': infoscandiag, 'gotodiag2': gotodiag2, 'walkdiag': walkdiag, 'gotodiag': gotodiag, 'navdiag': navdiag, 'soak': soak, 'stageH2': stageH2, 'stageH1': stageH1, 'infodiag': infodiag, 'stageG2': stageG2, 'stageG': stageG, 'stageD3b': stageD3b, 'stageD3a': stageD3a, 'stageD2': stageD2, 'stageD1': stageD1, 'stageC': stageC, 'stageB': stageB, 'stageA2': stageA2, 'stageA': stageA, 'herodeathdiag': herodeathdiag, 'herodiag': herodiag, 'givexpdiag': givexpdiag, 'stage3c': stage3c, 'farwritediag': farwritediag, 'stage1': stage1, 'stage2': stage2, 'animdiag': animdiag, 'stage3a': stage3a, 'scriptdiag': scriptdiag,
           'stage3b': stage3b, 'combatdiag': combatdiag, 'stackdiag': stackdiag, 'stage4': stage4, 'stage4b': stage4b, 'talkdiag': talkdiag, 'namesdiag': namesdiag, 'talkdiag2': talkdiag2, 'stage4c': stage4c, 'itemdiag': itemdiag, 'stage5': stage5, 'lootdiag': lootdiag, 'stage5b': stage5b, 'stage5c': stage5c, 'chestdiag': chestdiag, 'stageChest': stageChest, 'quicklootdiag': quicklootdiag, 'radiusdiag': radiusdiag, 'pausediag': pausediag, 'savediag': savediag, 'stageQuickLoot': stageQuickLoot, 'tradediag': tradediag, 'stageTrade': stageTrade, 'spellfuncdiag': spellfuncdiag, 'stageDialogAudio': stageDialogAudio, 'listendiag': listendiag, 'stageU1': stageU1, 'stageBigTrade': stageBigTrade, 'stageReloadLoot': stageReloadLoot}
 
 
@@ -9082,20 +9508,20 @@ def main():
         assert any(e['file'] == OURS for e in receipt['files']) and 'scripts/Script_G3Coop.dll' in receipt.get('disabled', []), \
             'Run profile.py together first'
         mod_sha = next(e['sha256'] for e in receipt['files'] if e['file'] == OURS)
-        checks = ('verify.py', 'verify_client.py')
+        checks = (('verify.py',), ('verify_client.py',))
     else:
-        deployed = WORKSPACE/'runtime/pair2-deployment.json'
-        assert deployed.is_file(), 'Run runtime/install_pair2.py first'
+        deployed = WORKSPACE/f'runtime/pair{PAIR}-deployment.json'
+        assert deployed.is_file(), f'Run runtime/install_pair2.py first (pair {PAIR}: --pair {PAIR})'
         mod_sha = json.loads(deployed.read_text())['sha256']
-        checks = ('verify_pair2.py',)
+        checks = (('verify_pair2.py', PAIR),)
     kernel = ctypes.WinDLL('kernel32', use_last_error=True)
     kernel.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
     kernel.CreateMutexW.restype = ctypes.c_void_p
     lock = 'Local\\CoopAnything_Gothic3QA_'+hashlib.sha256(str(COPIES['host']).casefold().encode()).hexdigest()[:16]
     assert kernel.CreateMutexW(None, True, lock) and ctypes.get_last_error() != 183, 'Another QA runner is active'
     (WORKSPACE/f'runtime/pair{PAIR}-runner.pid').write_text(str(os.getpid()))  # runtime/stop_pair.py stops only this pair
-    for name in checks:
-        subprocess.run([sys.executable, str(WORKSPACE/'isolation'/name)], cwd=WORKSPACE.parent, capture_output=True, check=True)
+    for name, *check_args in checks:
+        subprocess.run([sys.executable, str(WORKSPACE/'isolation'/name), *check_args], cwd=WORKSPACE.parent, capture_output=True, check=True)
     protected = Path(json.loads((WORKSPACE/'project.json').read_text(encoding='utf-8-sig'))['protected_save_dir'])
     before = snapshot(protected)
     run = RUNS/(time.strftime('%Y%m%d-%H%M%S')+'-together'+('' if PAIR == '1' else f'-p{PAIR}'))

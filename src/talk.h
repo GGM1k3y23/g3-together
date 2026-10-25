@@ -16,8 +16,8 @@ bool TalkingWithHero(eCEntity const* entity);  // client: this mirrored NPC is i
 bool IsHeld(eCEntity const* entity);           // host: held for a remote player's dialog
 void OnWorldChange();                          // forget held NPCs and the dialog partner (their entities are gone)
 using LogFn = void (*)(char const*);
-void Choose(int index, LogFn log);
-void ChooseInfo(char const* name, LogFn log);  // QA: run a named option in the running dialog  // QA: pick the index-th available dialog option
+void Choose(int index, LogFn log);  // QA: pick the index-th available dialog option
+void ChooseInfo(char const* name, LogFn log);  // QA: run a named option in the running dialog
 void Report(LogFn log);             // QA: TALKSYNC line
 void DisableHold(LogFn log);        // QA negative control (host): ignore dialog notices
 }

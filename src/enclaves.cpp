@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "enclaves.h"
 #include "ai.h"
+#include "infocmd.h"
 
 #include "config.h"
 #include "items.h"
@@ -46,6 +47,14 @@ bool wasConnected = false;
 uint32_t lastScan = 0;
 uint32_t lastTakeTask = 0;  // when this hero was last in PS_Normal_Take (where the game counts a theft)
 unsigned sent = 0, received = 0, applied = 0, deltas = 0, dropped = 0, keptLocal = 0, credits = 0;
+// A town's status (routine, attack, flee: freed) turns where its defenders die: NotifyEnclave runs on the machine that
+// simulates them (the host, or a client for NPCs in its region). The counters above travel, the status did not: Ardea freed
+// on the host stayed under attack on the client (stageLiberate 24.10.), and a raider the client simulated, killed last,
+// turned it only there. Every machine sends a changed status as the enclave's world state (infocmd kind 1: status, raid,
+// revolution; a client's goes to the host, which applies it and passes it on), and the host all of them to a player who joins.
+std::map<std::string, int> statusSeen;
+bool statusSync = true;  // QA negative control: townstatusoff
+unsigned statusSent = 0;
 bool keepLocal = true;        // QA negative control: KeepLocalOff (the host's counters overwrite unreported deeds)
 uint32_t scanPausedUntil = 0;  // QA: no scan before this (GetTickCount), to widen the 500 ms window between deed and scan
 
@@ -191,7 +200,10 @@ void OnNote(uint8_t from, net::EnclaveNote const& note)
     }
     if (net::IsHost()) {
         if (note.op == net::EnclaveRequest) {
-            ForEach([&](std::string const& name, Entity&, gCEnclave_PS* enclave) { SendState(name, Read(enclave), from); });
+            ForEach([&](std::string const& name, Entity& e, gCEnclave_PS* enclave) {
+                SendState(name, Read(enclave), from);
+                if (statusSync) infocmd::Changed(e.GetInstance());  // its status too (to everyone; the others have it already)
+            });
             return;
         }
         if (note.op != net::EnclaveDelta || mode == Personal) return;
@@ -262,6 +274,17 @@ gFScript originalNotify = nullptr;
 bool notifyInstalled = false, notifyNative = false, remoteMurders = true;
 uint32_t lastNotifyTry = 0;
 unsigned remoteCounted = 0, remoteCredited = 0, remoteNative = 0, remoteNotCounted = 0, remoteExpired = 0, remoteMoved = 0;
+// personal: a credit for a killer who is not in the host's world just then (loading) waits for that same connection to come
+// back in (C p7-implementation-review-20261024-c.md 3); one that left (another connection in its slot) is dropped.
+struct HeldCredit {
+    uint8_t player = 0;
+    uint32_t generation = 0, at = 0;
+    std::string town, victim;
+};
+std::vector<HeldCredit> heldCredits;
+uint32_t creditHoldUntil = 0;  // QA (credithold <ms>): the killer counts as out of the world until then
+bool creditQueue = true;       // QA negative control (creditqueueoff): such a credit is lost, as before 24.10.
+unsigned creditsHeld = 0, creditsLate = 0, creditsLost = 0;
 
 std::string Key(uint8_t const guid[16]) { return std::string(reinterpret_cast<char const*>(guid), 16); }
 
@@ -308,6 +331,23 @@ void Credit(RemoteKill const& kill, char const* town, char const* victim)
     if ((!net::IsHost() && kill.player != 1) || (net::IsHost() && net::PeerGeneration(kill.player) != kill.generation)) {
         ++remoteNotCounted;
         Logf("enclaves: player %u murdered %s at %s; personal: not counted (that player is not reachable)", kill.player, victim, town);
+        return;
+    }
+    if (net::IsHost() && (!net::InWorld(kill.player) || static_cast<int32_t>(GetTickCount() - creditHoldUntil) < 0)) {
+        if (!creditQueue) {
+            ++creditsLost;
+            Logf("enclaves: player %u murdered %s at %s; personal: lost (that player is not in the world)", kill.player, victim, town);
+            return;
+        }
+        HeldCredit held;
+        held.player = kill.player;
+        held.generation = kill.generation;
+        held.at = GetTickCount();
+        held.town = town;
+        held.victim = victim;
+        heldCredits.push_back(held);
+        ++creditsHeld;
+        Logf("enclaves: player %u murdered %s at %s; personal: held until that player is in the world", kill.player, victim, town);
         return;
     }
     net::SendEnclave(credit, net::IsHost() ? kill.player : 0);
@@ -412,6 +452,12 @@ void NoteRemoteKill(uint8_t const victim[16], uint8_t player, eCEntity* actor)
     kill.at = now;
 }
 
+void TownStatusOff(LogFn log)
+{
+    statusSync = false;
+    log("TOWNSTATUSOFF ok=1");
+}
+
 void RemoteMurdersOff(LogFn log)
 {
     remoteMurders = false;
@@ -424,9 +470,50 @@ void Start()
     net::SetEnclaveHandler(&OnNote);
 }
 
+// Host: held credits for players back in the world (same connection) go out; for players gone they are dropped.
+void SendHeldCredits()
+{
+    const uint32_t now = GetTickCount();
+    for (auto it = heldCredits.begin(); it != heldCredits.end();) {
+        const bool same = net::PeerJoined(it->player) && net::PeerGeneration(it->player) == it->generation;
+        if (!same || now - it->at > 600000) {
+            ++creditsLost;
+            Logf("enclaves: a held murder of %s at %s for player %u dropped (%s)", it->victim.c_str(), it->town.c_str(), it->player,
+                 same ? "ten minutes passed" : "that player left");
+            it = heldCredits.erase(it);
+            continue;
+        }
+        if (!net::InWorld(it->player) || static_cast<int32_t>(now - creditHoldUntil) < 0) { ++it; continue; }
+        net::EnclaveNote credit;
+        credit.op = net::EnclaveCredit;
+        credit.mode = mode;
+        strncpy_s(credit.name, it->town.c_str(), _TRUNCATE);
+        credit.crime[gEPlayerCrime_Murder] = 1;
+        net::SendEnclave(credit, it->player);
+        ++sent;
+        ++remoteCredited;
+        ++creditsLate;
+        Logf("enclaves: the held murder of %s at %s sent to player %u", it->victim.c_str(), it->town.c_str(), it->player);
+        it = heldCredits.erase(it);
+    }
+}
+
+void CreditQueueOff(LogFn log)
+{
+    creditQueue = false;
+    log("CREDITQUEUEOFF ok=1");
+}
+
+void CreditHold(char const* ms, LogFn log)
+{
+    creditHoldUntil = GetTickCount() + static_cast<uint32_t>(std::atoi(ms));
+    log("CREDITHOLD ok=1");
+}
+
 void Tick()
 {
     if (gCSession::GetInstance().IsGameRunning()) InstallNotify();
+    if (net::IsHost() && !heldCredits.empty()) SendHeldCredits();
     if (!sync || !net::Connected() || !gCSession::GetInstance().IsGameRunning()) { wasConnected = false; return; }
     if (!wasConnected) {
         wasConnected = true;
@@ -448,7 +535,20 @@ void Tick()
     const uint32_t now = GetTickCount();
     if (now - lastScan < ScanEvery || static_cast<int32_t>(now - scanPausedUntil) < 0) return;
     lastScan = now;
-    ForEach([&](std::string const& name, Entity&, gCEnclave_PS* enclave) {
+    ForEach([&](std::string const& name, Entity& e, gCEnclave_PS* enclave) {
+        if (statusSync) {
+            const int status = static_cast<int>(static_cast<gEEnclaveStatus const&>(enclave->AccessStatus()));
+            const auto known = statusSeen.find(name);
+            if (known == statusSeen.end()) {
+                statusSeen[name] = status;
+            } else if (known->second != status) {
+                Logf("enclaves: %s turned from status %d to %d; sent %s", name.c_str(), known->second, status,
+                     net::IsHost() ? "to everyone" : "to the host");
+                known->second = status;
+                infocmd::Changed(e.GetInstance());
+                ++statusSent;
+            }
+        }
         const Counters c = Read(enclave);
         auto it = seen.find(name);
         if (it == seen.end()) { seen[name] = c; return; }
@@ -463,6 +563,7 @@ void Tick()
 void OnWorldChange()
 {
     seen.clear();
+    statusSeen.clear();
     pending.clear();
     remoteKills.clear();
     wasConnected = false;
@@ -473,11 +574,11 @@ void Report(LogFn log)
     char line[520];
     sprintf_s(line, "ENCLAVESYNC sync=%d mode=%s config=%s sent=%u received=%u applied=%u deltas=%u dropped=%u pending=%u seen=%u kept_local=%u "
               "notify=%d remote_kills=%u remote_counted=%u remote_credited=%u remote_native=%u remote_not_counted=%u remote_expired=%u credits=%u "
-              "remote_moved=%u",
+              "remote_moved=%u status_sync=%d status_sent=%u credits_held=%u credits_late=%u credits_lost=%u",
               sync ? 1 : 0, ModeName(mode), GetConfig().reputation, sent, received, applied, deltas, dropped,
               static_cast<unsigned>(pending.size()), static_cast<unsigned>(seen.size()), keptLocal, notifyNative ? 1 : 0,
               static_cast<unsigned>(remoteKills.size()), remoteCounted, remoteCredited, remoteNative, remoteNotCounted, remoteExpired, credits,
-              remoteMoved);
+              remoteMoved, statusSync ? 1 : 0, statusSent, creditsHeld, creditsLate, creditsLost);
     log(line);
 }
 
@@ -518,13 +619,45 @@ void MurderCandidates(char const* name, LogFn log)
         char const* who = member->GetName().GetText();
         const GEInt political = GetScriptAdminExt().CallScript(bCString("GetPoliticalAttitude"), member, e.GetInstance(), 0);
         char const* why = NotCounted(member, e, enclave, "");
-        sprintf_s(line, "MURDERCAND enclave=%s status=%d murders=%d known=%d member=%s alive=%d political=%d excepted=%d counts=%d", name,
-                  status, c.crime[gEPlayerCrime_Murder], c.known, who, npc.IsDead() ? 0 : 1, political,
-                  why && !std::strcmp(why, "Faring exception") ? 1 : 0, why ? 0 : 1);
+        const eCEntityProxy proxy(member);
+        bCPropertyID::bSCore g;  // for a claim on a member far from every player (stageLiberate)
+        std::memcpy(&g, &proxy.GetEntityID().GetCore(), 16);
+        sprintf_s(line, "MURDERCAND enclave=%s status=%d murders=%d known=%d member=%s alive=%d political=%d excepted=%d counts=%d "
+                  "guid=%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", name, status, c.crime[gEPlayerCrime_Murder], c.known, who,
+                  npc.IsDead() ? 0 : 1, political, why && !std::strcmp(why, "Faring exception") ? 1 : 0, why ? 0 : 1, g.Data1, g.Data2,
+                  g.Data3, g.Data4[0], g.Data4[1], g.Data4[2], g.Data4[3], g.Data4[4], g.Data4[5], g.Data4[6], g.Data4[7]);
         log(line);
         ++shown;
     }
     sprintf_s(line, "MURDERCAND end enclave=%s status=%d murders=%d members=%d", name, status, c.crime[gEPlayerCrime_Murder], members.GetCount());
+    log(line);
+}
+
+void TownFarKill(char const* name, LogFn log)
+{
+    char line[200];
+    Entity e = PSEnclave::GetEnclave(bCString(name));
+    gCEnclave_PS* enclave = Native(e);
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    if (!enclave || !hero) { log("REFUSED townfarkill: no such enclave or no hero"); return; }
+    const bCVector& h = hero->GetWorldPosition();
+    bTObjArray<eCEntityProxy> members = enclave->GetMembers();
+    int killed = 0, kept = 0, alive = 0;
+    for (GEInt m = 0; m < members.GetCount(); ++m) {
+        eCEntity* member = members.AccessAt(m).GetEntity();
+        if (!member || !member->GetPropertySet(eEPropertySetType_NPC) || !member->GetPropertySet(eEPropertySetType_DamageReceiver)) continue;
+        Entity npc(member);
+        if (npc.IsDead()) continue;
+        ++alive;
+        const bCVector& p = member->GetWorldPosition();
+        const float dx = p.GetX() - h.GetX(), dy = p.GetY() - h.GetY(), dz = p.GetZ() - h.GetZ();
+        if (dx * dx + dy * dy + dz * dz < 4000.0f * 4000.0f) { ++kept; continue; }
+        auto& admin = GetScriptAdminExt();
+        admin.CallScript(bCString("AddHitPoints"), member, hero, -static_cast<GEInt>(npc.DamageReceiver.HitPoints));
+        admin.CallScript(bCString("OnCheatKill"), hero, member, 0);
+        ++killed;
+    }
+    sprintf_s(line, "TOWNFARKILL enclave=%s members=%d alive=%d killed=%d near=%d", name, members.GetCount(), alive, killed, kept);
     log(line);
 }
 

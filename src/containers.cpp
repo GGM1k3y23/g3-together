@@ -32,6 +32,7 @@ bool disabled = false;
 bool traderFillOff = false;  // QA negative control: the host does not fill traders before a dialog
 bool forgetOff = false;  // QA negative control: container state survives a world change (as before R5)
 bool handsOff = false;  // QA negative control: a corpse's hand keeps a held stack of its contents (as before 23.10.)
+bool interactLoot = true;  // QA negative control (containersyncoff interact): only chests count as opened by use (before 24.10.)
 unsigned contentsSent = 0, contentsReceived = 0, rewrites = 0, txSent = 0, txApplied = 0, txRefused = 0, txMismatch = 0, txDenied = 0,
          reverted = 0, handsReleased = 0;
 
@@ -539,9 +540,14 @@ void ClientTick()
     eCEntity* hero = gCSession::GetInstance().GetHero();
     if (!hero || !net::Connected()) return;
     // Chests open through the action key (PS_Interact -> PS_Interact_Chest), not PlayerOpenLoot: the chest in use is
-    // this client's open container, and the host rolls its contents.
+    // this client's open container, and the host rolls its contents. A dug-up pirate treasure the same way
+    // (PS_Interact_PirateTreasure, then its loot window, PS_HUD_Loop): before, its takes were never sent, the host's
+    // contents came back and the client took them again (treasurediag 24.10.: ore 10 of 5, then the host took all 5).
     Entity self(hero);
-    if (std::strncmp(self.Routine.GetCurrentState().GetText(), "PS_Interact_Chest", 17) == 0) {
+    char const* state = self.Routine.GetCurrentState().GetText();
+    const bool interact = !std::strncmp(state, "PS_Interact_Chest", 17) ||
+                          (interactLoot && (!std::strncmp(state, "PS_Interact_PirateTreasure", 26) || !std::strcmp(state, "PS_HUD_Loop")));
+    if (interact) {
         Entity chest = self.Focus.GetFocusEntity();
         if (IsChest(chest) && chest.Interaction.GetUser().GetInstance() == hero) {
             uint8_t guid[16];
@@ -550,7 +556,7 @@ void ClientTick()
                 active = Key(guid);
                 activeSince = now;
                 net::SendWatch(guid);
-                Logf("containers: opened chest %s (host contents known=%d)", chest.GetName().GetText(), known.count(active) ? 1 : 0);
+                Logf("containers: opened %s (%s, host contents known=%d)", chest.GetName().GetText(), state, known.count(active) ? 1 : 0);
             }
         }
     }
@@ -864,6 +870,11 @@ void Disable(char const* what, LogFn log)
     if (!std::strcmp(what, "trader")) {
         traderFillOff = true;
         log("CONTAINERSYNCOFF ok=1 trader_fill=0");
+        return;
+    }
+    if (!std::strcmp(what, "interact")) {
+        interactLoot = false;
+        log("CONTAINERSYNCOFF ok=1 interact_loot=0");
         return;
     }
     disabled = true;

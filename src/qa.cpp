@@ -236,6 +236,22 @@ void Quest(gCSession& session, const char* action)
     Log(line);
 }
 
+// QA (stageArtifactFound): the hero receives an item as a pickup or a dialog's Give does it: into the inventory, then the
+// quest manager's OnReceiveItem (CreateItems alone fulfilled no quest that wants the hero to hold the item, 24.10.).
+void ReceiveItem()
+{
+    char line[200];
+    eCDynamicEntity* hero = gCSession::GetInstance().GetHero();
+    gCQuestManager_PS* quests = gCQuestManager_PS::GetInstance();
+    const Template item(argument);
+    if (!hero || !quests || !item.IsValid()) { Log("REFUSED receiveitem: no hero, no quest manager or no such item"); return; }
+    const GEInt stack = Entity(hero).Inventory.CreateItems(item, 0, 1);
+    bCPropertyID const& id = item;
+    const GEBool told = quests->OnReceiveItem(nullptr, hero, id, 1);
+    sprintf_s(line, "RECEIVEITEM item=%s stack=%d told=%d", argument, stack, told ? 1 : 0);
+    Log(line);
+}
+
 // Codex review 22.10. (R1, R8, R9): a third chain, the other two are at MSVC's limit of nested blocks (C1061).
 bool RunReviewAction(const char* action)
 {
@@ -251,6 +267,8 @@ bool RunReviewAction(const char* action)
         g3t::combat::HitNpcBurst(argument, &Log);
     } else if (!std::strcmp(action, "killonceoff")) {
         g3t::combat::KillOnceOff(&Log);
+    } else if (!std::strcmp(action, "killconfirmoff")) {
+        g3t::combat::KillConfirmOff(&Log);
     } else if (!std::strcmp(action, "killreport")) {
         g3t::combat::KillReport(&Log);
     } else if (!std::strcmp(action, "recordwaitoff")) {
@@ -341,6 +359,14 @@ bool RunPlayerAction(const char* action)
         g3t::trade::HoldOff(&Log);
     } else if (!std::strcmp(action, "murdercand")) {
         g3t::enclaves::MurderCandidates(argument, &Log);
+    } else if (!std::strcmp(action, "creditqueueoff")) {
+        g3t::enclaves::CreditQueueOff(&Log);
+    } else if (!std::strcmp(action, "credithold")) {
+        g3t::enclaves::CreditHold(argument, &Log);
+    } else if (!std::strcmp(action, "townstatusoff")) {
+        g3t::enclaves::TownStatusOff(&Log);
+    } else if (!std::strcmp(action, "townfarkill")) {
+        g3t::enclaves::TownFarKill(argument, &Log);
     } else if (!std::strcmp(action, "cheatkill")) {
         g3t::enclaves::CheatKill(argument, &Log);
     } else if (!std::strcmp(action, "occupancy")) {
@@ -349,6 +375,16 @@ bool RunPlayerAction(const char* action)
         g3t::occupancy::Off(&Log);
     } else if (!std::strcmp(action, "unuse")) {
         g3t::occupancy::StandUp(&Log);
+    } else if (!std::strcmp(action, "npcroutine")) {
+        g3t::explore::NpcRoutine(argument, &Log);
+    } else if (!std::strcmp(action, "findents")) {
+        g3t::world::FindEntities(argument, &Log);
+    } else if (!std::strcmp(action, "weatherfollowoff")) {
+        g3t::summon::WeatherFollowOff(&Log);
+    } else if (!std::strcmp(action, "weather")) {
+        g3t::summon::WeatherReport(&Log);
+    } else if (!std::strcmp(action, "receiveitem")) {
+        ReceiveItem();
     } else if (!std::strcmp(action, "pickcands")) {
         g3t::pickpocket::Candidates(&Log);
     } else if (!std::strcmp(action, "pickinfo")) {
