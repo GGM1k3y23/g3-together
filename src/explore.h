@@ -13,6 +13,7 @@ void Near(char const* xyz, LogFn log);      // NEAR lines: NPCs within 40 m of "
 void FarNpcs(LogFn log);                    // FARNPC lines: NPCs anywhere, found via dialog owners
 void Find(char const* name, LogFn log);     // FIND line: one named entity wherever it is
 void FarKill(char const* name, LogFn log);
+void FarHeal(char const* name, LogFn log);  // QA (stageEscort): that NPC's hit points back
 void NpcRoutine(char const* name, LogFn log);  // QA (followdiag): FullStop and ContinueRoutine, as at a dialog's end    // kill a named NPC wherever it is (hit points 0, OnCheatKill)
 void FarMove(char const* argument, LogFn log);  // "X_Y_Z_<name>": move a named entity wherever it is
 void TeleportTo(char const* name, LogFn log);  // the game's own teleport to a named entity

@@ -6,6 +6,7 @@
 
 #include "body.h"
 #include "downed.h"
+#include "guide.h"
 #include "log.h"
 #include "net.h"
 #include "npcs.h"
@@ -245,8 +246,9 @@ void Send(net::WorldState const& s)
 }
 
 // A companion joins (true) or leaves (false) this client. Joining: the host's NPC is taken over here (the follow
-// state follows the local hero). Leaving: handed back to the host. False when nothing changes hands.
-bool Join(eCEntity* target, bool join)
+// state follows the local hero; follow false: the caller sets its task, a guide of P9). Leaving: handed back to the
+// host. False when nothing changes hands.
+bool Join(eCEntity* target, bool join, bool follow = true)
 {
     if (join && npcs::IsMirrored(target)) {
         npcs::Claim(target);
@@ -254,10 +256,12 @@ bool Join(eCEntity* target, bool join)
         s.kind = 4;
         GuidOf(target, s.guid);
         Send(s);
-        Pending p{{}, {}, net::Now() + ReadAfter};
-        GuidOf(target, p.guid);
-        p.follow = true;
-        pending.push_back(p);
+        if (follow) {
+            Pending p{{}, {}, net::Now() + ReadAfter};
+            GuidOf(target, p.guid);
+            p.follow = true;
+            pending.push_back(p);
+        }
         return true;
     }
     if (!join && npcs::Claimed(target)) {
@@ -293,6 +297,11 @@ void Observe(gCScriptProcessingUnit* spu)
     lastText = key;
     ++distinct;
     Logf("infocmd: %s (self=%s)", key, self ? Entity(self).GetName().GetText() : "-");
+    // The game's joins (info conditions 14, 28, 29) have no JoinPlayer line: the player's word marks them (P9).
+    if (!std::strcmp(command.GetCommand().GetText(), "SaySVM") && e2.GetInstance() &&
+        (!_stricmp(command.GetID1().GetText(), "CmdPartyJoin") || !_stricmp(command.GetID1().GetText(), "CmdMobJoin") ||
+         !_stricmp(command.GetID1().GetText(), "CmdSlaveJoin")))
+        guide::Joined(e2.GetInstance());
     if (!sharing || !net::Connected()) return;
     char const* name = command.GetCommand().GetText();
     if (!std::strcmp(name, "SetSectorStatus")) {
@@ -399,7 +408,7 @@ void Report(LogFn log)
 
 namespace g3t::infocmd {
 // QA, stage E3: "join Name_1" / "join Name_0" on a client, the same path as the dialog command JoinPlayer.
-bool TakeOver(eCEntity* target, bool join) { return Join(target, join); }
+bool TakeOver(eCEntity* target, bool join, bool follow) { return Join(target, join, follow); }
 
 void JoinQa(char const* argument, LogFn log)
 {

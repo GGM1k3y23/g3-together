@@ -2,6 +2,7 @@
 #include "npcs.h"
 
 #include "body.h"
+#include "guide.h"
 #include "log.h"
 #include "net.h"
 #include "remote.h"
@@ -57,6 +58,7 @@ std::unordered_map<std::string, uint8_t> claimedBy;  // host: NPC -> the client 
 std::unordered_set<std::string> myClaims;            // client: NPCs this player took over
 std::unordered_map<std::string, uint32_t> claimSeen; // host: last sign of life of a claim (claim or snapshot)
 std::unordered_map<std::string, uint32_t> givenBack; // client: NPCs handed back, not sent until the host's arrive
+std::unordered_set<std::string> hostTaken;           // host: clients' NPCs that guide or follow the host's hero (P9)
 constexpr uint32_t RevokeAfter = 15000;   // ms: a claim whose owner sends nothing goes back to the host
 constexpr uint32_t GiveBackFor = 5000;    // ms: a handed-back NPC is not sent while the host takes it over
 unsigned claimsDenied = 0, claimsRevoked = 0;
@@ -219,6 +221,7 @@ void OnNpcs(net::NpcRecord const* records, int count, uint32_t now, uint32_t sen
         // Whoever simulated an NPC first keeps it. Both starting at once: the host keeps it, and the client
         // turns its copy into a mirror as soon as the host's snapshots arrive.
         if (!net::IsHost() && myClaims.count(key)) continue;  // ours now; the host's last snapshots are late
+        if (net::IsHost() && hostTaken.count(key)) { ++claimsRefused; continue; }  // it guides or follows the host's hero (P9)
         if (owned.count(key) && !claimedBy.count(key)) {
             // Host: it keeps what it simulates. Client: the host's snapshots win over its own simulation (a mirror gone
             // stale for 3 s gets its own AI back and is then sent from here; refusing the host's snapshots left both
@@ -798,6 +801,7 @@ void OnWorldDeactivate()
     myClaims.clear();
     givenBack.clear();
     contested.clear();
+    hostTaken.clear();
 }
 
 void CorpseTick(uint32_t now)
@@ -920,6 +924,45 @@ bool OnClaim(uint8_t const guid[16], uint8_t player, bool take)
     }
     Logf("npcs: player %u %s %s", player, take ? "took over" : "gave back", Resolve(guid).GetInstance() ? Resolve(guid).GetName().GetText() : "?");
     return true;
+}
+
+bool HostTake(eCEntity* entity)
+{
+    if (!entity || !net::IsHost()) return false;
+    uint8_t guid[16];
+    Guid(entity, guid);
+    const std::string key = Key(guid);
+    auto it = mirrors.find(key);
+    if (it == mirrors.end()) return false;
+    const unsigned owner = it->second.owner;
+    hostTaken.insert(key);
+    if (!it->second.killed) body::Release(it->second.entity, it->second.body);  // its own AI again, here
+    if (it->second.guarded) it->second.entity.NPC.DefeatedByPlayer = it->second.defeatedBefore;
+    mirrors.erase(it);
+    Logf("npcs: took %s from player %u (it guides or follows the host)", Entity(entity).GetName().GetText(), owner);
+    return true;
+}
+
+void HostRelease(eCEntity* entity)
+{
+    if (!entity) return;
+    uint8_t guid[16];
+    Guid(entity, guid);
+    hostTaken.erase(Key(guid));
+}
+
+bool HostTaken(eCEntity const* entity)
+{
+    if (!entity) return false;
+    uint8_t guid[16];
+    Guid(const_cast<eCEntity*>(entity), guid);
+    return hostTaken.count(Key(guid)) != 0;
+}
+
+void Mirrored(std::vector<eCEntity*>& out)
+{
+    for (auto& [key, m] : mirrors)
+        if (m.resolved && !m.missing && !m.killed && m.entity.GetInstance()) out.push_back(m.entity.GetInstance());
 }
 
 bool Claimed(eCEntity const* entity)
@@ -1074,6 +1117,7 @@ void Adopt(uint8_t const guid[16])
     Entity e = Resolve(guid);
     if (!IsNpc(e.GetInstance())) return;
     Claim(e.GetInstance());
+    if (guide::Readopt(e.GetInstance())) { ++companionsAdopted; return; }  // a guide of a running follow quest (P9)
     e.Routine.FullStop();
     e.Dialog.SlaveryEnabled = GETrue;
     GetScriptAdminExt().CallScript(bCString("JoinPlayerSlavery"), e.GetInstance(), nullptr, 0);

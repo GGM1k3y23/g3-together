@@ -843,8 +843,8 @@ def followdiag(copies, report, negative=False):
     guiding by the running quest (SelectRoutineTask) and guides Entity::GetPlayer, the host's hero. Here the client stands at
     the guide, the host 30 m away; the guide's task and position on the host over 40 s, and the quest on both. G3_QUEST,
     G3_GUIDE: another follow quest (default Gorn_ShowReddock). G3_WHO=host: the host stands at the guide instead. Diagnostic."""
-    quest = os.environ.get('G3_QUEST', 'Gorn_ShowReddock')
-    guide = os.environ.get('G3_GUIDE', 'Gorn')
+    quest = os.environ.get('G3_QUEST', 'Mitch_Trolls' if os.environ.get('G3_VIA') == 'dialog' else 'Gorn_ShowReddock')
+    guide = os.environ.get('G3_GUIDE', 'Mitch' if os.environ.get('G3_VIA') == 'dialog' else 'Gorn')
     host, client = join_both(copies)
     clear_raid(host, report)
     near, far = (host, client) if os.environ.get('G3_WHO') == 'host' else (client, host)
@@ -854,16 +854,305 @@ def followdiag(copies, report, negative=False):
     x, y, z = hero_pos(far.bot)
     move_hero(far.bot, (x + 3000, y, z))
     time.sleep(4)
-    report['run'] = report_line(host.bot, 'runquest ' + quest, 'QUEST ')
-    report['routine'] = report_line(host.bot, 'npcroutine ' + guide, ('NPCROUTINE ', 'REFUSED npcroutine'))  # as at the dialog's end
+    if os.environ.get('G3_VIA') == 'dialog':
+        # The quest the way a player takes it (a5881ef: runquest alone does not start the guiding): the near player talks to
+        # the guide and picks the quest's Activator info (condition type 6) in one dialog, its parent first. Data from
+        # Infos.pak: Mitch_Trolls in Faring, SKALVERAM3409 (needs Zakosh_KillTrolls running and the event Mitch_WhereTrolls)
+        # opens the Activator SKALVERAM3395. G3_RUNQUESTS, G3_EVENTS: set first on the near player; G3_INFO: infos in order.
+        for name in filter(None, os.environ.get('G3_RUNQUESTS', 'Zakosh_KillTrolls').split(',')):
+            report.setdefault('preruns', []).append(report_line(near.bot, 'runquest ' + name, 'QUEST '))
+        for name in filter(None, os.environ.get('G3_EVENTS', 'Mitch_WhereTrolls').split(',')):
+            report.setdefault('events', []).append(report_line(near.bot, 'setevent ' + name, 'EVENT '))
+        report_line(near.bot, 'unarm', 'UNARM')
+        teleport_to(near.bot, guide)
+        time.sleep(3)
+        report['talks'] = [report_line(near.bot, 'talk ' + guide, 'TALK ')]
+        for info in filter(None, os.environ.get('G3_INFO', 'SKALVERAM3409,SKALVERAM3395').split(',')):
+            start = near.bot.send('infodesc ' + info, 20)
+            near.bot.line('INFODESC end', 10, 'infodesc', start)
+            report['talks'].append([l for l in near.bot.log()[start:].splitlines() if l.startswith('INFODESC ')])
+            report['talks'].append(report_line(near.bot, 'talkinfo ' + info, ('TALKINFO', 'REFUSED talkinfo')))
+            for _ in range(20):  # the spoken lines run before the info ends
+                time.sleep(2)
+                state = report_line(near.bot, 'talkstate', 'TALKSTATE')
+                if f'current={info} ' not in state:
+                    break
+            report['talks'].append(state)
+        report['talks'].append(report_line(near.bot, 'endtalk', ('TALKSTATE', 'REFUSED endtalk')))
+        time.sleep(2)
+        report['run'] = {c.tag: quest_status(c.bot, quest) for c in (host, client)}
+    else:
+        report['run'] = report_line(host.bot, 'runquest ' + quest, 'QUEST ')
+        report['routine'] = report_line(host.bot, 'npcroutine ' + guide, ('NPCROUTINE ', 'REFUSED npcroutine'))  # as at the dialog's end
     report['samples'] = []
-    for _ in range(20):
+    for _ in range(int(os.environ.get('G3_SAMPLES', '40'))):
         time.sleep(2)
         state = next((v for v in npcs(host.bot).values() if v['name'] == guide), {})
-        report['samples'].append((state.get('task'), [round(c) for c in state.get('pos', ())], [round(c) for c in hero_pos(near.bot)],
-                                  [round(c) for c in hero_pos(far.bot)]))
+        there = next((v for v in npcs(client.bot).values() if v['name'] == guide), {})
+        report['samples'].append((state.get('task'), [round(c) for c in state.get('pos', ())], there.get('task'), there.get('mirrored'), state.get('owner'),
+                                  [round(c) for c in hero_pos(near.bot)], [round(c) for c in hero_pos(far.bot)]))
     report['quest'] = {c.tag: quest_status(c.bot, quest) for c in (host, client)}
     report['status_note'] = 'diagnostic only'
+
+
+def take_quest(copy, npc, infos, report, runquests=(), events=()):
+    """The player takes a quest as in the game: its preconditions set (quests run, events known), then the infos picked in
+    one dialog with npc (a parent opens its children). Data from Infos.pak."""
+    for name in runquests:
+        report.setdefault('preruns', []).append(report_line(copy.bot, 'runquest ' + name, 'QUEST '))
+    for name in events:
+        report.setdefault('events', []).append(report_line(copy.bot, 'setevent ' + name, 'EVENT '))
+    report_line(copy.bot, 'unarm', 'UNARM')
+    teleport_to(copy.bot, npc)
+    time.sleep(3)
+    talks = report.setdefault('talks', [])
+    talks.append(report_line(copy.bot, 'talk ' + npc, 'TALK '))
+    for info in infos:
+        talks.append(report_line(copy.bot, 'talkinfo ' + info, ('TALKINFO', 'REFUSED talkinfo')))
+        for _ in range(20):  # the spoken lines run before the info ends
+            time.sleep(2)
+            state = report_line(copy.bot, 'talkstate', 'TALKSTATE')
+            if f'current={info} ' not in state:
+                break
+        talks.append(state)
+    talks.append(report_line(copy.bot, 'endtalk', ('TALKSTATE', 'REFUSED endtalk')))
+
+
+def guide_state(bot, npc):
+    return dict(re.findall(r'(\w+)=(\S+)', report_line(bot, 'guide ' + npc, 'GUIDE ')))
+
+
+def npc_pos(bot, name):
+    """Where this machine has the NPC (findnpc: any distance), or None."""
+    line = report_line(bot, 'findnpc ' + name, 'FIND ')
+    return tuple(float(v) for v in line.split('pos=')[1].split()[0].split('_')) if 'found=1' in line else None
+
+
+def guide_host_case(host, client, quest, npc, report):
+    """stageGuide G3_WHO=host: the host takes the quest, as before P9: Mitch guides the host (the game's own way; on
+    25.10. it started ~50 s after the dialog), the client only mirrors him and takes nothing over."""
+    teleport_to(client.bot, npc)
+    x, y, z = hero_pos(client.bot)
+    move_hero(client.bot, (x + 1500, y, z))
+    take_quest(host, npc, ['SKALVERAM3409', 'SKALVERAM3395'], report, runquests=['Zakosh_KillTrolls'], events=['Mitch_WhereTrolls'])
+    report['guiding'] = wait_for(lambda: (lambda g: g.get('hero_leader') == npc and g.get('task', '').startswith('ZS_GuidePlayer') and [g])(
+        guide_state(host.bot, npc)), 90, f'{npc} guides the host')[0]
+    start = npc_pos(host.bot, npc)
+    for _ in range(20):
+        at = npc_pos(host.bot, npc)
+        if at:
+            move_hero(host.bot, (at[0] - 150, at[1] + 50, at[2]))
+        time.sleep(2)
+        here = npc_pos(host.bot, npc)
+        if here and distance(here, start) > 2000:
+            break
+    report['led_m'] = round(distance(npc_pos(host.bot, npc), start) / 100)
+    assert report['led_m'] >= 15, f'{npc} led the host only {report["led_m"]} m'
+    report['client_view'] = guide_state(client.bot, npc)
+    assert report['client_view'].get('mirrored') == '1' and report['client_view'].get('claimed') == '0', f'the client took {npc}: {report["client_view"]}'
+    report['quest'] = {c.tag: quest_status(c.bot, quest) for c in (host, client)}
+
+
+def stageGuide(copies, report, negative=False):
+    """P9, a follow quest the joining player takes (Mitch_Trolls in Faring: Mitch guides to the trolls). The game guides
+    only the local hero (StartGuidePlayer, SelectRoutineTask), and the host simulated Mitch: he never guided the client
+    (followdiag G3_VIA=dialog, 25.10.). Now the client takes Mitch over while he guides it: he guides the client there, the
+    host shows him where the client's game has him, and the quest runs on both. Negative control: guidesyncoff."""
+    quest, npc = 'Mitch_Trolls', 'Mitch'
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    if negative:
+        report_line(client.bot, 'guidesyncoff', 'GUIDESYNCOFF')
+    if os.environ.get('G3_WHO') == 'host':
+        return guide_host_case(host, client, quest, npc, report)
+    teleport_to(host.bot, npc)
+    x, y, z = hero_pos(host.bot)
+    move_hero(host.bot, (x + 3000, y, z))
+    take_quest(client, npc, ['SKALVERAM3409', 'SKALVERAM3395'], report, runquests=['Zakosh_KillTrolls'], events=['Mitch_WhereTrolls'])
+    report['quest_run'] = {c.tag: quest_status(c.bot, quest) for c in (host, client)}
+    assert report['quest_run'] == {'host': 1, 'client': 1}, f'the quest does not run on both: {report["quest_run"]}'
+    report['guiding'] = wait_for(lambda: (lambda g: g.get('claimed') == '1' and g.get('task', '').startswith('ZS_GuidePlayer') and [g])(
+        guide_state(client.bot, npc)), 40, f'{npc} guides the client on the client')[0]
+    # The client walks behind him; he leads on (ZS_GuidePlayer_Wait while the client lags).
+    start = npc_pos(client.bot, npc)
+    report['walk'] = []
+    for _ in range(30):
+        at = npc_pos(client.bot, npc)
+        if at:
+            move_hero(client.bot, (at[0] - 150, at[1] + 50, at[2]))
+        time.sleep(2)
+        here, there = npc_pos(client.bot, npc), npc_pos(host.bot, npc)
+        report['walk'].append([[round(c) for c in here] if here else None, [round(c) for c in there] if there else None,
+                               guide_state(client.bot, npc).get('task')])
+        if here and start and distance(here, start) > 3000:
+            break
+    here = npc_pos(client.bot, npc)
+    report['led_m'] = round(distance(here, start) / 100) if here and start else 0
+    assert report['led_m'] >= 20, f'{npc} led the client only {report["led_m"]} m'
+    time.sleep(2)
+    here, there = npc_pos(client.bot, npc), npc_pos(host.bot, npc)
+    report['host_off_m'] = round(distance(here, there) / 100, 1) if here and there else None
+    assert report['host_off_m'] is not None and report['host_off_m'] < 4, f'the host shows {npc} elsewhere: {report["host_off_m"]} m'
+    report['host_view'] = next((v for v in npcs(host.bot).values() if v['name'] == npc), {})
+    assert report['host_view'].get('mirrored') and report['host_view'].get('owner') == 2, f'the host does not mirror the client\'s {npc}'
+    report['quest'] = {c.tag: quest_status(c.bot, quest) for c in (host, client)}
+    assert report['quest'] == {'host': 1, 'client': 1}, f'the quest no longer runs on both: {report["quest"]}'
+
+
+def escort_host_case(host, client, quest, npc, report):
+    """stageEscort G3_WHO=host: the host takes the slave along; he follows the host at once now (before P9 ~50 s after the
+    join, 25.10.), and the client mirrors him."""
+    teleport_to(client.bot, npc)
+    x, y, z = hero_pos(client.bot)
+    move_hero(client.bot, (x + 1500, y, z))
+    take_quest(host, npc, ['BPANKRATZ346', 'KALVERAMX233'], report)
+    report['following'] = wait_for(lambda: (lambda g: g.get('leader') == 'PC_Hero' and g.get('task', '').startswith('ZS_FollowPlayer') and [g])(
+        guide_state(host.bot, npc)), 20, f'{npc} follows the host')[0]
+    start = npc_pos(host.bot, npc)
+    goal = npc_pos(host.bot, 'Freman')
+    for _ in range(40):
+        me, here = hero_pos(host.bot), npc_pos(host.bot, npc)
+        if here and distance(here, start) > 2000 and distance(here, me) < 700:
+            break
+        if here and distance(here, me) < 700:
+            n = distance(me, goal)
+            move_hero(host.bot, tuple(me[i] + (goal[i] - me[i]) * 300 / n for i in range(3)))
+        time.sleep(1.5)
+    report['followed_m'] = round(distance(npc_pos(host.bot, npc), start) / 100)
+    assert report['followed_m'] >= 15, f'{npc} followed the host only {report["followed_m"]} m'
+    here, there = npc_pos(host.bot, npc), npc_pos(client.bot, npc)
+    report['client_off_m'] = round(distance(here, there) / 100, 1)
+    report['client_view'] = guide_state(client.bot, npc)
+    assert report['client_off_m'] < 4 and report['client_view'].get('claimed') == '0', f'client: {report["client_off_m"]} m, {report["client_view"]}'
+
+
+def stageEscort(copies, report, negative=False):
+    """P9, an escort quest the joining player takes (Freman_BringSlave_01 in Silden: the escaped slave joins, follows and
+    is handed over to Freman). Before, he followed only a host that took him (followdiag G3_VIA=dialog, 25.10.). Now the
+    client takes him over while he follows it; at the hand-over he goes back to the host, and the quest succeeds on both.
+    Negative control: guidesyncoff."""
+    quest, npc, trader = 'Freman_BringSlave_01', 'Silden_EscapedSlave_01', 'Freman'
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    if negative:
+        report_line(client.bot, 'guidesyncoff', 'GUIDESYNCOFF')
+    if os.environ.get('G3_WHO') == 'host':
+        return escort_host_case(host, client, quest, npc, report)
+    # The host stands 15 m off: it simulates the slave, the client sees a mirror (alone, the client simulated him itself,
+    # and the host's copy 300 m away was never driven, 25.10.).
+    teleport_to(host.bot, npc)
+    x, y, z = hero_pos(host.bot)
+    move_hero(host.bot, (x + 1500, y, z))
+    goal = npc_pos(host.bot, trader)
+    take_quest(client, npc, ['BPANKRATZ346', 'KALVERAMX233'], report)
+    report['quest_run'] = {c.tag: quest_status(c.bot, quest) for c in (host, client)}
+    report['following'] = wait_for(lambda: (lambda g: g.get('leader') == 'PC_Hero' and g.get('task', '').startswith('ZS_FollowPlayer')
+                                            and g.get('claimed') == '1' and [g])(guide_state(client.bot, npc)), 40, f'{npc} follows the client on the client')[0]
+    # 1. The client walks 20 m, a step only once the slave has caught up (a follower left far behind stands still).
+    start = npc_pos(client.bot, npc)
+    report['walk'] = []
+    for _ in range(40):
+        me = hero_pos(client.bot)
+        here = npc_pos(client.bot, npc)
+        gap = distance(here, me) if here else 1e9
+        if here and distance(here, start) > 2000 and gap < 700:
+            break
+        if gap < 700:
+            d = [goal[i] - me[i] for i in range(3)]
+            n = distance(me, goal)
+            move_hero(client.bot, tuple(me[i] + d[i] * 300 / n for i in range(3)))
+        time.sleep(1.5)
+        report['walk'].append([round(gap / 100), guide_state(client.bot, npc).get('task')])
+    here = npc_pos(client.bot, npc)
+    report['followed_m'] = round(distance(here, start) / 100) if here and start else 0
+    assert report['followed_m'] >= 15, f'{npc} followed the client only {report["followed_m"]} m'
+    here, there = npc_pos(client.bot, npc), npc_pos(host.bot, npc)
+    report['host_off_m'] = round(distance(here, there) / 100, 1) if here and there else None
+    report['host_view'] = next((v for v in npcs(host.bot).values() if v['name'] == npc), {})
+    assert report['host_off_m'] is not None and report['host_off_m'] < 4, f'the host shows {npc} elsewhere: {report["host_off_m"]} m'
+    assert report['host_view'].get('mirrored') and report['host_view'].get('owner') == 2, f'the host does not mirror {npc} as the client one'
+    # 2. The rest of the way (~280 m past wolves that killed the weak slave, 25.10.) is skipped: the client and the slave
+    # are put next to Freman; he stays the client's follower.
+    move_hero(client.bot, (goal[0] + 600, goal[1] + 50, goal[2]))
+    time.sleep(2)
+    me = hero_pos(client.bot)
+    report['farmove'] = report_line(client.bot, f'farmove {round(me[0]) + 150}_{round(me[1])}_{round(me[2])}_{npc}', ('FARMOVE', 'REFUSED farmove'))
+    time.sleep(8)
+    for _ in range(3):  # a few steps around: he keeps following
+        me = hero_pos(client.bot)
+        move_hero(client.bot, (me[0], me[1], me[2] + 250))
+        time.sleep(3)
+    time.sleep(4)
+    report['at_freman'] = guide_state(client.bot, npc)
+    here, there = npc_pos(client.bot, npc), npc_pos(host.bot, npc)
+    report['slave_to_client_m'] = round(distance(here, hero_pos(client.bot)) / 100, 1) if here else None
+    assert report['at_freman'].get('leader') == 'PC_Hero' and report['at_freman'].get('mirrored') == '0', f'{npc} is no longer the client follower: {report["at_freman"]}'
+    assert report['slave_to_client_m'] is not None and report['slave_to_client_m'] < 8, f'{npc} did not keep up: {report["slave_to_client_m"]} m'
+    # The hand-over (Freman's Delivery info: gold, SetSlaveryEnabled false, the slave's new routine).
+    take_quest(client, trader, ['BPANKRATZ3112'], report)
+    for copy in (host, client):
+        wait_for(lambda: quest_status(copy.bot, quest) == 2 and ['yes'], 30, f'the quest succeeds on the {copy.tag}')
+    report['after'] = wait_for(lambda: (lambda g: g.get('claimed') == '0' and [g])(guide_state(client.bot, npc)), 30,
+                               f'{npc} goes back to the host after the hand-over')[0]
+    report['client_guide'] = report_line(client.bot, 'guide', 'GUIDE ')
+    report['walk_owner'] = report['following'].get('claimed')
+
+
+def stageGuideSave(copies, report, negative=False):
+    """P9 across the host's save: the client takes Mitch_Trolls and Mitch guides it (as in stageGuide); the host saves,
+    the client leaves, the host loads that save and the client joins again. The host's sidecar names Mitch as the
+    client's (a taken-over NPC counts as a companion there); handed back, he guides the client again (StartGuidePlayer
+    for a running follow quest) instead of following it. Negative control: companionsoff on the host."""
+    quest, npc = 'Mitch_Trolls', 'Mitch'
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    if negative:
+        report_line(host.bot, 'companionsoff', 'COMPANIONSOFF ')
+    teleport_to(host.bot, npc)
+    x, y, z = hero_pos(host.bot)
+    move_hero(host.bot, (x + 1500, y, z))
+    take_quest(client, npc, ['SKALVERAM3409', 'SKALVERAM3395'], report, runquests=['Zakosh_KillTrolls'], events=['Mitch_WhereTrolls'])
+    report['guiding'] = wait_for(lambda: (lambda g: g.get('claimed') == '1' and g.get('task', '').startswith('ZS_GuidePlayer') and [g])(
+        guide_state(client.bot, npc)), 40, f'{npc} guides the client on the client')[0]
+    folder = host.root/'isolated-profile/Documents/gothic3'
+    for old in list(folder.glob('G3T_P9.*')) + list((client.root/'isolated-profile/Documents/gothic3').glob('*G3T_P9*')):
+        old.unlink(missing_ok=True)
+    start = host.bot.send('nativesave G3T_P9', 60)
+    report['save'] = host.bot.line('NATIVESAVE ', 60, 'nativesave', start)
+    assert 'ok=1' in report['save'], report['save']
+    sidecar = (folder/'G3T_P9.g3t').read_text(errors='replace')
+    report['sidecar_companions'] = [l for l in sidecar.splitlines() if l.startswith('companion ')]
+    assert any(l.endswith(' Client') for l in report['sidecar_companions']), sidecar
+    assert close(client), 'the client did not close'
+    client.collect()
+    (client.run/'client').rename(client.run/'client-first')
+    wait_for(lambda: 2 not in remotes(host.bot), 30, 'host drops the client')
+    start = host.bot.send('nativeload G3T_P9', 60)
+    report['host_load'] = host.bot.wait(lambda t: next((l for l in t.splitlines() if l.startswith('NATIVELOAD') and 'ok=' in l), ''), 120,
+                                        'host nativeload', start)
+    wait_running(host, 180, 'host world running after load')
+    time.sleep(5)
+    start = host.bot.send('releaselock')
+    host.bot.line('LOCK scan complete', 10, 'lock scan', start)
+    client.launch('client', 'Client')
+    wait_running(client, 300, "client world running from the host's campaign")
+    time.sleep(5)
+    report['quest_after_load'] = {c.tag: quest_status(c.bot, quest) for c in (host, client)}
+    report['guiding_again'] = wait_for(lambda: (lambda g: g.get('claimed') == '1' and g.get('hero_leader') == npc
+                                                and g.get('task', '').startswith('ZS_GuidePlayer') and [g])(guide_state(client.bot, npc)),
+                                       60, f'{npc} guides the client again after the load')[0]
+    # He leads on.
+    start_at = npc_pos(client.bot, npc)
+    for _ in range(15):
+        at = npc_pos(client.bot, npc)
+        if at:
+            move_hero(client.bot, (at[0] - 150, at[1] + 50, at[2]))
+        time.sleep(2)
+        here = npc_pos(client.bot, npc)
+        if here and distance(here, start_at) > 1500:
+            break
+    report['led_after_load_m'] = round(distance(npc_pos(client.bot, npc), start_at) / 100)
+    assert report['led_after_load_m'] >= 10, f'{npc} led the client only {report["led_after_load_m"]} m after the load'
 
 
 def soultraveldiag(copies, report, negative=False):
@@ -3113,7 +3402,7 @@ def herodiag(copies, report, negative=False):
     report['host_before'] = herostate(host.bot)
     assert orcs, 'no living orc near the host'
     hurts = []
-    for _ in range(80):
+    for _ in range(110):
         start = host.bot.send('hurthero '+orcs[0], 20)
         hurts.append(host.bot.wait(lambda t: next((l for l in t.splitlines() if l.startswith(('HURTHERO', 'REFUSED hurthero'))), ''), 10, 'hurthero', start))
         time.sleep(0.4)
@@ -9392,7 +9681,7 @@ def parity(copies, report, negative=False):
     report['client_connect_attempts'] = client.mod_log().count('net: connecting to')
 
 
-SUITES = {'stageTreasure': stageTreasure, 'treasurediag': treasurediag, 'soultraveldiag': soultraveldiag, 'followdiag': followdiag, 'stageHailCopy': stageHailCopy, 'stageDefeatQuest': stageDefeatQuest, 'stageLiberate': stageLiberate, 'stageArtifactFound': stageArtifactFound, 'stageEnterPlace': stageEnterPlace, 'stageShapeFight': stageShapeFight, 'objectscan': objectscan, 'stageEdgeClaim': stageEdgeClaim, 'stageSharedUse': stageSharedUse, 'stagePickPocket': stagePickPocket, 'stageMurder': stageMurder, 'questdumpdiag': questdumpdiag, 'stageHostUnreachable': stageHostUnreachable, 'menutextdiag': menutextdiag, 'stageSubtitles': stageSubtitles, 'stageWitness': stageWitness, 'stageTogether': stageTogether, 'stageRansack': stageRansack, 'stageMapMarks': stageMapMarks, 'stageTradeQuality': stageTradeQuality, 'stageTradeKeys': stageTradeKeys, 'fakebreaddiag': fakebreaddiag, 'stageCorpseProp': stageCorpseProp, 'fakebreadlivediag': fakebreadlivediag, 'stagePlayerTrade': stagePlayerTrade, 'stageTradePrice': stageTradePrice, 'skilldiag': skilldiag, 'stageW10': stageW10, 'stageW8': stageW8, 'stageW9': stageW9, 'stageTradeGoods': stageTradeGoods, 'postraidsave': postraidsave, 'puppettalkdiag': puppettalkdiag, 'stageGlide': stageGlide, 'stageWear': stageWear, 'stageW1': stageW1, 'stageW2': stageW2, 'stageW3': stageW3, 'stageW4': stageW4, 'stageW5': stageW5, 'stageW6': stageW6, 'stageW7': stageW7, 'stageX1': stageX1, 'stageF1': stageF1, 'brentondiag': brentondiag, 'xpinfodiag': xpinfodiag, 'stageA4': stageA4, 'stageA3': stageA3, 'stageQ2': stageQ2, 'stageK1': stageK1, 'stageS1': stageS1, 'stageS2': stageS2, 'stageS3': stageS3, 'stageCallAnimals': stageCallAnimals, 'callanimals2diag': callanimals2diag, 'animalscandiag': animalscandiag, 'callanimalsdiag': callanimalsdiag, 'stageOpenLocks': stageOpenLocks, 'stageSelfSpell': stageSelfSpell, 'selfspelldiag': selfspelldiag, 'stageNetOutage': stageNetOutage, 'stageR2': stageR2, 'stageM2': stageM2, 'stageRaid': stageRaid, 'stageM1': stageM1, 'stageR1': stageR1, 'theftdiag': theftdiag, 'stageCreature': stageCreature, 'stageCreatureLife': stageCreatureLife, 'stageControl': stageControl, 'stageNpcSpell': stageNpcSpell, 'stagePoison': stagePoison, 'theftscan': theftscan, 'doorlatediag': doorlatediag, 'doordiag': doordiag, 'worldscan': worldscan, 'usediag': usediag, 'friendlydiag': friendlydiag, 'parity': parity, 'scriptfinddiag': scriptfinddiag, 'tracediag': tracediag, 'deaddiag': deaddiag, 'stageL': stageL, 'stageP3a': stageP3a, 'invariantself': invariantself, 'puppetposediag': puppetposediag, 'syncdiag': syncdiag, 'ownerdiag': ownerdiag, 'potiondiag': potiondiag, 'transformdiag': transformdiag, 'rangeddiag': rangeddiag, 'rangedbot': rangedbot, 'stageP1': stageP1, 'stageP2': stageP2, 'stageP2hit': stageP2hit, 'stageP2fire': stageP2fire, 'stageHealOther': stageHealOther, 'raiddiag': raiddiag, 'arrowtouchdiag': arrowtouchdiag, 'scriptdumpdiag': scriptdumpdiag, 'stageT': stageT, 'stageV5': stageV5, 'stageV4': stageV4, 'posediag': posediag, 'stageV3': stageV3, 'stageV1': stageV1, 'stageV2': stageV2, 'viewdiag': viewdiag, 'stageE5': stageE5, 'stageQ': stageQ, 'questdiag': questdiag, 'stageE4': stageE4, 'infodescdiag': infodescdiag, 'stageE3': stageE3, 'stageE2': stageE2, 'stageE1': stageE1, 'aggrodiag': aggrodiag, 'stageH3b': stageH3b, 'infoscandiag': infoscandiag, 'gotodiag2': gotodiag2, 'walkdiag': walkdiag, 'gotodiag': gotodiag, 'navdiag': navdiag, 'soak': soak, 'stageH2': stageH2, 'stageH1': stageH1, 'infodiag': infodiag, 'stageG2': stageG2, 'stageG': stageG, 'stageD3b': stageD3b, 'stageD3a': stageD3a, 'stageD2': stageD2, 'stageD1': stageD1, 'stageC': stageC, 'stageB': stageB, 'stageA2': stageA2, 'stageA': stageA, 'herodeathdiag': herodeathdiag, 'herodiag': herodiag, 'givexpdiag': givexpdiag, 'stage3c': stage3c, 'farwritediag': farwritediag, 'stage1': stage1, 'stage2': stage2, 'animdiag': animdiag, 'stage3a': stage3a, 'scriptdiag': scriptdiag,
+SUITES = {'stageGuideSave': stageGuideSave, 'stageGuide': stageGuide, 'stageEscort': stageEscort, 'stageTreasure': stageTreasure, 'treasurediag': treasurediag, 'soultraveldiag': soultraveldiag, 'followdiag': followdiag, 'stageHailCopy': stageHailCopy, 'stageDefeatQuest': stageDefeatQuest, 'stageLiberate': stageLiberate, 'stageArtifactFound': stageArtifactFound, 'stageEnterPlace': stageEnterPlace, 'stageShapeFight': stageShapeFight, 'objectscan': objectscan, 'stageEdgeClaim': stageEdgeClaim, 'stageSharedUse': stageSharedUse, 'stagePickPocket': stagePickPocket, 'stageMurder': stageMurder, 'questdumpdiag': questdumpdiag, 'stageHostUnreachable': stageHostUnreachable, 'menutextdiag': menutextdiag, 'stageSubtitles': stageSubtitles, 'stageWitness': stageWitness, 'stageTogether': stageTogether, 'stageRansack': stageRansack, 'stageMapMarks': stageMapMarks, 'stageTradeQuality': stageTradeQuality, 'stageTradeKeys': stageTradeKeys, 'fakebreaddiag': fakebreaddiag, 'stageCorpseProp': stageCorpseProp, 'fakebreadlivediag': fakebreadlivediag, 'stagePlayerTrade': stagePlayerTrade, 'stageTradePrice': stageTradePrice, 'skilldiag': skilldiag, 'stageW10': stageW10, 'stageW8': stageW8, 'stageW9': stageW9, 'stageTradeGoods': stageTradeGoods, 'postraidsave': postraidsave, 'puppettalkdiag': puppettalkdiag, 'stageGlide': stageGlide, 'stageWear': stageWear, 'stageW1': stageW1, 'stageW2': stageW2, 'stageW3': stageW3, 'stageW4': stageW4, 'stageW5': stageW5, 'stageW6': stageW6, 'stageW7': stageW7, 'stageX1': stageX1, 'stageF1': stageF1, 'brentondiag': brentondiag, 'xpinfodiag': xpinfodiag, 'stageA4': stageA4, 'stageA3': stageA3, 'stageQ2': stageQ2, 'stageK1': stageK1, 'stageS1': stageS1, 'stageS2': stageS2, 'stageS3': stageS3, 'stageCallAnimals': stageCallAnimals, 'callanimals2diag': callanimals2diag, 'animalscandiag': animalscandiag, 'callanimalsdiag': callanimalsdiag, 'stageOpenLocks': stageOpenLocks, 'stageSelfSpell': stageSelfSpell, 'selfspelldiag': selfspelldiag, 'stageNetOutage': stageNetOutage, 'stageR2': stageR2, 'stageM2': stageM2, 'stageRaid': stageRaid, 'stageM1': stageM1, 'stageR1': stageR1, 'theftdiag': theftdiag, 'stageCreature': stageCreature, 'stageCreatureLife': stageCreatureLife, 'stageControl': stageControl, 'stageNpcSpell': stageNpcSpell, 'stagePoison': stagePoison, 'theftscan': theftscan, 'doorlatediag': doorlatediag, 'doordiag': doordiag, 'worldscan': worldscan, 'usediag': usediag, 'friendlydiag': friendlydiag, 'parity': parity, 'scriptfinddiag': scriptfinddiag, 'tracediag': tracediag, 'deaddiag': deaddiag, 'stageL': stageL, 'stageP3a': stageP3a, 'invariantself': invariantself, 'puppetposediag': puppetposediag, 'syncdiag': syncdiag, 'ownerdiag': ownerdiag, 'potiondiag': potiondiag, 'transformdiag': transformdiag, 'rangeddiag': rangeddiag, 'rangedbot': rangedbot, 'stageP1': stageP1, 'stageP2': stageP2, 'stageP2hit': stageP2hit, 'stageP2fire': stageP2fire, 'stageHealOther': stageHealOther, 'raiddiag': raiddiag, 'arrowtouchdiag': arrowtouchdiag, 'scriptdumpdiag': scriptdumpdiag, 'stageT': stageT, 'stageV5': stageV5, 'stageV4': stageV4, 'posediag': posediag, 'stageV3': stageV3, 'stageV1': stageV1, 'stageV2': stageV2, 'viewdiag': viewdiag, 'stageE5': stageE5, 'stageQ': stageQ, 'questdiag': questdiag, 'stageE4': stageE4, 'infodescdiag': infodescdiag, 'stageE3': stageE3, 'stageE2': stageE2, 'stageE1': stageE1, 'aggrodiag': aggrodiag, 'stageH3b': stageH3b, 'infoscandiag': infoscandiag, 'gotodiag2': gotodiag2, 'walkdiag': walkdiag, 'gotodiag': gotodiag, 'navdiag': navdiag, 'soak': soak, 'stageH2': stageH2, 'stageH1': stageH1, 'infodiag': infodiag, 'stageG2': stageG2, 'stageG': stageG, 'stageD3b': stageD3b, 'stageD3a': stageD3a, 'stageD2': stageD2, 'stageD1': stageD1, 'stageC': stageC, 'stageB': stageB, 'stageA2': stageA2, 'stageA': stageA, 'herodeathdiag': herodeathdiag, 'herodiag': herodiag, 'givexpdiag': givexpdiag, 'stage3c': stage3c, 'farwritediag': farwritediag, 'stage1': stage1, 'stage2': stage2, 'animdiag': animdiag, 'stage3a': stage3a, 'scriptdiag': scriptdiag,
           'stage3b': stage3b, 'combatdiag': combatdiag, 'stackdiag': stackdiag, 'stage4': stage4, 'stage4b': stage4b, 'talkdiag': talkdiag, 'namesdiag': namesdiag, 'talkdiag2': talkdiag2, 'stage4c': stage4c, 'itemdiag': itemdiag, 'stage5': stage5, 'lootdiag': lootdiag, 'stage5b': stage5b, 'stage5c': stage5c, 'chestdiag': chestdiag, 'stageChest': stageChest, 'quicklootdiag': quicklootdiag, 'radiusdiag': radiusdiag, 'pausediag': pausediag, 'savediag': savediag, 'stageQuickLoot': stageQuickLoot, 'tradediag': tradediag, 'stageTrade': stageTrade, 'spellfuncdiag': spellfuncdiag, 'stageDialogAudio': stageDialogAudio, 'listendiag': listendiag, 'stageU1': stageU1, 'stageBigTrade': stageBigTrade, 'stageReloadLoot': stageReloadLoot}
 
 

@@ -13,6 +13,7 @@
 #include "journal.h"
 #include "persist.h"
 #include "clock.h"
+#include "guide.h"
 #include "infocmd.h"
 #include "partner.h"
 #include "items.h"
@@ -124,6 +125,7 @@ class Module : public eCEngineComponentBase
         g3t::talk::OnWorldChange();
         g3t::journal::OnWorldChange();
         g3t::infocmd::OnWorldChange();
+        g3t::guide::OnWorldChange();
         g3t::doors::OnWorldChange();
         g3t::enclaves::OnWorldChange();
         g3t::occupancy::OnWorldChange();
@@ -183,6 +185,7 @@ class Module : public eCEngineComponentBase
         g3t::persist::Tick();
         g3t::clock::Tick();
         g3t::infocmd::Tick();
+        g3t::guide::Tick();
         g3t::containers::Tick();
         g3t::trade::Tick();
         g3t::mapmarks::Tick();

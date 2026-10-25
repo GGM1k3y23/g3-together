@@ -35,6 +35,7 @@
 #include "persist.h"
 #include "hero.h"
 #include "clock.h"
+#include "guide.h"
 #include "infocmd.h"
 #include "remote.h"
 #include "trace.h"
@@ -316,6 +317,12 @@ bool RunReviewAction(const char* action)
         g3t::containers::Stacks(argument, &Log);
     } else if (!std::strcmp(action, "holditem")) {
         g3t::containers::HoldItem(argument, &Log);
+    } else if (!std::strcmp(action, "guide")) {  // P9 (25.10.)
+        g3t::guide::Report(argument, &Log);
+    } else if (!std::strcmp(action, "guidesyncoff")) {
+        g3t::guide::Off(&Log);
+    } else if (!std::strcmp(action, "farheal")) {
+        g3t::explore::FarHeal(argument, &Log);
     } else {
         return false;
     }

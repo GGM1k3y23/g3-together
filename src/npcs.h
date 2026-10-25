@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <vector>
 
 class eCEntity;
 
@@ -44,6 +45,12 @@ void DeadPoseReport(LogFn log);  // QA: DEADPOSE line
 void LayDownCorpse(eCEntity* entity);  // a death applied here outside mirroring (journal.cpp): lay the body down like a dead mirror
 unsigned HoldChanges();  // QA: weapons put into mirrors' hands so far
 bool Claimed(eCEntity const* entity);  // client: taken over by this player
+void Mirrored(std::vector<eCEntity*>& out);  // client: the NPCs driven from another machine's snapshots now (guide.cpp)
+// Host: an NPC a client simulates guides or follows the host's hero (guide.cpp): simulated here from now on, the client's
+// snapshots of it refused (the client's copy becomes a mirror of the host's), until HostRelease. False if not mirrored.
+bool HostTake(eCEntity* entity);
+void HostRelease(eCEntity* entity);
+bool HostTaken(eCEntity const* entity);
 void SendInfo(char const* name, LogFn log);  // QA: NPCSEND line, why this machine last did not send the NPC (name or GUID), or sent
 void JoinGraceOff(LogFn log);  // QA negative control (host): take a joining client's snapshots of NPCs near the host
 void ContestOff(LogFn log);    // QA negative control (host): take a client's NPC that this machine still processes just outside its range

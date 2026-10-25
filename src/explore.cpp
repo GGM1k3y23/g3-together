@@ -253,6 +253,24 @@ void FarKill(char const* name, LogFn log)
     log(line);
 }
 
+// QA (stageEscort): a named NPC wherever it is gets its hit points back (the weak escaped slave died to wolves on the
+// way to Freman, 25.10.).
+void FarHeal(char const* name, LogFn log)
+{
+    char line[200];
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    Entity npc = Entity::GetEntity(bCString(name));
+    if (!hero || !npc.GetInstance() || npc.IsDead() || !npc.GetInstance()->GetPropertySet(eEPropertySetType_DamageReceiver)) {
+        sprintf_s(line, "REFUSED farheal %s: no hero, no such NPC, dead or not damageable", name);
+        log(line);
+        return;
+    }
+    const int before = static_cast<int>(npc.DamageReceiver.HitPoints);
+    GetScriptAdminExt().CallScript(bCString("AddHitPoints"), npc.GetInstance(), hero, 100000);
+    sprintf_s(line, "FARHEAL name=%s before=%d hp=%d", name, before, static_cast<int>(npc.DamageReceiver.HitPoints));
+    log(line);
+}
+
 // QA, regional-authority spike: move a named entity wherever it is ("X_Y_Z" in cm), keeping its rotation.
 void FarMove(char const* argument, LogFn log)
 {
