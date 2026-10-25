@@ -112,13 +112,18 @@ these guides used two game copies on one PC; play over the real internet remains
   your last hit on a human or orc knocks them out (experience, no murder); only a blow on them lying there kills them.
 - Companions follow the player who recruited them, even far from the host. Dismissing them returns
   their ownership to the host.
+- An NPC that guides you or that you escort (follow and escort quests) goes with the player who took the quest, also the
+  joining player, and after the host loads a save that player leads again. When the escort ends far from the host, the
+  NPC stands at the same place on both PCs.
 - Quest state and previously completed dialogs are shared. Quest rewards go to everyone. Kill
   quests also count enemies killed in the joining player's region.
 - A stool, bench, campfire or other place has one user: while your partner uses it, you are kept off ("<Name> is
   using this."), and NPCs do not take it either.
 - Items, chests, corpses and trading are shared: what one player takes is gone for everyone. An NPC whose pocket one
   player picked cannot be picked again by the other.
-- Everyone uses the same time of day. Sleeping advances time for all players.
+- Everyone uses the same time of day. Sleeping advances time for all players, and so does waiting until morning: the one
+  who waits jumps straight to 9 o'clock.
+- Animals that come back after some days (scavengers, deer, wolves and the like) come back on both PCs or on neither.
 - Helping up a downed player costs one healing potion. A player who would die stays down while a
   connected partner in the same world, who is not downed, can help. Talk to the downed player's
   character and choose "I will help you." to help them up. The cheapest healing potion in the
@@ -132,9 +137,16 @@ these guides used two game copies on one PC; play over the real internet remains
   killing you), you stand up by yourself after a while, nobody needs to help, and the winner may rob you of half your gold.
   When an NPC of the other player's game does it, you see "<Name> robbed you of N gold." Your partner cannot loot you.
 - An NPC that sees a player steal reacts as in single-player, also when the other player's PC simulates it: it goes after
-  the thief.
+  the thief. Fights and murders by either player are seen the same way: onlookers and guards come in during a beating,
+  and only the murderer is pursued. Guards warn and then attack a player who draws a weapon near them or walks into a
+  place they guard. A murder by a player's companion is noticed as in single-player.
 - A player within about 20 m hears the other player's dialog. With the game's subtitles on, the lines' text shows as
-  well, in your own game language, unless you are in a dialog yourself.
+  well, in your own game language, unless you are in a dialog yourself. You also see the answers your partner can pick
+  and then the one they picked; the one who talks chooses.
+- An NPC talks to one player at a time: while your partner talks to it, it is busy for you ("<NPC> is talking to
+  <player>."). It gestures and faces the speaker on both PCs.
+- An NPC with important news for a player (a guard, a quest giver) walks up to that player and talks to them, as it
+  does in single-player, also to the joining player.
 - Dead NPCs remain dead, including those killed far from the host.
 - Opening a door or picking a lock opens it for everyone, including players who join later.
 - NPCs respond to attacks from either player as in single-player: they fight, flee or call for help.
@@ -221,6 +233,13 @@ these guides used two game copies on one PC; play over the real internet remains
   A murder counts for the victim's town as in single-player, also when the other player's PC simulates the victim
   (`personal`: in the murderer's own record). Beating a human or orc knocks them out first; only a blow on them lying
   there kills them.
+- Soul travel: the other player sees your ghost moving, not the body you left behind.
+- Ice and fire spells that put out burning or freezing (and make such projectiles fall apart) work on the other
+  player's NPCs only on your own PC. You will rarely notice this.
+- An NPC with news stops walking up to you when you go more than about 25 m away from it; talk to it yourself.
+- Not checked yet, because the bots cannot set these scenes up: the uprising in Cape Dun, freeing a town in the middle of
+  the game (bots checked Ardea in the opening), quests to drive someone away (their dialog fight) and plundering. They
+  are on the playtest checklist.
 - Untested: monsters continuing to attack a downed hero, real internet
   play, and more than two players. The features above were checked with bots. A first short human
   test with two windows on one PC found two bugs: enemies ignored the joining player, and combat

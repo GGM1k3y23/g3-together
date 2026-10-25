@@ -19,6 +19,7 @@ using LogFn = void (*)(char const*);
 void Report(LogFn log);   // QA: INFOCMD line
 void Off(LogFn log);      // QA negative control: pass nothing on
 void DialogXpOff(LogFn log);  // QA negative control: experience from dialogs stays with the speaker
+void GivebackPlaceOff(LogFn log);  // QA negative control: a companion given back does not tell the host where it stands
 void JoinQa(char const* argument, LogFn log);  // QA: Name_1 / Name_0, like JoinPlayer true/false on a client
 // A client takes over a mirrored NPC as its companion (true) or gives it back (false), as a dialog's JoinPlayer does:
 // used by spells.cpp for word of control and tame animal, guide.cpp for guides and escorted NPCs. follow false: no

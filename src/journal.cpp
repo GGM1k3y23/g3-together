@@ -155,6 +155,28 @@ bool Pending(eCEntity const* entity)
     return it != deaths.end() && !it->second.applied;
 }
 
+void NewLife(unsigned char const guid[16])
+{
+    const std::string key(reinterpret_cast<char const*>(guid), 16);
+    auto it = deaths.find(key);
+    if (it != deaths.end()) {
+        Logf("journal: %s lives again; its death is over", it->second.name.c_str());
+        deaths.erase(it);
+    }
+}
+
+void NewLife(eCEntity const* entity)
+{
+    if (!entity) return;
+    const std::string key = Key(entity);
+    auto it = deaths.find(key);
+    if (it != deaths.end()) {
+        Logf("journal: %s lives again; its death is over", it->second.name.c_str());
+        deaths.erase(it);
+    }
+    alive[key] = true;
+}
+
 void Tick()
 {
     gCSession& session = gCSession::GetInstance();

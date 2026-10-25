@@ -8,6 +8,8 @@ void Summary(LogFn log);                    // NPCSUMMARY: all NPCs this machine
 void Teleport(char const* xyz, LogFn log);  // "X_Y_Z" in cm: move the hero there
 void Attitude(char const* name, LogFn log); // QA: ATTITUDE line, the game's GetAttitude of an NPC to the hero and to puppet 2
 void HeroPos(LogFn log);                   // QA: HEROPOS line, where the controlled body is now
+void RunTo(char const* argument, LogFn log);  // QA: the hero runs to X_Y_Z (AI goto)
+void SetAttribute(char const* argument, LogFn log);  // QA: TAG_value, a base attribute of the hero
 void LookAt(char const* name, LogFn log);   // put the hero 4 m from a named entity, facing it (camera looks at it)
 void Near(char const* xyz, LogFn log);      // NEAR lines: NPCs within 40 m of "X_Y_Z", then "NEAR end"
 void FarNpcs(LogFn log);                    // FARNPC lines: NPCs anywhere, found via dialog owners

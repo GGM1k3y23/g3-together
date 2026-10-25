@@ -23,6 +23,8 @@ void MoveLengthOff(void (*log)(char const*));          // QA negative control: t
 // Jump from a native function whose first 6 bytes are complete, position-independent instructions (push ebp; mov ebp,esp;
 // and esp,-8) to `detour`; returns the trampoline that runs the original, or null.
 void* JumpTo(unsigned char* target, void* detour);
+// Points one import of `module` (by DLL and function name) at `replacement`; returns what it pointed at.
+void* PatchImport(void* module, char const* dll, char const* function, void* replacement);
 // GetAttitude wrapper: an NPC judging a puppet judges the local hero instead.
 bool AttitudeInstalled();
 bool AttitudeNative();          // jump in the native function (all callers), not only the script table

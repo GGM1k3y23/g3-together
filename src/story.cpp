@@ -5,12 +5,14 @@
 #include "combat.h"
 #include "log.h"
 #include "net.h"
+#include "npcs.h"
 #include "remote.h"
 
 #include <Game.h>
 #include <Script.h>
 #include <Windows.h>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <unordered_map>
@@ -444,5 +446,32 @@ void Approach(char const* npcName, LogFn log)
     const float now[3] = {p.GetX(), p.GetY(), p.GetZ()};
     sprintf_s(line, "APPROACH npc=%s before_cm=%.0f after_cm=%.0f", npcName, before, body::Distance(target, now));
     log(line);
+}
+}
+
+namespace g3t::story {
+// QA: NPCs within `radius` cm (default 2000, the distance from which AssessActivePerception lets an NPC with an important
+// info walk up to the player and talk) that have an important info for this machine's hero, as the game asks it.
+void Important(char const* radius, LogFn log)
+{
+    char line[300];
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    if (!hero) { log("REFUSED important: no hero"); return; }
+    const float within = radius && *radius ? static_cast<float>(std::atof(radius)) : 2000.0f;
+    const bCVector& h = hero->GetWorldPosition();
+    const float from[3] = {h.GetX(), h.GetY(), h.GetZ()};
+    const bTObjArray<Entity> list = Entity::GetNPCs();
+    for (int i = 0; i < list.GetCount(); ++i) {
+        Entity npc = list.GetAt(i);
+        if (!npc.GetInstance() || npc.IsDead() || remote::IsPuppet(npc.GetInstance())) continue;
+        const bCVector& n = npc.GetInstance()->GetWorldPosition();
+        const float at[3] = {n.GetX(), n.GetY(), n.GetZ()};
+        const float distance = body::Distance(at, from);
+        if (distance > within || !npc.HasImportantInfo(Entity(hero))) continue;
+        sprintf_s(line, "IMPORTANT npc=%s distance=%.0f mirrored=%d task=%s", npc.GetName().GetText(), distance,
+                  npcs::IsMirrored(npc.GetInstance()) ? 1 : 0, npc.Routine.GetCurrentTask().GetText());
+        log(line);
+    }
+    log("IMPORTANT end");
 }
 }

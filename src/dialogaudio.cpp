@@ -82,6 +82,19 @@ uint8_t subtitleFrom = 0;
 uint32_t subtitleLine = 0;
 unsigned subtitlesShown = 0, subtitlesMissing = 0;
 char lastSubtitle[96] = "-";
+// Dialog options (phase 5 level 2, owner 25.10. "A"): the one who talks chooses; a listener nearby sees the options of the
+// speaker's menu in the dialog's subtitle box, and then what was chosen (the hero's line, as a subtitle above).
+bool options = true;  // QA negative control: optionsoff
+std::string sentOptions;  // speaker: the menu last sent ("" none)
+struct Menu {
+    uint8_t speakerKind = 0;
+    uint8_t speaker[16] = {};
+    std::vector<std::string> ids;
+};
+Menu menus[net::MaxPlayers];  // listener: the menu each sender has open
+uint8_t optionsFrom = 0;      // listener: whose menu shows here (0: none)
+unsigned optionsSent = 0, optionsShown = 0;
+char lastOptions[160] = "-";
 
 void GuidOf(eCEntity* entity, uint8_t out[16])
 {
@@ -162,6 +175,50 @@ void SendEnd(uint8_t reason)
     net::SendDialogLine(note);
     ++sentEnds;
     speaking = {};
+}
+
+// The text id of an option: its first line (the hero's words on the menu).
+std::string OptionId(gCInfo_PS* info)
+{
+    gCInfoScript_PS* script = info ? info->AccessInfoScript().GetObject() : nullptr;
+    for (GEInt c = 0; script && c < script->GetCommandCount(); ++c)
+        if (gCInfoScriptLine_PS* line = script->GetCommand(c); line && line->AccessCommand() == bCString("Say"))
+            return line->AccessText().GetID().GetText();
+    return {};
+}
+
+// Speaker: the menu of this machine's dialog, sent when it opens or changes, and gone once a line plays or the dialog ends.
+void TickMenu()
+{
+    gCInfoManager_PS* manager = Infos();
+    std::vector<std::string> ids;
+    if (options && manager && manager->AccessIsRunning() && !manager->AccessWaitForScript() && !speaking.lineId)
+        for (GEInt i = 0; i < manager->GetAvailableInfoCount() && ids.size() < 9; ++i)
+            if (std::string id = OptionId(manager->GetAvailableInfo(i)); !id.empty() && id.size() < 64) ids.push_back(id);
+    std::string joined;
+    for (auto const& id : ids) joined += id + "|";
+    if (joined == sentOptions) return;
+    sentOptions = joined;
+    net::DialogLineNote note;
+    eCEntity* partner = manager ? reinterpret_cast<eCEntity*>(manager->GetDialogPartnerNPC()) : nullptr;
+    if (partner) {
+        note.speakerKind = net::DialogSpeakerNpc;
+        GuidOf(partner, note.speaker);
+    }
+    if (ids.empty()) {
+        note.kind = net::DialogOptionsGone;
+        net::SendDialogLine(note);
+        return;
+    }
+    note.kind = net::DialogOptions;
+    note.lineId = static_cast<uint32_t>(ids.size());
+    for (size_t i = 0; i < ids.size(); ++i) {
+        note.reason = static_cast<uint8_t>(i + 1);
+        strncpy_s(note.text, ids[i].c_str(), _TRUNCATE);
+        net::SendDialogLine(note);
+    }
+    ++optionsSent;
+    Logf("dialogaudio: menu of %zu options sent", ids.size());
 }
 
 void OnLocalLine(gCScriptProcessingUnit* spu, bCString const& sample)
@@ -272,10 +329,62 @@ bool PlainSample(char const* sample)
     return true;
 }
 
+void HideMenu()
+{
+    if (optionsFrom && !subtitleLine && !OwnDialog()) gui2.StopSay();
+    optionsFrom = 0;
+}
+
+// Listener: a sender's whole menu has come; shown in the subtitle box at the speaker, as "<player>:" and one option a line.
+void ShowMenu(uint8_t from)
+{
+    Menu const& menu = menus[from];
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    eCEntity* npc = menu.speakerKind == net::DialogSpeakerNpc ? Resolve(menu.speaker) : nullptr;
+    eCEntity* puppet = remote::PuppetOf(from);
+    eCEntity* at = npc ? npc : puppet;
+    if (!options || !hero || !puppet || !at || OwnDialog() || Distance(hero, at) > StartRange) return;
+    if (!eCApplication::GetInstance().GetEngineSetup().ShowSubtitle) return;
+    std::wstring text;
+    wchar_t name[64] = {};
+    MultiByteToWideChar(CP_UTF8, 0, net::PeerName(from), -1, name, 64);
+    text = std::wstring(name[0] ? name : L"?") + L":";
+    int shown = 0;
+    for (size_t i = 0; i < menu.ids.size(); ++i) {
+        const bCUnicodeString option = eCLocString(bCString(menu.ids[i].c_str()));
+        if (!option.GetLength()) continue;
+        wchar_t number[8];
+        swprintf_s(number, L"\n%zu. ", i + 1);
+        text += number;
+        text += reinterpret_cast<wchar_t const*>(option.GetText());
+        ++shown;
+    }
+    if (!shown) return;
+    gui2.StartSay(Entity(puppet), bCUnicodeString(text.c_str()), GEFalse);
+    optionsFrom = from;
+    ++optionsShown;
+    WideCharToMultiByte(CP_UTF8, 0, text.c_str(), -1, lastOptions, sizeof(lastOptions) - 1, nullptr, nullptr);
+    for (char* c = lastOptions; *c; ++c)
+        if (*c == ' ' || *c == '\n') *c = '_';  // one word for the QA line
+    Logf("dialogaudio: menu of player %u shown here (%d options)", from, shown);
+}
+
 void OnLine(uint8_t from, net::DialogLineNote const& note)
 {
     if (disabled) return;
     ++received;
+    if (note.kind == net::DialogOptions || note.kind == net::DialogOptionsGone) {
+        if (from >= net::MaxPlayers) return;
+        Menu& menu = menus[from];
+        if (note.kind == net::DialogOptionsGone || note.reason == 1) menu = {};
+        if (optionsFrom == from && note.kind == net::DialogOptionsGone) HideMenu();
+        if (note.kind == net::DialogOptionsGone || note.lineId == 0 || note.lineId > 9 || note.reason != menu.ids.size() + 1) return;
+        menu.speakerKind = note.speakerKind;
+        std::memcpy(menu.speaker, note.speaker, 16);
+        menu.ids.emplace_back(std::string(note.text, strnlen(note.text, sizeof(note.text))));
+        if (menu.ids.size() == note.lineId) ShowMenu(from);
+        return;
+    }
     if (note.kind == net::DialogLineEnd) {
         for (auto it = playing.begin(); it != playing.end(); ++it)
             if (it->from == from && it->lineId == note.lineId) {
@@ -331,6 +440,7 @@ void OnLine(uint8_t from, net::DialogLineNote const& note)
     ++played;
     strncpy_s(lastSample, note.sample, _TRUNCATE);
     Logf("dialogaudio: line %u from player %u plays at %s: %s", note.lineId, from, speaker->GetName().GetText(), note.sample);
+    if (optionsFrom == from) optionsFrom = 0;  // the chosen line's text takes the box
     ShowSubtitle(from, note, speaker);
     playing.push_back(std::move(line));
 }
@@ -395,6 +505,7 @@ void Tick()
     }
     if (!hooked && !hookFailed) Hook();
     TickSpeaking();
+    if (!disabled && net::Connected()) TickMenu();
     TickPlaying();
 }
 
@@ -404,10 +515,11 @@ void Report(LogFn log)
     sprintf_s(line,
               "DIALOGAUDIO hooked=%d sent_starts=%u sent_ends=%u third_speakers=%u received=%u played=%u playing=%zu finished=%u "
               "stopped_far=%u dropped_far=%u dropped_own_dialog=%u dropped_no_speaker=%u dropped_failed=%u subtitles=%u subtitles_missing=%u "
-              "subtitle_on=%d last=%s last_subtitle=%s",
+              "subtitle_on=%d options_sent=%u options_shown=%u last=%s last_subtitle=%s last_options=%s",
               hooked, sentStarts, sentEnds, thirdSpeakers, received, played, playing.size(), finished, stoppedFar, droppedFar,
               droppedOwnDialog, droppedNoSpeaker, droppedFailed, subtitlesShown, subtitlesMissing,
-              subtitles && eCApplication::GetInstance().GetEngineSetup().ShowSubtitle ? 1 : 0, lastSample, lastSubtitle);
+              subtitles && eCApplication::GetInstance().GetEngineSetup().ShowSubtitle ? 1 : 0, optionsSent, optionsShown, lastSample,
+              lastSubtitle, lastOptions);
     log(line);
 }
 
@@ -422,6 +534,12 @@ void SubtitlesOff(LogFn log)
 {
     subtitles = false;
     log("SUBTITLESOFF ok=1");
+}
+
+void OptionsOff(LogFn log)
+{
+    options = false;
+    log("OPTIONSOFF ok=1");
 }
 
 void MuteGame(char const* on, LogFn log)

@@ -84,7 +84,21 @@ Wenn nur 60 Minuten verfügbar sind: zuerst Beitritt, Kampf, Aufhelfen, Gefolgsm
 | Sitzplatz | Einer setzt sich auf einen Hocker oder eine Bank, der andere versucht denselben Platz: „<Name> benutzt das gerade.“, und er setzt sich nicht. Steht der Erste auf, kann der andere sich setzen. |
 | Tiergestalt | Ein Spieler in Wolfsgestalt (Zauber oder Trank) kämpft gegen einen Gegner: Treffer und Kill zählen für diesen Spieler, Treffer des Gegners verletzen den Wolf. |
 | Seelenwanderung | Einer zaubert Seelenwanderung in der Nähe von Gegnern und lässt den Geist zu ihnen schweben. Bekannt: Der andere sieht den Geist sich bewegen, nicht den zurückgelassenen Körper. Notieren, ob die Gegner den Geist angreifen und was mit dem Körper geschieht. |
-| Seltene Orte | Wer auf einen Orkfelsen zum Heben (laut Skriptname einer in Faring; die Bots fanden ihn nicht) oder eine Innos- oder Beliar-Statue zum Beten stößt: Einer benutzt ihn, der andere schaut zu, dann versucht es der andere. Notieren, was jeder sieht (Lage des Felsens, Wirkung). Piratenschätze (einer liegt 46 m von Tarok in Faring, mit Schaufel graben) haben die Bots geprüft: die Beute gibt es einmal. |
+| Seltene Orte | Wer auf eine Innos- oder Beliar-Statue zum Beten stößt: Einer benutzt sie, der andere schaut zu, dann versucht es der andere. Notieren, was jeder sieht. Den Orkfelsen in Faring (Stärkeprobe; hebt ihn einer, gilt es für beide) und Piratenschätze (einer liegt 46 m von Tarok in Faring, mit Schaufel graben; die Beute gibt es einmal) haben die Bots geprüft. |
+
+### Optional: die Neuheiten von 0.5.0 und Szenen, die Bots nicht aufbauen können
+
+| Abschnitt | Schritte und Beobachtungen |
+|---|---|
+| Zeugen | Der Mitspieler verprügelt in einer Stadt aus dem Gebiet des Hosts einen Bürger, während andere zusehen: Zuschauer und Wachen greifen schon beim Kampf ein, nach einem Mord wird nur der Mitspieler verfolgt, nicht der Host. |
+| Waffe ziehen | Der Mitspieler zieht neben einer Wache die Waffe oder betritt einen bewachten Ort: Die Wache warnt und greift dann diesen Spieler an. |
+| Ein Gespräch je NPC | Einer spricht mit einem NPC, der andere versucht es gleichzeitig: „<NPC> spricht gerade mit <Spieler>.“ Wer im Umkreis von 20 m zuhört, sieht die Antwortmöglichkeiten des Sprechers und die gewählte Zeile. |
+| Neuigkeiten | Nach dem Überfall zu Beginn hat Hamlar (Ardea) für jeden Helden etwas zu sagen: Er kommt auch zum Mitspieler und spricht ihn an. |
+| Begleiten und Führen | Der Mitspieler nimmt eine Folgen- oder Hinbringen-Quest an (Mitch in Faring, der Sklave für Freman in Silden): Das NPC geht mit diesem Spieler, die Quest zählt für beide. |
+| Bis zum Morgen warten | Einer wählt „bis zum Morgen warten“: Die Uhr springt für beide auf 9 Uhr. |
+| Aufstand Kap Dun | Der Aufstand der Rebellen in Kap Dun (Phils Quests): Er beginnt für beide, der Kampf zählt für beide. Die Bots konnten ihn nicht starten. |
+| Stadt befreien | Eine andere Stadt als Ardea (zum Beispiel Montera) mitten im Spiel befreien: Die Stadt ist bei beiden frei, die Quest bei beiden erledigt. |
+| Vertreiben, Plündern | Eine Vertreiben-Quest (mit ihrem Dialog-Kampf) und eine Plündern-Quest: Beide sehen das Ergebnis, die Quest zählt für beide. |
 
 ## Bei einem Fehler
 

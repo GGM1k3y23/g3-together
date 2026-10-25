@@ -16,4 +16,5 @@ void OnState(uint8_t from, net::WorldState const& s);  // kind 10 from the netwo
 void OnWorldChange();                                  // a save was loaded: forget what was seen
 void Report(LogFn log);                                // QA: DOORS line
 void SyncOff(LogFn log);                               // QA negative control: nothing sent or applied
+void Movers(LogFn log);                                // QA: MOVER lines, the mechanisms processed here (not synchronized)
 }

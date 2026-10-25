@@ -113,6 +113,9 @@ beschriebenen Tests liefen auf einem PC mit zwei Spielkopien; Spielen über das 
   Einzelspiel nieder (Erfahrung, kein Mord); erst ein Schlag auf den am Boden Liegenden tötet ihn.
 - Gefolgsleute folgen dem Spieler, der sie angeworben hat, auch weit weg vom Host. Entlässt er sie, gehören sie
   wieder dem Host.
+- Wer dich führt oder wen du begleitest (Folgen- und Hinbringen-Quests), geht mit dem Spieler, der die Quest angenommen
+  hat, auch mit dem Mitspieler; lädt der Host einen Spielstand, führt wieder dieser Spieler. Endet das Hinbringen weit weg
+  vom Host, steht das NPC danach bei beiden am selben Ort.
 - Quests und bereits geführte Dialoge sind gemeinsam; Quest-Belohnungen bekommen alle. Kill-Aufträge zählen auch Gegner, die
   der Mitspieler weit weg vom Host erledigt. Gibt einer eine Quest ab, bekommen **alle** die Erfahrung dafür, das **Gold** nur der,
   der abgibt.
@@ -120,16 +123,27 @@ beschriebenen Tests liefen auf einem PC mit zwei Spielkopien; Spielen über das 
   kommst du nicht dran („<Name> benutzt das gerade.“), und NPCs nehmen ihn auch nicht.
 - Gegenstände, Truhen, Leichen und Handel: Was einer nimmt, ist für alle weg. Wem einer die Taschen geleert hat, den kann
   auch der andere nicht mehr bestehlen.
-- Uhrzeit: Es ist für alle dieselbe Tageszeit; wer schläft, stellt die Zeit für alle vor.
+- Uhrzeit: Es ist für alle dieselbe Tageszeit; wer schläft, stellt die Zeit für alle vor, ebenso wer bis zum Morgen
+  wartet: Er springt sofort auf 9 Uhr.
+- Tiere, die nach einigen Tagen wiederkommen (Aasfresser, Hirsche, Wölfe und ähnliche), kommen bei beiden wieder oder bei
+  keinem.
 - Tote NPCs liegen bei allen am Boden, auch wenn sie weit weg vom Host gestorben sind und man erst später hinkommt.
 - Niederschlag wie im Einzelspiel: Schlägt dich eine Wache, ein Duell- oder Arenagegner bewusstlos (ohne dass du sterben
   würdest), läuft es wie im Einzelspiel: Du stehst von selbst wieder auf, Aufhelfen gibt es dabei nicht, und der Sieger
   kann dir die Hälfte deines Goldes abnehmen. Tut das ein NPC aus dem Spiel des anderen Rechners, siehst du „<Name> hat
   dir N Gold abgenommen.“ Dein Mitspieler kann dich nicht ausplündern.
 - Zeugen: Sieht ein NPC einen Spieler stehlen, reagiert er wie im Einzelspiel, auch wenn der andere Rechner ihn berechnet:
-  Er geht auf den Dieb los.
+  Er geht auf den Dieb los. Kämpfe und Morde beider Spieler sehen NPCs genauso: Zuschauer und Wachen greifen schon beim
+  Prügeln ein, verfolgt wird nur der Mörder. Wachen warnen einen Spieler, der neben ihnen die Waffe zieht oder einen
+  bewachten Ort betritt, und greifen ihn dann an. Einen Mord durch den Begleiter eines Spielers bemerken sie wie im
+  Einzelspiel.
 - Mithören: Wer höchstens etwa 20 m entfernt steht, hört den Dialog des Mitspielers. Sind die Untertitel des Spiels an,
-  erscheint auch der Text, in der eigenen Spielsprache, solange man nicht selbst in einem Dialog ist.
+  erscheint auch der Text, in der eigenen Spielsprache, solange man nicht selbst in einem Dialog ist. Man sieht auch die
+  Antworten, die der Mitspieler wählen kann, und dann die gewählte; wer spricht, wählt.
+- Ein NPC spricht mit einem Spieler zur Zeit: Spricht dein Mitspieler mit ihm, ist es für dich beschäftigt („<NPC>
+  spricht gerade mit <Spieler>.“). Es gestikuliert und schaut den Sprecher an, auf beiden PCs.
+- Ein NPC mit wichtigen Neuigkeiten für einen Spieler (eine Wache, ein Questgeber) kommt wie im Einzelspiel zu ihm und
+  spricht ihn an, auch zum Mitspieler.
 - Duell und Arena gehören den beiden Kämpfern: Kämpft dein Partner ein Duell oder in der Arena, zählen deine Treffer auf
   seinen Gegner nicht. Der Kampf endet wie im Einzelspiel mit einem Niederschlag, nie mit einem Mord.
 - Aufhelfen kostet einen Heiltrank: Wer tödlich getroffen wird, liegt bewusstlos am Boden, bis ein Mitspieler
@@ -227,6 +241,14 @@ beschriebenen Tests liefen auf einem PC mit zwei Spielkopien; Spielen über das 
   Ein Mord zählt wie im Einzelspiel für die Stadt des Opfers, auch wenn der Rechner des anderen Spielers das Opfer
   berechnet (`personal`: im eigenen Ruf des Mörders). Einen Menschen oder Ork schlägst du zuerst nieder; erst ein Schlag
   auf den am Boden Liegenden tötet ihn.
+- Seelenwanderung: Der andere Spieler sieht deinen Geist sich bewegen, nicht den zurückgelassenen Körper.
+- Eis- und Feuerzauber, die Brennen oder Frost löschen (und solche Geschosse zerfallen lassen), wirken bei NPCs des
+  anderen Spielers nur auf deinem eigenen PC. Das fällt selten auf.
+- Ein NPC mit Neuigkeiten kommt nicht mehr zu dir, sobald du dich mehr als etwa 25 m von ihm entfernst; sprich es dann
+  selbst an.
+- Noch nicht geprüft, weil die Bots diese Szenen nicht aufbauen können: der Aufstand in Kap Dun, eine Stadt mitten im
+  Spiel befreien (die Bots prüften Ardea zu Beginn), Vertreiben-Quests (ihr Dialog-Kampf) und Plündern. Sie stehen in der
+  Spieltest-Checkliste.
 - Nicht getestet: Monster, die auf einen am Boden liegenden Helden weiter einschlagen; Spielen über das echte Internet (getestet wurde auf einem PC mit zwei Spielkopien);
   mehr als zwei Spieler. Alles hier wurde mit Bots getestet. Ein erster kurzer Test mit Menschen (zwei Fenster auf einem
   PC) fand zwei Fehler: Gegner ignorierten den Mitspieler, und Kämpfe waren beim Mitspieler nicht zu sehen. Beide sind

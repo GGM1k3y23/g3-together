@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -100,12 +101,39 @@ void Attitude(char const* name, LogFn log)
 
 void HeroPos(LogFn log)
 {
-    char line[120];
+    char line[200];
     eCEntity* body = remote::ControlledBody();
     if (!body) { log("REFUSED heropos: no hero"); return; }
     float at[3];
     PositionOf(body, at);
-    sprintf_s(line, "HEROPOS pos=%.1f,%.1f,%.1f", at[0], at[1], at[2]);
+    Entity zone = Entity(body).GetZone();
+    sprintf_s(line, "HEROPOS pos=%.1f,%.1f,%.1f zone=%s ani_state=%d", at[0], at[1], at[2], zone.GetInstance() ? zone.GetName().GetText() : "-",
+              static_cast<int>(Entity(body).Routine.AniState));
+    log(line);
+}
+
+// QA: the hero runs to a point ("X_Y_Z" in cm) the game's way (AI goto, as walkto): moving, NPCs near it can hear it.
+void RunTo(char const* argument, LogFn log)
+{
+    char line[200];
+    float target[3];
+    eCEntity* body = remote::ControlledBody();
+    if (!body || sscanf_s(argument, "%f_%f_%f", &target[0], &target[1], &target[2]) != 3) { log("REFUSED runto: no hero or not X_Y_Z"); return; }
+    const GEBool started = Entity(body).StartGoto(bCVector(target[0], target[1], target[2]), gEWalkMode_Run);
+    sprintf_s(line, "RUNTO started=%d target=%.0f,%.0f,%.0f", started ? 1 : 0, target[0], target[1], target[2]);
+    log(line);
+}
+
+// QA: set one of the hero's attributes ("STR_300": tag and base value, the tags of hero.cpp), e.g. for a strength test.
+void SetAttribute(char const* argument, LogFn log)
+{
+    char line[160], tag[8] = {};
+    int value = 0;
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    if (!hero || sscanf_s(argument, "%3[A-Z]_%d", tag, static_cast<unsigned>(sizeof(tag)), &value) != 2) { log("REFUSED setattr: no hero or not TAG_value"); return; }
+    Entity self(hero);
+    self.PlayerMemory.SetBaseValue(bCString(tag), value);
+    sprintf_s(line, "SETATTR tag=%s value=%d strength=%d", tag, value, static_cast<int>(self.PlayerMemory.GetStrength()));
     log(line);
 }
 
@@ -240,6 +268,12 @@ void FarKill(char const* name, LogFn log)
     char line[200];
     eCEntity* hero = gCSession::GetInstance().GetHero();
     Entity npc = Entity::GetEntity(bCString(name));
+    unsigned d1, d2, d3, b[8];  // a GUID instead of a name: that one NPC (stageTownFree: a town's orcs share names)
+    if (sscanf_s(name, "%8X-%4X-%4X-%2X%2X-%2X%2X%2X%2X%2X%2X", &d1, &d2, &d3, &b[0], &b[1], &b[2], &b[3], &b[4], &b[5], &b[6], &b[7]) == 11) {
+        _GUID raw{d1, static_cast<unsigned short>(d2), static_cast<unsigned short>(d3), {}};
+        for (int i = 0; i < 8; ++i) raw.Data4[i] = static_cast<unsigned char>(b[i]);
+        npc = Entity(bCPropertyID(bCGuid(raw)));
+    }
     if (!hero || !npc.GetInstance() || npc.IsDead() || !npc.GetInstance()->GetPropertySet(eEPropertySetType_DamageReceiver)) {
         sprintf_s(line, "REFUSED farkill %s: no hero, no such NPC, already dead or not damageable", name);
         log(line);
@@ -447,16 +481,56 @@ void InfoScan(char const* command, LogFn log)
     auto& infos = manager->AccessInfos();
     // "type_<n>": every info of that condition type (17 = trade), one row each.
     const int condType = !std::strncmp(command, "type_", 5) ? std::atoi(command + 5) : -1;
+    // "commands": every command name of every info's script, with how many lines use it and one example info.
+    if (!std::strcmp(command, "commands")) {
+        std::map<std::string, std::pair<int, std::string>> counts;
+        for (int i = 0; i < infos.GetCount(); ++i) {
+            gCInfo_PS* info = infos.AccessAt(i);
+            gCInfoScript_PS* script = info ? info->AccessInfoScript().GetObject() : nullptr;
+            for (int k = 0; script && k < script->AccessInfoScriptLines().GetCount(); ++k)
+                if (auto* l = static_cast<gCInfoScriptLine_PS*>(script->AccessInfoScriptLines().AccessAt(k))) {
+                    auto& c = counts[l->AccessCommand().GetText()];
+                    if (!c.first++) c.second = info->AccessName().GetText();
+                }
+        }
+        for (auto const& [name, c] : counts) {
+            sprintf_s(line, "INFOSCAN command=%s lines=%d example=%s", name.c_str(), c.first, c.second.c_str());
+            log(line);
+        }
+        sprintf_s(line, "INFOSCAN end command=commands matches=%zu", counts.size());
+        log(line);
+        return;
+    }
+    // "info_<name>": every script line of that info (command, entities, IDs), in order.
+    char const* infoName = !std::strncmp(command, "info_", 5) ? command + 5 : nullptr;
     for (int i = 0; i < infos.GetCount(); ++i) {
         gCInfo_PS* info = infos.AccessAt(i);
         if (!info) continue;
+        if (infoName) {
+            gCInfoScript_PS* script = _stricmp(info->AccessName().GetText(), infoName) ? nullptr : info->AccessInfoScript().GetObject();
+            for (int k = 0; script && k < script->AccessInfoScriptLines().GetCount(); ++k) {
+                gCInfoScriptLine_PS* l = static_cast<gCInfoScriptLine_PS*>(script->AccessInfoScriptLines().AccessAt(k));
+                if (!l) continue;
+                sprintf_s(line, "INFOSCAN info=%s owner=%s line=%d cmd=%s e1=%s e2=%s id1=%s id2=%s type=%d quest=%s", infoName,
+                          info->AccessOwner().GetText(), k, l->AccessCommand().GetText(), l->AccessEntity1().GetText(),
+                          l->AccessEntity2().GetText(), l->AccessID1().GetText(), l->AccessID2().GetText(),
+                          static_cast<int>(static_cast<gEInfoCondType const&>(info->AccessConditionType())), info->AccessQuest().GetText());
+                rows.push_back({static_cast<float>(k), line});
+            }
+            continue;
+        }
         if (condType >= 0) {
             if (static_cast<int>(static_cast<gEInfoCondType const&>(info->AccessConditionType())) != condType) continue;
             Entity owner = Entity::GetEntity(info->AccessOwner());
             float distance = 1e9f;
             if (owner.GetInstance()) { float p[3]; PositionOf(owner.GetInstance(), p); distance = body::Distance(p, h) / 100.0f; }
-            sprintf_s(line, "INFOSCAN info=%s owner=%s distance_m=%.0f given=%d permanent=%d", info->AccessName().GetText(),
-                      info->AccessOwner().GetText(), distance, info->AccessInfoGiven() ? 1 : 0, info->AccessPermanent() ? 1 : 0);
+            std::string knows;
+            auto const& cond = info->AccessConditionPlayerKnows();
+            for (int c = 0; c < cond.GetCount(); ++c) knows += std::string(knows.empty() ? "" : "|") + cond.GetAt(c).GetText();
+            sprintf_s(line, "INFOSCAN info=%s owner=%s distance_m=%.0f given=%d permanent=%d quest=%s parent=%s knows=%s",
+                      info->AccessName().GetText(), info->AccessOwner().GetText(), distance, info->AccessInfoGiven() ? 1 : 0,
+                      info->AccessPermanent() ? 1 : 0, info->AccessQuest().GetText(), info->AccessParent().GetText(),
+                      knows.empty() ? "-" : knows.substr(0, 200).c_str());
             rows.push_back({distance, line});
             continue;
         }

@@ -174,4 +174,30 @@ void SyncOff(LogFn log)
     sync = false;
     log("DOORSYNCOFF ok=1");
 }
+
+// QA (movers, P6): the mechanisms (PSMover: gates, lifts; telekinesis toggles one, MagicTelekinesis -> PSMover::Toggle)
+// this machine processes, with their state (0 open, 1 opening, 2 closed, 3 closing) and whether they loop. Not synchronized:
+// moverscan 25.10. found none at the first members of 31 towns, so a sync could not be tested.
+void Movers(LogFn log)
+{
+    char line[300];
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    bTSmallArray<eCEntity*> const* every = world::ProcessedEntities();
+    for (GEU16 i = 0; hero && every && i < every->GetCount(); ++i) {
+        eCEntity* entity = every->GetAt(i);
+        auto* mover = entity ? static_cast<gCMover_PS*>(entity->GetPropertySet(eEPropertySetType_Mover)) : nullptr;
+        if (!mover) continue;
+        uint8_t guid[16];
+        GuidOf(entity, guid);
+        const bCVector& p = entity->GetWorldPosition();
+        const float d = (p - hero->GetWorldPosition()).GetMagnitude();
+        sprintf_s(line, "MOVER name=%s guid=%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X state=%d loop=%d distance=%.0f pos=%.0f_%.0f_%.0f",
+                  entity->GetName().GetText(), *reinterpret_cast<uint32_t*>(guid), *reinterpret_cast<uint16_t*>(guid + 4),
+                  *reinterpret_cast<uint16_t*>(guid + 6), guid[8], guid[9], guid[10], guid[11], guid[12], guid[13], guid[14], guid[15],
+                  static_cast<int>(static_cast<gEMoverState>(Entity(entity).Mover.MoverState)), mover->AccessLoopAni() ? 1 : 0, d,
+                  p.GetX(), p.GetY(), p.GetZ());
+        log(line);
+    }
+    log("MOVER end");
+}
 }

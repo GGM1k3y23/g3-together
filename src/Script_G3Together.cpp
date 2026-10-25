@@ -14,6 +14,7 @@
 #include "persist.h"
 #include "clock.h"
 #include "guide.h"
+#include "arena.h"
 #include "infocmd.h"
 #include "partner.h"
 #include "items.h"
@@ -22,8 +23,11 @@
 #include "mapmarks.h"
 #include "ransack.h"
 #include "witness.h"
+#include "guards.h"
 #include "pickpocket.h"
+#include "respawn.h"
 #include "occupancy.h"
+#include "address.h"
 #include "dialogaudio.h"
 #include "config.h"
 #include "trace.h"
@@ -126,9 +130,11 @@ class Module : public eCEngineComponentBase
         g3t::journal::OnWorldChange();
         g3t::infocmd::OnWorldChange();
         g3t::guide::OnWorldChange();
+        g3t::arena::OnWorldChange();
         g3t::doors::OnWorldChange();
         g3t::enclaves::OnWorldChange();
         g3t::occupancy::OnWorldChange();
+        g3t::address::OnWorldChange();
         g3t::dialogaudio::OnWorldChange();
         g3t::containers::OnWorldChange();
         g3t::ransack::OnWorldChange();
@@ -186,13 +192,17 @@ class Module : public eCEngineComponentBase
         g3t::clock::Tick();
         g3t::infocmd::Tick();
         g3t::guide::Tick();
+        g3t::arena::Tick();
         g3t::containers::Tick();
         g3t::trade::Tick();
         g3t::mapmarks::Tick();
         g3t::ransack::Tick();
         g3t::witness::Tick();
+        g3t::guards::Tick();
         g3t::pickpocket::Tick();
+        g3t::respawn::Tick();
         g3t::occupancy::Tick();
+        g3t::address::Tick();
         g3t::dialogaudio::Tick();
         g3t::offer::Tick();
         g3t::qa::Tick();

@@ -11,6 +11,7 @@
 #include <Game.h>
 #include <Script.h>
 #include <Windows.h>
+#include <intrin.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -52,6 +53,11 @@ unsigned sent = 0, received = 0, replayed = 0, refused = 0, noHero = 0, npcSent 
 // there. QA tickguardoff lets mirrors tick again (negative control).
 constexpr uintptr_t OnTickRva = 0xb0ef0;
 gFScript originalTick = nullptr;
+// GiveXP (re/findings/xp-attributes-c.md): self = the victim or World/None, other = who earns it; with no one as other
+// it pays the local hero. Hooked to log every reward with its caller, and so that a client's hero earns nothing for a
+// death without a killer of an NPC the client does not simulate (stage 3c).
+constexpr uintptr_t GiveXpRva = 0x4e160;
+gFScript originalGiveXp = nullptr;
 bool tickTried = false, tickGuard = true;
 unsigned ticksRun = 0, ticksSkipped = 0, poisonedSkipped = 0;
 
@@ -180,6 +186,8 @@ GEInt GE_STDCALL HookTick(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid o
     return originalTick(spu, self, other, args);
 }
 
+void InstallGiveXp(unsigned char* base);
+
 // OnTick starts with push ebp; mov ebp,esp; and esp,-8; sub esp,0x41c (re/out/poison-prologs-c.txt) and returns with
 // ret 0x10; it is hooked in place only if all 16 bytes match.
 void InstallTick()
@@ -190,6 +198,33 @@ void InstallTick()
     if (base && std::memcmp(base + OnTickRva, expected, sizeof(expected)) == 0)
         originalTick = reinterpret_cast<gFScript>(JumpTo(base + OnTickRva, reinterpret_cast<void*>(&HookTick)));
     Log(originalTick ? "spells: OnTick hooked (mirrors and puppets do not tick poison)" : "spells: OnTick not hooked (prologue differs)");
+    InstallGiveXp(base);
+}
+
+GEInt GE_STDCALL HookGiveXp(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid other, GEInt args)
+{
+    const uintptr_t caller = reinterpret_cast<uintptr_t>(_ReturnAddress()) - reinterpret_cast<uintptr_t>(GetModuleHandleA("Script_Game.dll"));
+    eCEntity* victim = self ? static_cast<Entity*>(self)->GetInstance() : (spu ? spu->GetSelfEntity() : nullptr);
+    eCEntity* earner = other ? static_cast<Entity*>(other)->GetInstance() : (spu ? spu->GetOtherEntity() : nullptr);
+    char victimName[64], earnerName[64];
+    strncpy_s(victimName, victim ? Entity(victim).GetName().GetText() : "-", _TRUNCATE);
+    strncpy_s(earnerName, earner ? Entity(earner).GetName().GetText() : "-", _TRUNCATE);
+    if (!earner && victim && victim->GetPropertySet(eEPropertySetType_NPC) && !npcs::PaysDeathWithoutKiller(victim)) {
+        Logf("xp: GiveXP self=%s other=- value=%d refused: not simulated here, the host pays its own hero", victimName, args);
+        return 0;
+    }
+    const GEInt result = originalGiveXp(spu, self, other, args);
+    Logf("xp: GiveXP self=%s other=%s value=%d result=%d caller=SG+0x%x", victimName, earnerName, args, result, static_cast<unsigned>(caller));
+    return result;
+}
+
+// GiveXP starts like OnTick: push ebp; mov ebp,esp; and esp,-8; then sub esp,0x37c (re/out/area-xp-main-c.asm).
+void InstallGiveXp(unsigned char* base)
+{
+    static const unsigned char expected[] = {0x55, 0x8b, 0xec, 0x83, 0xe4, 0xf8, 0x81, 0xec, 0x7c, 0x03, 0x00, 0x00};
+    if (base && std::memcmp(base + GiveXpRva, expected, sizeof(expected)) == 0)
+        originalGiveXp = reinterpret_cast<gFScript>(JumpTo(base + GiveXpRva, reinterpret_cast<void*>(&HookGiveXp)));
+    Log(originalGiveXp ? "spells: GiveXP hooked (rewards logged)" : "spells: GiveXP not hooked (prologue differs)");
 }
 
 void OnPlayerSpell(uint8_t from, char const* script)
@@ -332,18 +367,39 @@ void SpawnNpc(char const* name, LogFn log)
 // QA: an NPC's status effects (1 burning, 4 poisoned, 8 diseased ...) and hit points, and whether it is mirrored here.
 void StatusOf(char const* guid, LogFn log)
 {
-    char line[260];
+    char line[420];
     _GUID raw;
     uint8_t bytes[16];
     if (!ParseGuidText(guid, raw)) { log("STATUSOF refused bad GUID"); return; }
     std::memcpy(bytes, &raw, 16);
     Entity npc = ByGuid(bytes);
     if (!npc.GetInstance() || !npc.GetInstance()->GetPropertySet(eEPropertySetType_NPC)) { log("STATUSOF refused no such NPC"); return; }
-    sprintf_s(line, "STATUSOF name=%s bits=%u hp=%d hp_max=%d poisoned_at=%u mirrored=%d owner=%u dead=%d", npc.GetName().GetText(),
-              static_cast<unsigned>(npc.NPC.StatusEffects), static_cast<int>(npc.DamageReceiver.HitPoints),
+    const bCVector at = npc.GetPosition();
+    sprintf_s(line, "STATUSOF name=%s bits=%u hp=%d hp_max=%d poisoned_at=%u mirrored=%d owner=%u dead=%d ai_mode=%d pos=%.0f,%.0f,%.0f task=%s state=%s",
+              npc.GetName().GetText(), static_cast<unsigned>(npc.NPC.StatusEffects), static_cast<int>(npc.DamageReceiver.HitPoints),
               static_cast<int>(npc.DamageReceiver.HitPointsMax), static_cast<unsigned>(npc.NPC.TimeStampPoisoned),
-              npcs::IsMirrored(npc.GetInstance()), npcs::OwnerOf(npc.GetInstance()), npc.IsDead() ? 1 : 0);
+              npcs::IsMirrored(npc.GetInstance()), npcs::OwnerOf(npc.GetInstance()), npc.IsDead() ? 1 : 0,
+              static_cast<int>(npc.Routine.AIMode), at.GetX(), at.GetY(), at.GetZ(), npc.Routine.GetCurrentTask().GetText(),
+              npc.Routine.GetCurrentState().GetText());
     log(line);
+}
+
+// QA: set a local NPC's hit points ("GUID_HP"), so that the next hit of a test kills it through the game's damage path.
+void NpcHp(char const* argument, LogFn log)
+{
+    char guid[64] = {};
+    int hp = 0;
+    _GUID raw;
+    uint8_t bytes[16];
+    char const* sep = std::strrchr(argument, '_');
+    if (!sep || sep - argument >= static_cast<ptrdiff_t>(sizeof(guid)) || (hp = std::atoi(sep + 1)) < 1) { log("NPCHP refused GUID_HP"); return; }
+    std::memcpy(guid, argument, sep - argument);
+    if (!ParseGuidText(guid, raw)) { log("NPCHP refused bad GUID"); return; }
+    std::memcpy(bytes, &raw, 16);
+    Entity npc = ByGuid(bytes);
+    if (!npc.GetInstance() || !npc.GetInstance()->GetPropertySet(eEPropertySetType_NPC) || npc.IsDead()) { log("NPCHP refused no living NPC"); return; }
+    npc.DamageReceiver.HitPoints = hp;
+    StatusOf(guid, log);
 }
 
 void TickGuardOff(LogFn log)

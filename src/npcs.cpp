@@ -3,6 +3,7 @@
 
 #include "body.h"
 #include "guide.h"
+#include "arena.h"
 #include "log.h"
 #include "net.h"
 #include "remote.h"
@@ -457,6 +458,8 @@ void ClaimTick(uint32_t now)
 }
 
 bool xpGuard = true;  // QA negative control: XpGuardOff
+bool farXpGuard = true;  // QA negative control: FarXpOff
+unsigned farXpRefused = 0;
 bool deadPose = true;  // QA negative control: DeadPoseOff
 unsigned corpsesLaid = 0, corpseLoops = 0, slotsStopped = 0;
 
@@ -776,6 +779,12 @@ void ClaimRecord(char const* text, LogFn log)
     log(line);
 }
 
+char const* MotionNameOf(uint32_t hash)
+{
+    auto name = motionNames.find(hash);
+    return name == motionNames.end() ? nullptr : name->second.c_str();
+}
+
 eCEntity* NpcByGuid(uint8_t const guid[16])
 {
     eCEntity* instance = Resolve(guid).GetInstance();
@@ -926,6 +935,21 @@ bool OnClaim(uint8_t const guid[16], uint8_t player, bool take)
     return true;
 }
 
+void PlaceGivenBack(uint8_t const guid[16], float const position[3], float const rotation[4])
+{
+    // While the player had it far from here, nothing moved this copy: the escaped slave stood 290 m from Freman on the host
+    // after the client had brought him there, and both simulated their own copy (escortfardiag, 25.10.).
+    Entity e = Resolve(guid);
+    eCEntity* instance = e.GetInstance();
+    if (!IsNpc(instance) || e.IsDead()) return;
+    const bCVector& p = instance->GetWorldPosition();
+    const float here[3] = {p.GetX(), p.GetY(), p.GetZ()};
+    const float off = body::Distance(here, position);
+    if (off < 1000.0f) return;
+    e.MoveTo(body::Pose(*instance, position, rotation));
+    Logf("npcs: %s given back %.0f m from its copy here; moved to where the player left it", e.GetName().GetText(), off / 100.0f);
+}
+
 bool HostTake(eCEntity* entity)
 {
     if (!entity || !net::IsHost()) return false;
@@ -985,6 +1009,22 @@ uint8_t OwnerOf(eCEntity const* entity)
     for (auto const& entry : mirrors)
         if (entry.second.entity.GetInstance() == entity) return entry.second.owner;
     return 0;
+}
+
+bool PaysDeathWithoutKiller(eCEntity const* victim)
+{
+    if (net::IsHost() || !farXpGuard || !victim || IsMirrored(victim) || Claimed(victim)) return true;
+    uint8_t guid[16];
+    Guid(const_cast<eCEntity*>(victim), guid);
+    if (owned.count(Key(guid))) return true;
+    ++farXpRefused;
+    return false;
+}
+
+void FarXpOff(LogFn log)
+{
+    farXpGuard = false;
+    log("FARXPOFF ok=1");
 }
 
 void XpGuardOff(LogFn log)
@@ -1118,6 +1158,7 @@ void Adopt(uint8_t const guid[16])
     if (!IsNpc(e.GetInstance())) return;
     Claim(e.GetInstance());
     if (guide::Readopt(e.GetInstance())) { ++companionsAdopted; return; }  // a guide of a running follow quest (P9)
+    if (arena::Readopt(e.GetInstance())) return;  // an arena opponent taken over for a fight: the host's again
     e.Routine.FullStop();
     e.Dialog.SlaveryEnabled = GETrue;
     GetScriptAdminExt().CallScript(bCString("JoinPlayerSlavery"), e.GetInstance(), nullptr, 0);

@@ -10,6 +10,7 @@ void Inventory(LogFn log);                    // QA: INV lines (name, amount, us
 void Ready(char const* item, LogFn log);      // QA: hold a bow (with arrows) or a spell, creating it if missing
 void Target(char const* guid, LogFn log);     // QA: face an NPC and put it into the player's focus
 void Act(char const* taskAndState, LogFn log);
+void FinishAt(char const* guid, LogFn log);  // QA (P7): the player's finishing blow on a downed NPC (PS_Melee_FinishingAttack)
 void ShootAt(char const* argument, LogFn log);     // QA: shoot at an NPC with the game's script Shoot, aimed as an NPC's arrow
 void CastAt(char const* guid, LogFn log);       // QA: cast the spell in hand at an NPC the way _AI_StartCastPhase does// QA: "PS_Ranged-PS_Ranged_Aim": the player task and state a key sets
 void Tick();                                   // once per frame: aims the arrow of a pending shootat

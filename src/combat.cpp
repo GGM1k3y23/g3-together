@@ -7,6 +7,7 @@
 #include "net.h"
 #include "npcs.h"
 #include "remote.h"
+#include "witness.h"
 
 #include <Game.h>
 #include <Script.h>
@@ -271,12 +272,14 @@ void OnNpcHit(uint8_t from, Entity& target, int32_t delta, uint8_t const npc[16]
     eCEntity* victim = target.GetInstance();
     if (HitPoints(target) + delta > 0) {
         CallScript("AddHitPoints", victim, attacker.GetInstance() ? attacker.GetInstance() : victim, delta);
+        witness::HitSeen(victim, attacker.GetInstance());  // those around hear the fight (P7)
         return;
     }
     uint8_t guid[16];
     Guid(victim, guid);
     killedHere.insert(KillKey(guid));  // before the death call: OnHitNpc drops further hits on it (R9)
     if (party) enclaves::NoteRemoteKill(guid, from, attacker.GetInstance());  // a murder by the sender's party counts (P7)
+    witness::MurderSeen(victim, attacker.GetInstance());  // and those around saw the killing, as where it was decided
     target.NPC.DefeatedByPlayer = GETrue;
     CallScript("AddHitPoints", victim, victim, -HitPoints(target));
     CallScript("OnCheatKill", victim, victim, 0);
@@ -338,6 +341,7 @@ void OnHitNpc(uint8_t from, uint8_t const guid[16], int32_t delta, uint8_t const
             CallScript("AssessTarget", target.GetInstance(), attacker, gEAttackReason_ReactToDamage);
             ++reactionsStarted;
         }
+        witness::HitSeen(target.GetInstance(), attacker);  // and those around hear the fight (P7)
         return;
     }
     if (arenaRule && InBout(target)) {
@@ -365,6 +369,7 @@ void OnHitNpc(uint8_t from, uint8_t const guid[16], int32_t delta, uint8_t const
             target.Routine.FullStop();
             target.Routine.SetTask(bCString("ZS_Unconscious"));
             knockedAt[KillKey(guid)] = GetTickCount();
+            witness::KnockOutSeen(victim, attacker);
             ++knockedOut;
             net::SendKilled(from, guid);
             Logf("combat: player %u knocked %s out (outcome %u)", from, target.GetName().GetText(), outcome);
@@ -383,6 +388,7 @@ void OnHitNpc(uint8_t from, uint8_t const guid[16], int32_t delta, uint8_t const
     killedHere.insert(KillKey(guid));  // before the death call (R9)
     knockedAt.erase(KillKey(guid));
     enclaves::NoteRemoteKill(guid, from, attacker);  // its Kill counts the murder for the sender (P7)
+    witness::MurderSeen(victim, attacker);  // those around saw it, as the finishing blow tells them
     target.NPC.DefeatedByPlayer = GETrue;
     CallScript("AddHitPoints", victim, victim, -HitPoints(target));
     CallScript("OnCheatKill", victim, victim, 0);  // like the console: self = the one who kills, other = the target

@@ -16,4 +16,5 @@ void Use(char const* name, LogFn log);        // USE line: the hero uses the nea
 void UseInfo(char const* name, LogFn log);    // USEINFO line: door, lock, user of the nearest entity of that name
 void Unlock(char const* name, LogFn log);  // QA stand-in for the lock-picking minigame or a key: UNLOCK line
 void FindEntities(char const* prefix, LogFn log);  // QA: FINDENT lines (name, position) of processed entities whose name starts so
+void FindAll(char const* name, LogFn log);  // QA: FINDALL lines (position, dead) of every entity of that name, processed or not
 }

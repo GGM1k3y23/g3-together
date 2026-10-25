@@ -19,5 +19,6 @@ void Off(LogFn log);                             // QA negative control (pickpoc
 void Candidates(LogFn log);                      // QA (pickcands): NPCs within 30 m with a dialog, their level and mark
 void Info(char const* guid, LogFn log);          // QA (pickinfo <guid>): that NPC's mark
 void Pick(char const* guid, LogFn log);          // QA (pickpocket <guid>): this machine's hero picks its pocket the game's way
-void ThiefPrep(LogFn log);  // QA (thiefprep): the hero learns Perk_PickPocket_3 and has theft 150 (PickPocket then always succeeds)
+void ThiefPrep(LogFn log);
+void LearnPerk(char const* name, LogFn log);  // QA (learnperk <Perk_...>): this machine's hero learns that skill  // QA (thiefprep): the hero learns Perk_PickPocket_3 and has theft 150 (PickPocket then always succeeds)
 }

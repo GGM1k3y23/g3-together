@@ -17,6 +17,7 @@ bool IsMirrored(eCEntity const* entity);  // a client NPC currently driven from 
 // The NPC with this GUID from the network: null unless it is an NPC (NPC, script routine and damage receiver property sets)
 // and neither the local hero nor a puppet (Fable's review 22.10. 1.6, 1.7: handlers ran NPC wrappers on any entity).
 eCEntity* NpcByGuid(uint8_t const guid[16]);
+char const* MotionNameOf(uint32_t hash);  // a motion name another machine sent (net::SendMotionName), nullptr if unknown
 bool InAction(eCEntity const* entity);   // a mirror plays an action motion (its idle task must not replace it)
 bool DiedOnHost(eCEntity const* entity);  // a mirrored NPC the host reported dead
 using LogFn = void (*)(char const*);
@@ -26,6 +27,8 @@ void BadRecord(LogFn log);  // QA, client (stage X1): an NPC record with the her
 void Claim(eCEntity* entity);
 void Unclaim(eCEntity* entity);
 bool OnClaim(uint8_t const guid[16], uint8_t player, bool take);  // host; false: refused (someone else has it)
+// Host: a companion given back stands there on the player's machine; its copy here is put there if it stands elsewhere.
+void PlaceGivenBack(uint8_t const guid[16], float const position[3], float const rotation[4]);
 void Revoked(uint8_t const guid[16]);  // client: the host refused or ended our claim
 void Rebind(uint8_t const guid[16]);   // look this mirror's GUID up again (its copy was just given that GUID: summon.cpp)
 void Foreign(uint8_t const guid[16]);  // an NPC here that another machine simulates: never send it as ours (a copy)
@@ -60,5 +63,10 @@ void HostWinsOff(LogFn log);  // QA negative control (client): keep simulating a
 void OwnOff(LogFn log);      // QA negative control (client): send none of its own NPCs
 uint8_t OwnerOf(eCEntity const* entity);  // player simulating this mirrored NPC, 0 if simulated here
 void XpGuardOff(LogFn log);  // QA negative control: mirrors die through the game's death script again (and pay)
+// Client: does an NPC's death that names no killer pay this machine's hero? Only for an NPC simulated here (sent in the
+// last update, or claimed). The deaths a script causes far away (the orcs a freed town's script kills: Ardea_Orkboss,
+// +150 on both machines, 25.10.) are the host's, which pays its own hero.
+bool PaysDeathWithoutKiller(eCEntity const* victim);
+void FarXpOff(LogFn log);  // QA negative control: such deaths pay the client's hero again
 void Report(LogFn log);  // QA: one NPC line per NPC within 40 m of the local hero
 }

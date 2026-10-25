@@ -57,6 +57,7 @@ enum Message
     RobbedBy,
     Robbed,
     PlaceInUse,
+    NpcTalking,
     MessageCount
 };
 

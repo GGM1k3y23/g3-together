@@ -17,6 +17,9 @@ unsigned Write(FILE* file);
 unsigned Read(FILE* file);                 // replaces the journal
 void Clear();
 bool Pending(eCEntity const* entity);      // a recorded death not applied here yet (host: do not mirror it alive)
+// The NPC stood up again (respawn.cpp): its recorded death is over, a new death is reported again.
+void NewLife(eCEntity const* entity);
+void NewLife(unsigned char const guid[16]);  // the same by GUID, for an NPC not in this part of the world now
 using LogFn = void (*)(char const*);
 void Off(LogFn log);                       // QA negative control: report no deaths
 void QuestCountOff(LogFn log);             // QA negative control: the host does not count clients' kills for quests

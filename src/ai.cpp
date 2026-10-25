@@ -7,6 +7,7 @@
 #include "talk.h"
 #include "items.h"
 #include "downed.h"
+#include "guards.h"
 #include "infocmd.h"
 #include "ransack.h"
 
@@ -92,7 +93,7 @@ GEBool Run(std::unordered_map<std::string, Fn> const& originals, bTObjStack<gScr
     const bool talking = (strcmp(name, "ZS_Talk") == 0 || strcmp(name, "ZS_Talk_Loop") == 0) && talk::TalkingWithHero(self);
     // The idle task of a mirror plays its standing motions every frame and replaced every attack the owner sent
     // (first human test: the client saw 11 attack motions where the host played 147); it waits while one plays.
-    const bool acting = strcmp(name, IdleTaskName) == 0 && npcs::InAction(self);
+    const bool acting = strcmp(name, IdleTaskName) == 0 && (npcs::InAction(self) || talk::InGesture(self));
     // Tried on Fable's advice (2026-10-18), no effect on attack motions: returning true here (E3) and running no idle
     // task at all for mirrors (E2). The stance's ambient loop is re-selected outside the AI states.
     if ((Driven(self) && strcmp(name, IdleTaskName) != 0 && !dying && !talking) || acting) {
@@ -111,6 +112,7 @@ GEBool Run(std::unordered_map<std::string, Fn> const& originals, bTObjStack<gScr
         items::AfterTake(spu);
         return result;
     }
+    guards::Acting player(guards::StateActor(self, name));  // a guard's reaction to another player follows that player
     return it->second(stack, spu);
 }
 
@@ -169,6 +171,32 @@ unsigned char* NativeAttitude()
     return std::memcmp(code, expected, sizeof(expected)) == 0 ? code : nullptr;
 }
 
+}
+
+// Points one import of `module` (by DLL and function name) at `replacement`; returns what it pointed at.
+void* PatchImport(void* module, char const* dll, char const* function, void* replacement)
+{
+    auto* base = static_cast<unsigned char*>(module);
+    auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
+    auto* nt = reinterpret_cast<IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+    const IMAGE_DATA_DIRECTORY& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    for (auto* imp = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(base + dir.VirtualAddress); imp->Name; ++imp) {
+        if (_stricmp(reinterpret_cast<char const*>(base + imp->Name), dll)) continue;
+        auto* names = reinterpret_cast<IMAGE_THUNK_DATA*>(base + (imp->OriginalFirstThunk ? imp->OriginalFirstThunk : imp->FirstThunk));
+        auto* slots = reinterpret_cast<IMAGE_THUNK_DATA*>(base + imp->FirstThunk);
+        for (; names->u1.AddressOfData; ++names, ++slots) {
+            if (IMAGE_SNAP_BY_ORDINAL(names->u1.Ordinal)) continue;
+            auto* byName = reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(base + names->u1.AddressOfData);
+            if (std::strcmp(reinterpret_cast<char const*>(byName->Name), function)) continue;
+            DWORD old = 0;
+            if (!VirtualProtect(&slots->u1.Function, sizeof(slots->u1.Function), PAGE_READWRITE, &old)) return nullptr;
+            void* previous = reinterpret_cast<void*>(slots->u1.Function);
+            slots->u1.Function = reinterpret_cast<DWORD>(replacement);
+            VirtualProtect(&slots->u1.Function, sizeof(slots->u1.Function), old, &old);
+            return previous;
+        }
+    }
+    return nullptr;
 }
 
 // Jump from `target` to `detour`; the returned trampoline runs the 6 stolen bytes and continues in the original.

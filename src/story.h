@@ -25,4 +25,5 @@ void EndTalk(LogFn log);
 void AssessTalk(char const* npcName, LogFn log);  // QA: address an NPC like the player's talk action
 void KillRaiders(LogFn log);  // QA (host): end the opening raid
 void Approach(char const* npcName, LogFn log);  // QA: stand 1.5 m from an NPC
+void Important(char const* radius, LogFn log);  // QA: IMPORTANT lines, NPCs near the hero with an important info for it
 }

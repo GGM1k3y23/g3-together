@@ -27,10 +27,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import together as T  # noqa: E402
 
 # Code that keeps a stage out of a shared session.
-NOT_SHARED = ('.launch(', 'nativesave', 'nativeload', 'closewindow', 'killhero', 'NETSIM', 'NETLINK', 'host_before', 'CHAOS',
+# A command before the join (host_before) needs no token: Session.join_both sends such a stage off on its own when it happens
+# (only stageTrade's negative control); the word itself matched local variables of seven stages (25.10.).
+NOT_SHARED = ('.launch(', 'nativesave', 'nativeload', 'closewindow', 'killhero', 'NETSIM', 'NETLINK', 'CHAOS',
               'ini_extra',  # INI lines of its own (stageWear's look): the games of a session read theirs at the start
               "report['raid_kills']",  # measures the raid's own kills (stage3c): after another stage cleared it there are none
               'unrolled chests')  # needs chests near the start nobody opened (stageChest; stage5b before it opened one, 24.10.)
+
+
+# From the post-raid save, but on their own: they need a world the stages before them leave alone (25.10.: stageE4's gate
+# guard was dead after stageE2; stageG2 found the clock stageG had set).
+ALONE = {'stageE4', 'stageG2'}
 
 
 class Fresh(Exception):
@@ -38,6 +45,8 @@ class Fresh(Exception):
 
 
 def shareable(name):
+    if name in ALONE:
+        return False
     source = inspect.getsource(T.SUITES[name])
     if 'join_both(' not in source or 'clear_raid(' not in source:
         return False
@@ -61,6 +70,7 @@ class Session:
         self.raid_cleared = False
         self.start = {}
         self.stages = []
+        self.began = time.monotonic()
 
     def join_both(self, copies, host_before=None):
         if host_before:
@@ -96,6 +106,8 @@ class Session:
                     copy.bot.line('SETHP ', 10, 'sethp', start)
                 if self.start.get(tag):
                     T.move_hero(copy.bot, self.start[tag])
+                if tag == 'client':  # stageAddressed turns it on (together.address_default)
+                    T.address_default(copy)
             except Exception as error:  # noqa: BLE001 - the next stage will notice a broken session
                 self.report.setdefault('between_errors', []).append(f'{tag}: {error}')
         time.sleep(3)
@@ -118,6 +130,10 @@ class Session:
             clean = clean and ok
         for cleanup in T.CLEANUPS:
             cleanup()
+        resets = T.driver_resets(time.monotonic() - self.began + 10)
+        if resets:  # the games hang at their end after one: unclean, so its stages run again on their own
+            self.report['driver_resets'] = resets
+            print(f'session {self.run.name}: GPU driver reset {resets}', flush=True)
         (self.run/'session.json').write_text(json.dumps({**self.report, 'stages': self.stages}, indent=2), encoding='utf-8')
         return clean
 
@@ -156,7 +172,8 @@ def prepare():
 def run_alone(name):
     """The stage on its own, the way series.sh runs it; returns its summary."""
     args = [sys.executable, str(Path(T.__file__)), '--suite', name, '--seconds', '2400' if name == 'soak' else '1200']
-    out = subprocess.run(args, capture_output=True, text=True, errors='replace').stdout.strip().splitlines()
+    env = dict(os.environ, G3_VERIFY_QUICK='1')  # prepare() checked this pair at the start (isolation/hashcache.py)
+    out = subprocess.run(args, capture_output=True, text=True, errors='replace', env=env).stdout.strip().splitlines()
     try:
         report = json.loads(out[-2])
         return report['status'], (report.get('error') or '')[:150]
@@ -180,6 +197,8 @@ def main():
         T.POSTRAID = T.postraid_for(pending[0])
         session.report['start'] = 'post-raid save' if T.POSTRAID else 'new game'
         T.join_both, T.clear_raid = session.join_both, session.clear_raid
+        if not T.POSTRAID:
+            T.RAID.take(session.report)  # T.clear_raid gives it back once the raid is over
         started = time.monotonic()
         passed_here = []
         failed = False
@@ -213,6 +232,7 @@ def main():
                         break  # the session may be broken: a fresh one for the rest
         finally:
             clean = session.close()
+            T.RAID.release()
             T.join_both, T.clear_raid = ORIGINAL_JOIN, ORIGINAL_RAID
         if not clean:
             print(f'session {session.run.name}: no clean shutdown; its {len(passed_here)} stages run again on their own', flush=True)

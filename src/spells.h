@@ -22,6 +22,7 @@ void NpcGrudge(char const* guid, LogFn log);  // QA: the NPC is angry at the pla
 void Party(LogFn log);  // QA: MEMBER lines, the local hero's party with each member's type
 void SpawnNpc(char const* name, LogFn log);  // QA: SPAWNNPC line, an NPC from a template 4 m in front of the local hero
 void StatusOf(char const* guid, LogFn log);  // QA: STATUSOF line, an NPC's status effects and hit points
+void NpcHp(char const* argument, LogFn log);  // QA: "GUID_HP" sets a local NPC's hit points
 void SpellFunc(char const* names, LogFn log);  // QA: SPELLFUNC lines, the scripts each spell item runs
 void Locks(LogFn log);  // QA: LOCK lines, every lock within 30 m (status, difficulty, key) and LOCKS end
 void TickGuardOff(LogFn log);  // QA negative control: mirrors and puppets run the game's OnTick (poison ticks) again

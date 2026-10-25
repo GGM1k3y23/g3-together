@@ -189,6 +189,19 @@ void ThiefPrep(LogFn log)
     log(line);
 }
 
+// QA (learnperk <Perk_...>): this machine's hero learns that skill (P1 stations: mining needs Perk_Mining).
+void LearnPerk(char const* name, LogFn log)
+{
+    char line[160];
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    const Template perk(name);
+    if (!hero || !perk.IsValid()) { sprintf_s(line, "REFUSED learnperk %s: no hero or no such skill", name); log(line); return; }
+    Entity self(hero);
+    if (!self.Inventory.HasLearnedSkill(perk)) self.Inventory.TeachSkill(perk);
+    sprintf_s(line, "LEARNPERK name=%s learned=%d", name, self.Inventory.HasLearnedSkill(perk) ? 1 : 0);
+    log(line);
+}
+
 void Pick(char const* guid, LogFn log)
 {
     char line[300];

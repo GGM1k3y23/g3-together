@@ -98,7 +98,21 @@ and saving on the host. Test separate regions and rejoining in a follow-up sessi
 | Seat | One player sits on a stool or bench; the other tries the same seat: "<Name> is using this." and they do not sit down. When the first stands up, the other can sit. |
 | Animal form | A player turned into a wolf (spell or potion) fights an enemy: hits and kills count for that player, and enemy hits hurt the wolf. |
 | Soul travel | One player casts soul travel near enemies and floats the ghost toward them. Known: the other player sees the ghost moving, not the body left behind. Note whether the enemies attack the ghost, and what happens to the body. |
-| Rare places | If you come across an orc boulder you can lift (by its script name one is in Faring; the bots did not find it) or an Innos or Beliar statue to pray at: one player uses it while the other watches, then the other tries the same. Note what each of you sees (the boulder's position, the effect). Pirate treasures (one is 46 m from Tarok in Faring, dig with a shovel) are checked by the bots: the loot is there once. |
+| Rare places | If you come across an Innos or Beliar statue to pray at: one player uses it while the other watches, then the other tries the same. Note what each of you sees. The orc boulder in Faring (a strength test; lifted by one, it counts for both) and pirate treasures (one is 46 m from Tarok in Faring, dig with a shovel; the loot is there once) are checked by the bots. |
+
+### Optional: the features of 0.5.0 and the scenes bots cannot set up
+
+| Stage | Steps and observations |
+|---|---|
+| Witnesses | The joining player beats a citizen in a town of the host's region while others watch: onlookers and guards come in during the fight, and after a murder only the joining player is pursued, not the host. |
+| Drawn weapon | The joining player draws a weapon next to a guard, or walks into a guarded place: the guard warns, then attacks that player. |
+| One dialog per NPC | One player talks to an NPC; the other tries to talk to it at the same time: "<NPC> is talking to <player>.". The listener within 20 m sees the speaker's answer options and the chosen line. |
+| News from an NPC | After the opening raid Hamlar (Ardea) has news for each hero: he walks up to the joining player too and talks to them. |
+| Escort and guide | The joining player takes a follow or escort quest (Mitch in Faring, the slave for Freman in Silden): the NPC goes with that player; the quest counts for both. |
+| Wait until morning | One player chooses to wait until morning: the clock jumps to 9 o'clock for both. |
+| Cape Dun uprising | The rebels' uprising in Cape Dun (Phil's quests): it starts for both and the fight counts for both. Bots could not start it. |
+| Free a town | A town other than Ardea (Montera, for example) freed in the middle of the game: the town is free and the quest done on both PCs. |
+| Drive away, plunder | A quest to drive someone away (its dialog fight) and a plundering quest: both players see the result, the quest counts for both. |
 
 ## Recording a bug
 

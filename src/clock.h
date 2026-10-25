@@ -12,5 +12,7 @@ void Tick();             // once per frame
 using LogFn = void (*)(char const*);
 void Report(LogFn log);  // QA: CLOCK line
 void Set(char const* hhmm, LogFn log);  // QA: set the local clock to "HH_MM"
+void AddDays(char const* days, LogFn log);  // QA: move the local clock on whole days (respawn needs 120 game hours)
 void Off(LogFn log);     // QA negative control (client): ignore the host's clock
+void WaitOff(LogFn log); // QA negative control: waiting until morning runs the clock fast as in single player
 }

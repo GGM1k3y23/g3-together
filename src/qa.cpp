@@ -9,6 +9,7 @@
 #include "combat.h"
 #include "hitprobe.h"
 #include "story.h"
+#include "address.h"
 #include "partner.h"
 #include "talk.h"
 #include "items.h"
@@ -17,7 +18,9 @@
 #include "mapmarks.h"
 #include "ransack.h"
 #include "witness.h"
+#include "guards.h"
 #include "pickpocket.h"
+#include "respawn.h"
 #include "occupancy.h"
 #include "dialogaudio.h"
 #include "explore.h"
@@ -36,6 +39,7 @@
 #include "hero.h"
 #include "clock.h"
 #include "guide.h"
+#include "arena.h"
 #include "infocmd.h"
 #include "remote.h"
 #include "trace.h"
@@ -323,6 +327,22 @@ bool RunReviewAction(const char* action)
         g3t::guide::Off(&Log);
     } else if (!std::strcmp(action, "farheal")) {
         g3t::explore::FarHeal(argument, &Log);
+    } else if (!std::strcmp(action, "farxpoff")) {
+        g3t::npcs::FarXpOff(&Log);
+    } else if (!std::strcmp(action, "important")) {  // P7 rest (25.10.)
+        g3t::story::Important(argument, &Log);
+    } else if (!std::strcmp(action, "runto")) {
+        g3t::explore::RunTo(argument, &Log);
+    } else if (!std::strcmp(action, "setattr")) {
+        g3t::explore::SetAttribute(argument, &Log);
+    } else if (!std::strcmp(action, "sneakcheckon")) {
+        g3t::guards::SneakCheckOn(&Log);
+    } else if (!std::strcmp(action, "address")) {
+        g3t::address::Report(&Log);
+    } else if (!std::strcmp(action, "addressoff")) {
+        g3t::address::Off(&Log);
+    } else if (!std::strcmp(action, "addresson")) {
+        g3t::address::On(&Log);
     } else {
         return false;
     }
@@ -386,6 +406,12 @@ bool RunPlayerAction(const char* action)
         g3t::explore::NpcRoutine(argument, &Log);
     } else if (!std::strcmp(action, "findents")) {
         g3t::world::FindEntities(argument, &Log);
+    } else if (!std::strcmp(action, "arenasync")) {
+        g3t::arena::Report(&Log);
+    } else if (!std::strcmp(action, "arenasyncoff")) {
+        g3t::arena::Off(&Log);
+    } else if (!std::strcmp(action, "findall")) {
+        g3t::world::FindAll(argument, &Log);
     } else if (!std::strcmp(action, "weatherfollowoff")) {
         g3t::summon::WeatherFollowOff(&Log);
     } else if (!std::strcmp(action, "weather")) {
@@ -427,6 +453,16 @@ bool RunPlayerAction(const char* action)
         g3t::witness::Report(&Log);
     } else if (!std::strcmp(action, "witnessoff")) {
         g3t::witness::Off(&Log);
+    } else if (!std::strcmp(action, "murderseenoff")) {
+        g3t::witness::SeenOff(&Log);
+    } else if (!std::strcmp(action, "guards")) {
+        g3t::guards::Report(&Log);
+    } else if (!std::strcmp(action, "trespassoff")) {
+        g3t::guards::Off(&Log);
+    } else if (!std::strcmp(action, "sneak")) {
+        g3t::guards::Sneak(argument, &Log);
+    } else if (!std::strcmp(action, "homes")) {
+        g3t::guards::Homes(argument, &Log);
     } else if (!std::strcmp(action, "assesshero")) {
         g3t::explore::AssessHero(argument, &Log);
     } else if (!std::strcmp(action, "mapmarks")) {
@@ -465,6 +501,28 @@ bool RunLaterAction(const char* action)
         g3t::persist::WorldReport(&Log);
     } else if (!std::strcmp(action, "worldsyncoff")) {
         g3t::persist::WorldSyncOff(&Log);
+    } else if (!std::strcmp(action, "npchp")) {
+        // GUID_HP (P3) or Name_HP (stageA4, stageArenaQuest): the GUID form shadowed the name form since P3, Diego kept his
+        // 1000 hit points and won the duel (stageA4 red, 25.10.).
+        char const* cut = std::strrchr(argument, '_');
+        if (cut && cut - argument == 36) g3t::spells::NpcHp(argument, &Log);
+        else g3t::combat::NpcHp(argument, &Log);
+    } else if (!std::strcmp(action, "respawnsync")) {
+        g3t::respawn::Report(&Log);
+    } else if (!std::strcmp(action, "respawnoff")) {
+        g3t::respawn::Off(&Log);
+    } else if (!std::strcmp(action, "movers")) {
+        g3t::doors::Movers(&Log);
+    } else if (!std::strcmp(action, "learnperk")) {
+        g3t::pickpocket::LearnPerk(argument, &Log);
+    } else if (!std::strcmp(action, "gesturesoff")) {
+        g3t::talk::GesturesOff(&Log);
+    } else if (!std::strcmp(action, "optionsoff")) {
+        g3t::dialogaudio::OptionsOff(&Log);
+    } else if (!std::strcmp(action, "clockdays")) {
+        g3t::clock::AddDays(argument, &Log);
+    } else if (!std::strcmp(action, "waitoff")) {
+        g3t::clock::WaitOff(&Log);
     } else if (!std::strcmp(action, "reconnect")) {
         g3t::net::Reconnect(&Log);
     } else if (!std::strcmp(action, "generationoff")) {
@@ -477,6 +535,8 @@ bool RunLaterAction(const char* action)
         g3t::persist::LoadTicksOff(argument, &Log);
     } else if (!std::strcmp(action, "dialogxpoff")) {
         g3t::infocmd::DialogXpOff(&Log);
+    } else if (!std::strcmp(action, "givebackposoff")) {
+        g3t::infocmd::GivebackPlaceOff(&Log);
     } else if (!std::strcmp(action, "duelhero")) {
         g3t::explore::DuelHero(argument, &Log);
     } else if (!std::strcmp(action, "lethalonlyoff")) {
@@ -607,6 +667,8 @@ bool RunLaterAction(const char* action)
         g3t::ranged::Target(argument, &Log);
     } else if (!std::strcmp(action, "act")) {
         g3t::ranged::Act(argument, &Log);
+    } else if (!std::strcmp(action, "finishat")) {
+        g3t::ranged::FinishAt(argument, &Log);
     } else if (!std::strcmp(action, "shootat")) {
         g3t::ranged::ShootAt(argument, &Log);
     } else if (!std::strcmp(action, "summonstate")) {

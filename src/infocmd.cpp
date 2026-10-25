@@ -2,6 +2,8 @@
 #include "doors.h"
 #include "pickpocket.h"
 #include "occupancy.h"
+#include "respawn.h"
+#include "address.h"
 #include "infocmd.h"
 
 #include "body.h"
@@ -31,6 +33,7 @@ bool sharing = true;  // QA negative control
 // only to the one who hands in. The dialog runs on the speaker's machine only (GiveXP takes Entity::GetPlayer(),
 // re/findings/info-commands.md); every other machine runs the same reward for its own hero (world state kind 11).
 bool sharingXp = true;  // QA negative control `dialogxpoff`
+bool givebackPlace = true;  // QA negative control `givebackposoff`
 unsigned xpSent = 0, xpApplied = 0;
 constexpr uint8_t DialogXp = 11;
 
@@ -146,6 +149,18 @@ void Apply(net::WorldState const& s, uint8_t from)
         occupancy::OnState(from, s);
         return;
     }
+    if (s.kind == 15) {  // a client's dialog partner gestures there (talk.cpp)
+        talk::OnGesture(from, s.guid, static_cast<uint32_t>(std::strtoul(s.routine, nullptr, 16)), s.rotation);
+        return;
+    }
+    if (s.kind == 14) {  // another machine rolled for a dead NPC's return (respawn.cpp)
+        respawn::OnState(from, s);
+        return;
+    }
+    if (s.kind == 16) {  // a client asks for an NPC with an important info for its hero (address.cpp)
+        address::OnState(from, s);
+        return;
+    }
     if (s.kind == DialogXp) {  // another player's dialog gave experience: the same reward for this player's hero
         eCEntity* hero = gCSession::GetInstance().GetHero();
         const int amount = std::atoi(s.routine);
@@ -160,7 +175,7 @@ void Apply(net::WorldState const& s, uint8_t from)
         return;
     }
     if (s.kind == 4 || s.kind == 5) {  // a client took over (4) or gave back (5) a companion
-        if (net::IsHost()) npcs::OnClaim(s.guid, from, s.kind == 4);
+        if (net::IsHost() && npcs::OnClaim(s.guid, from, s.kind == 4) && s.kind == 5 && s.moved) npcs::PlaceGivenBack(s.guid, s.position, s.rotation);
         return;
     }
     if (s.kind == 7) {  // host: this NPC from its save is the companion of player `guard`
@@ -236,7 +251,7 @@ void Apply(net::WorldState const& s, uint8_t from)
 
 void OnWorldState(uint8_t from, net::WorldState const& s)
 {
-    if (net::IsHost() && s.kind != 3) net::SendWorldState(s, from);  // pass it on to everyone else
+    if (net::IsHost() && s.kind != 3 && s.kind != 16) net::SendWorldState(s, from);  // pass it on to everyone else
     Apply(s, from);
 }
 
@@ -269,6 +284,13 @@ bool Join(eCEntity* target, bool join, bool follow = true)
         net::WorldState s{};
         s.kind = 5;
         GuidOf(target, s.guid);
+        if (givebackPlace) {  // where it stands here: the host's copy far away stayed where the host last saw it (escortfardiag)
+            const bCVector& p = target->GetWorldPosition();
+            s.position[0] = p.GetX(); s.position[1] = p.GetY(); s.position[2] = p.GetZ();
+            const bCQuaternion q = target->GetWorldRotation();
+            s.rotation[0] = q.GetX(); s.rotation[1] = q.GetY(); s.rotation[2] = q.GetZ(); s.rotation[3] = q.GetW();
+            s.moved = 1;
+        }
         Send(s);
         return true;
     }
@@ -389,6 +411,12 @@ void Off(LogFn log)
 {
     sharing = false;
     log("INFOCMDOFF ok=1");
+}
+
+void GivebackPlaceOff(LogFn log)
+{
+    givebackPlace = false;
+    log("GIVEBACKPOSOFF ok=1");
 }
 
 void DialogXpOff(LogFn log)

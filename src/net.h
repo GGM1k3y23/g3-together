@@ -173,7 +173,8 @@ void SetClockHandler(ClockHandler handler);
 // (name in routine, status in enclave); kind 3: a dialog started a fight (guid = attacker, guard = the player
 // attacked, routine = the attack reason's name); kind 4/5: a client took over / gave back a companion (guid); kind 6: host to player `guard`: that claim is refused
 // or ended; kind 7: host to player `guard`: this NPC from the host's save is your companion; kind 8/9: downed.cpp;
-// kind 10: a door or lock (doors.cpp: guard = open, alignment = locked, npcClass bits 1 door, 2 lock).
+// kind 10: a door or lock (doors.cpp: guard = open, alignment = locked, npcClass bits 1 door, 2 lock); kind 16: client to host,
+// player `guard` asks for NPC guid that has an important info for its hero (address.cpp).
 // Client: to the host; host: to every client except `except`.
 #pragma pack(push, 1)
 struct WorldState {
@@ -340,8 +341,11 @@ void SetRansackHandler(RansackHandler handler);
 // Witnesses (witness.cpp, owner 24.10.), reliable, through the host. WitnessSaw -> the machine that runs the NPC (`to`):
 // it saw the sender's player commit a crime (value: the attack reason its game chose); it reacts there, to the sender's
 // puppet. WitnessHolds -> everyone (`to` 0; reputation = together): the NPC now holds crime `value` (gEPlayerCrime)
-// against the sender's player, and so against everybody's.
-enum : uint8_t { WitnessSaw = 1, WitnessHolds = 2 };
+// against the sender's player, and so against everybody's. WitnessJudge -> the machine of the player it judged (P7): an
+// NPC judged that player's puppet a criminal here (value: the attack reason, Murder for the witness of a murder this
+// machine applied for the other player); there it judges that player's hero, so its game remembers the crime (and an NPC
+// run there reacts).
+enum : uint8_t { WitnessSaw = 1, WitnessHolds = 2, WitnessJudge = 3 };
 #pragma pack(push, 1)
 struct WitnessNote {
     uint8_t op = 0;
@@ -374,7 +378,10 @@ using EnclaveHandler = void (*)(uint8_t from, EnclaveNote const& note);
 void SetEnclaveHandler(EnclaveHandler handler);
 // A line of a player's dialog (dialogaudio.cpp): the other players play the same voice file at the speaker. Any machine
 // -> everyone else (through the host), reliable and in order, so a line's end never arrives before its start.
-enum : uint8_t { DialogLineStart = 1, DialogLineEnd = 2 };
+// DialogOptions (phase 5, owner 25.10.: the one who talks chooses, the other sees the choice): one note per option of the
+// sender's dialog menu, reason = its number from 1, lineId = how many, text = the option's text id; DialogOptionsGone: the
+// menu is gone (an option was chosen, or the dialog ended).
+enum : uint8_t { DialogLineStart = 1, DialogLineEnd = 2, DialogOptions = 3, DialogOptionsGone = 4 };
 enum : uint8_t { DialogSpeakerNpc = 1, DialogSpeakerPlayer = 2 };
 #pragma pack(push, 1)
 struct DialogLineNote {

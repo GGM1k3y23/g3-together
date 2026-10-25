@@ -172,6 +172,27 @@ void FindEntities(char const* prefix, LogFn log)
     log(line);
 }
 
+void FindAll(char const* name, LogFn log)
+{
+    char line[200];
+    auto* scene = static_cast<eCSceneAdmin*>(eCModuleAdmin::GetInstance().FindModule(bCString("eCSceneAdmin")));
+    bTPtrArray<eCEntity*> found;
+    if (scene) scene->GetEntitiesByName(bCString(name), found);
+    int count = 0;
+    for (GEInt i = 0; i < found.GetCount() && count < 40; ++i) {
+        eCEntity* instance = found.GetAt(i);
+        if (!instance) continue;
+        float p[3];
+        PositionOf(instance, p);
+        Entity e(instance);
+        sprintf_s(line, "FINDALL name=%s pos=%.0f_%.0f_%.0f dead=%d", name, p[0], p[1], p[2], e.IsDead() ? 1 : 0);
+        log(line);
+        ++count;
+    }
+    sprintf_s(line, "FINDALL end count=%d", count);
+    log(line);
+}
+
 void Unlock(char const* name, LogFn log)
 {
     char line[200];

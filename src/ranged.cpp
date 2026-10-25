@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "ranged.h"
 
+#include "ai.h"
 #include "body.h"
 #include "log.h"
 #include "remote.h"
@@ -182,6 +183,23 @@ void Act(char const* taskAndState, LogFn log)
     log(line);
 }
 
+// The state reads the player's CurrentTarget and runs _AI_FinishingAttack on it (OnPlayerAction enters it when the focus
+// lies knocked out); OnAI_FinishingAttack then kills and sends the murder perception.
+void FinishAt(char const* guid, LogFn log)
+{
+    char line[300];
+    Target(guid, log);
+    Entity self = Player();
+    Entity target = EntityAt(guid);
+    if (!self.GetInstance() || !target.GetInstance()) return;
+    self.NPC.SetCurrentTarget(target);
+    if (std::strcmp(self.Routine.GetCurrentTask().GetText(), "PS_Melee") != 0) self.Routine.SetTask(bCString("PS_Melee"));
+    self.Routine.SetState(bCString("PS_Melee_FinishingAttack"));
+    sprintf_s(line, "FINISHAT name=%s target_task=%s task=%s state=%s", target.GetName().GetText(), target.Routine.GetCurrentTask().GetText(),
+              self.Routine.GetCurrentTask().GetText(), self.Routine.GetCurrentState().GetText());
+    log(line);
+}
+
 // Shoot with the game's own script "Shoot" (PS_Ranged.cpp; re/findings/ranged-ai-paths-b.md), which spawns the arrow,
 // sets its damage, takes it from the quiver and puts the next one in the hand. For the player it aims at the camera's
 // screen centre, which a bot does not steer; so the arrow is then replaced by one sent the way the script sends an
@@ -262,31 +280,6 @@ bCVector* __fastcall FakePick(void const* camera, void* edx, bCVector* out)
     return new (out) bCVector(aimPoint);
 }
 
-// Points one import of `module` (by DLL and function name) at `replacement`; returns what it pointed at.
-void* PatchImport(HMODULE module, char const* dll, char const* function, void* replacement)
-{
-    auto* base = reinterpret_cast<unsigned char*>(module);
-    auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
-    auto* nt = reinterpret_cast<IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
-    const IMAGE_DATA_DIRECTORY& dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
-    for (auto* imp = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR*>(base + dir.VirtualAddress); imp->Name; ++imp) {
-        if (_stricmp(reinterpret_cast<char const*>(base + imp->Name), dll)) continue;
-        auto* names = reinterpret_cast<IMAGE_THUNK_DATA*>(base + (imp->OriginalFirstThunk ? imp->OriginalFirstThunk : imp->FirstThunk));
-        auto* slots = reinterpret_cast<IMAGE_THUNK_DATA*>(base + imp->FirstThunk);
-        for (; names->u1.AddressOfData; ++names, ++slots) {
-            if (IMAGE_SNAP_BY_ORDINAL(names->u1.Ordinal)) continue;
-            auto* byName = reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(base + names->u1.AddressOfData);
-            if (std::strcmp(reinterpret_cast<char const*>(byName->Name), function)) continue;
-            DWORD old = 0;
-            if (!VirtualProtect(&slots->u1.Function, sizeof(slots->u1.Function), PAGE_READWRITE, &old)) return nullptr;
-            void* previous = reinterpret_cast<void*>(slots->u1.Function);
-            slots->u1.Function = reinterpret_cast<DWORD>(replacement);
-            VirtualProtect(&slots->u1.Function, sizeof(slots->u1.Function), old, &old);
-            return previous;
-        }
-    }
-    return nullptr;
-}
 
 // QA mode 5: the bot shoots without the aiming motion's bow-forward pose, and the new arrow can start inside the
 // hero's own body-part entities (Body_Player, Head_Player), whose collision Shoot does not switch off. Their collision
@@ -338,7 +331,7 @@ bool AimHooked()
         tried = true;
         if (HMODULE game = GetModuleHandleA("Script_Game.dll"))
             realPick = reinterpret_cast<PickFn>(
-                PatchImport(game, "Script.dll", "?GetScreenCenterPickPoint@PSCamera@@QBE?AVbCVector@@XZ", reinterpret_cast<void*>(&FakePick)));
+                ai::PatchImport(game, "Script.dll", "?GetScreenCenterPickPoint@PSCamera@@QBE?AVbCVector@@XZ", reinterpret_cast<void*>(&FakePick)));
         Log(realPick ? "ranged: QA aim hook on GetScreenCenterPickPoint" : "ranged: QA aim hook not installed");
     }
     return realPick != nullptr;
@@ -351,7 +344,8 @@ void ShootAt(char const* argument, LogFn log)
     // it (camera aim), 2 replace it by a fresh arrow sent as the NPC branch does, 3 turn its physics path to the target,
     // 4 as 3 with the target set, 5 the script aims at the target itself (see FakePick), with the hero's body parts out
     // of the way (see BodyPartsOff), 6 as 5 with the body parts left alone, 7 as 5 but three times as far and 6 m
-    // higher (over what stands about in the village: an arrow that flies, for P2). For the player the script
+    // higher (over what stands about in the village: an arrow that flies, for P2), 8 as 5 aimed at the head (stage
+    // P2hit: aimed at the chest, the shots fell short into the ground or a body lying in front). For the player the script
     // shoots with ShootVelocity = the held arrow's DamageHitMultiplier x 200, which aiming raises while the bow is
     // drawn; "draw" (in percent, > 0; commands take no '.') sets that multiplier first.
     char guid[64] = {};
@@ -377,8 +371,8 @@ void ShootAt(char const* argument, LogFn log)
     for (int i = 0; i < old.GetCount(); ++i)
         if (IsProjectile(old.GetAt(i).GetInstance())) pending.before.push_back(old.GetAt(i).GetInstance());
     pending.partsOff[0] = 0;
-    if ((mode == 5 || mode == 6 || mode == 7) && AimHooked()) {
-        aimPoint = target.GetPosition() + bCVector(0.0f, 100.0f, 0.0f);
+    if ((mode == 5 || mode == 6 || mode == 7 || mode == 8) && AimHooked()) {
+        aimPoint = target.GetPosition() + bCVector(0.0f, mode == 8 ? 170.0f : 100.0f, 0.0f);
         if (mode == 7) aimPoint = self.GetPosition() + (target.GetPosition() - self.GetPosition()) * 3.0f + bCVector(0.0f, 600.0f, 0.0f);
         aimActive = true;
         if (mode != 6) BodyPartsOff(self, pending.partsOff, sizeof(pending.partsOff));

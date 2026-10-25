@@ -9,6 +9,7 @@
 #include <Windows.h>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 namespace g3t::clock {
 namespace {
@@ -25,6 +26,9 @@ unsigned requests = 0, granted = 0;
 constexpr uint32_t SleepJump = 1800;  // game seconds: a jump this large in one frame is a sleep (or a wait)
 net::ClockState Now();
 uint32_t requestedAt = 0;              // client: net::Now() of the last request to move time on
+bool waitJumps = true;                 // QA negative control: waitoff
+bool waitJumped = false;               // the hero's current wait has moved the clock on already
+unsigned waits = 0;
 
 // Client: a sleep on this machine jumps its clock; ask the host to move time on for everyone instead of having the
 // next update set this clock back. Also checked when an update arrives: one that came in the same frame as the jump,
@@ -68,6 +72,37 @@ net::ClockState Now()
 
 bool Ready() { return gCSession::GetInstance().IsGameRunning() && Entity::GetWorldEntity().GetInstance(); }
 
+// "Until morning" (spell Spl_DuskToDawn, state PS_DuskToDawn): the game runs this machine's clock fast and slows its
+// whole simulation (timer.fTimeScale=0.3) until the hour passes 8 (re/findings/p1-p2-p3-static-b.md, P2). In co-op the
+// host's clock set a waiting client back, and a waiting host slowed every NPC it simulates. Instead the clock jumps
+// to 09:00 at once, as a sleep does: the client asks the host to move time on for everyone, the host tells everyone.
+// A start hour below 9 lets the state's loop end on its next frame (factor and time scale back, refills, routine).
+void Wait()
+{
+    Entity hero = Entity::GetPlayer();
+    const bool waiting = hero.GetInstance() && !std::strcmp(hero.Routine.GetCurrentState().GetText(), "PS_DuskToDawn_Loop");
+    if (!waiting) { waitJumped = false; return; }
+    if (waitJumped || !waitJumps || !following || !net::Connected()) return;
+    waitJumped = true;
+    Entity world = Entity::GetWorldEntity();
+    const uint32_t before = world.Clock.GetTimeStampInSeconds();
+    const int hour = world.Clock.GetHour();
+    hero.PlayerMemory.DuskToDawnStartHour = 0;
+    if (hour >= 9) world.Clock.SetDay(world.Clock.GetDay() + 1);
+    world.Clock.SetHour(9);
+    world.Clock.SetMinute(0);
+    lastLocal = world.Clock.GetTimeStampInSeconds();  // our own change, not a sleep
+    ++waits;
+    Logf("clock: waiting until morning; time moves on %u game seconds to day %d 09:00", lastLocal - before, world.Clock.GetDay());
+    if (net::IsHost()) {
+        lastSend = 0;  // tell everyone at once
+        return;
+    }
+    net::SendClock(Now());
+    ++requests;
+    requestedAt = net::Now();
+}
+
 void OnClock(net::ClockState const& host)
 {
     ++received;
@@ -105,6 +140,7 @@ void Start() { net::SetClockHandler(&OnClock); }
 void Tick()
 {
     if (!Ready()) return;
+    Wait();
     if (!net::IsHost()) {
         DetectSleep();
         return;
@@ -120,9 +156,9 @@ void Report(LogFn log)
     char line[200];
     if (!Ready()) { log("CLOCK none"); return; }
     Entity world = Entity::GetWorldEntity();
-    sprintf_s(line, "CLOCK timestamp=%u day=%d hour=%d minute=%d corrections=%u received=%u difference=%d following=%d requests=%u granted=%u",
+    sprintf_s(line, "CLOCK timestamp=%u day=%d hour=%d minute=%d corrections=%u received=%u difference=%d following=%d requests=%u granted=%u waits=%u",
               world.Clock.GetTimeStampInSeconds(), world.Clock.GetDay(), world.Clock.GetHour(), world.Clock.GetMinute(), corrections,
-              received, lastDifference, following ? 1 : 0, requests, granted);
+              received, lastDifference, following ? 1 : 0, requests, granted, waits);
     log(line);
 }
 
@@ -139,9 +175,27 @@ void Set(char const* hhmm, LogFn log)
     Report(log);
 }
 
+void AddDays(char const* days, LogFn log)
+{
+    const int n = std::atoi(days);
+    if (!Ready() || n < 1 || n > 30) {
+        log("REFUSED clockdays: 1..30");
+        return;
+    }
+    Entity world = Entity::GetWorldEntity();
+    world.Clock.SetDay(world.Clock.GetDay() + n);
+    Report(log);
+}
+
 void Off(LogFn log)
 {
     following = false;
     log("CLOCKOFF ok=1");
+}
+
+void WaitOff(LogFn log)
+{
+    waitJumps = false;
+    log("WAITOFF ok=1");
 }
 }
