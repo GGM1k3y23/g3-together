@@ -1,109 +1,137 @@
 # G3 Together
 
-Play Gothic 3 together: one player hosts the campaign, the other joins over the network, and you play the story side by side.
-Tested with Steam, Community Patch 1.75.14 and Parallel Universe Patch 1.1.1, built on the unofficial
-[Gothic 3 SDK](https://github.com/georgeto/gothic3sdk). GPL-3.0-or-later (see COPYING).
-Bundles [ENet](https://github.com/lsalzman/enet) 1.3.18 (MIT, thirdparty/enet/LICENSE).
+**Return to Gothic 3 with a friend.** Share the campaign, fight side by side, and help each other back up when a battle goes wrong. One player hosts the world; the other joins over the network.
 
-**Download:** the newest package is under [Releases](https://github.com/GGM1k3y23/g3-together/releases). Both players need
-exactly the same version. Unpack it and run `Setup.cmd` (German: `Einrichten.cmd`, Polish: `Instalacja.cmd`): it finds Gothic 3, checks the patches,
-copies the mod and writes `g3together.ini`.
+[Download the beta](https://github.com/GGM1k3y23/g3-together/releases) · [Quickstart](#quickstart) · [Player guides](#player-guides) · [Build and test](#for-developers)
 
-> **Beta.** Tested with bots that drive two real game clients on one PC (165 automated runs before this version) and with
-> one evening of human play. Bots played the main story to Innos' ending, but no two people have finished it in co-op yet,
-> and play over the internet is barely tested. Expect bugs and back up your saves.
+> **Beta — back up your saves.** Tested mainly with bots driving two real game clients on one PC, plus one evening of human play. Bots reached Innos' ending; no human co-op playthrough has been completed yet. Internet play remains unverified; only two players have been tested.
 
-## What works
+## What you can do together
 
-- Playing the campaign together: you see each other move, fight, cast spells and use the world. Armor and helmet show on
-  the other player, and each player can choose their own look (`look = Diego` in their INI).
-- Fighting together: hits, kills and deaths count on both PCs; experience goes to whoever earned it, quest rewards to everyone.
-- Beating people as in single-player: a human or orc you beat is knocked out, a blow on them lying there kills them, and
-  a murder counts for their town whichever PC simulates them.
-- Quests and dialogs are shared; a player standing nearby hears the other player's conversation and sees the answers
-  they can pick. An NPC talks to one player at a time, and NPCs with news walk up to either player.
-- The main story is shared to the end: the chapter changes for both when one player hands over the artefacts, and both
-  see the epilogue together.
-- Guides and escorts go with the player who took the quest; waiting until morning and animals coming back work the same
-  for both.
-- Witnesses and guards react to either player's fights, knock-outs, murders, drawn weapons and trespassing as in
-  single-player, and NPCs remember a fight with each player separately.
-- Blocking works as in single-player for both players: a block costs stamina, the shield talent counts, and NPCs parry
-  either player's blows.
-- Looting corpses and chests, Quick Loot and trading with NPCs: both players see the same contents, nothing is duplicated.
-  A pocket one player picked is picked for both.
-- Trading with your partner: talk to their character and choose "Show me your wares!". The game's own trade window opens
-  with their goods and gold; your partner confirms every trade.
-- Your partner on the map and the compass: an arrow with their name on the map, an arrow at the compass's edge.
-- Instead of game over, a knocked-out player waits; the partner helps them up by talking to them and choosing
-  "I will help you." (costs a healing potion).
-- Knocked out by a guard: as in single-player, you stand up by yourself and the guard may rob you of half your gold;
-  an NPC that sees a player steal goes after the thief, whichever PC simulates it.
-- Town reputation as one record for both, with shared guilt, or each player's own (`reputation` in the host's INI).
-- Overheard dialogs show their subtitles (with the game's subtitles on).
-- Duels and the arena work as in single-player.
-- Saving and loading: the host saves; when the host loads a save, the other player is loaded into it automatically.
-- The host checks that both installations match (patches, difficulty, balancing) and says what differs; on-screen messages
-  tell you when the connection is lost or back.
+- **Share the adventure.** Quest progress, dialogs and story milestones sync. Listen to nearby conversations and see your partner's dialog choices.
+- **Fight as a team.** Shared enemies, visible attacks and spells, individual kill XP. Quest XP is shared; dialog gold goes to the player handing in.
+- **Loot once, trade together.** Chests and corpses share loot; picked pockets stay picked. Player trades require your partner's confirmation.
+- **Look out for each other.** Find your partner on the map and compass, jump to their side, and revive them with a healing potion.
+- **Keep your character and campaign.** Show your armor and helmet. The host saves; each player's hero record returns when loading the shared campaign.
 
-## Known limitations
+More: [combat, companions, guards and world interactions](docs/PLAYING.md#what-is-shared).
 
-- Trading was tested by bots through the game's own trade functions; dragging items with the mouse in the trade window has
-  not been tried by a person yet.
-- Soul travel: the other player sees your ghost, not the body you left behind.
-- Ice and fire spells that put out burning or freezing act on the other player's NPCs only on your own PC.
-- Not checked yet, because the bots cannot set them up: the uprising in Cape Dun, freeing a town in the middle of the
-  game, quests to drive someone away and plundering.
-- The Adanos and Beliar endings, Xardas' plan and the fifth temple have not been played through together yet; swimming
-  forward has not been tried by a person.
-- Only two players have been tested; more may work but are untested.
+## Quickstart
 
-Found a bug? Note the time and what happened, then send both players' logs (`tools/collect_logs.py` in the package).
+### 1. Match your installations
+
+On **both Windows PCs**, use the tested setup in this order:
+
+1. Gothic 3 from Steam with **Community Patch 1.75.14**.
+2. [**Parallel Universe Patch 1.1.1**](https://www.worldofgothic.de/dl/download_678.htm).
+3. The **same G3 Together release package**.
+
+Game files and settings must match; the mod checks compatibility on joining. See the [full requirements](docs/PLAYING.md#requirements-the-same-on-both-pcs). Compatibility without Parallel Universe Patch is unverified.
+
+Prefer a separate game copy for co-op. Keep other co-op mods out of `scripts`.
+
+### 2. Run setup on both PCs
+
+Unpack the **whole mod package** from [Releases](https://github.com/GGM1k3y23/g3-together/releases) and run `Setup.cmd` (Deutsch: `Einrichten.cmd`; Polski: `Instalacja.cmd`). GitHub's source-code ZIP does not include the built mod.
+
+Choose one **host** and one **joining player**, enter names and the host's address. Setup finds the game, checks patches and installs the mod with `g3together.ini`. Replaced files go into `G3Together-backup`. See also [manual installation](docs/PLAYING.md#installation).
+
+### 3. Connect and play
+
+The default is **UDP port 34567**. Allow Gothic 3 through the host's firewall and use a reachable host address. See the [network guide](docs/PLAYING.md#connecting-over-the-internet) for VPN and port-forwarding options.
+
+| Host starts first… | Joining player… |
+| --- | --- |
+| Load a saved campaign. | **Wait in the main menu**; the campaign transfers and loads automatically. |
+| Start a new, unsaved campaign. | **Start a new game too.** Once the host has saved, future joins can load from the main menu. |
+
+The **host saves**. Keep player names unchanged to restore companions. Read about [first-join heroes and saves](docs/PLAYING.md#starting-and-saving).
+
+## A few things to try
+
+| Want to… | How |
+| --- | --- |
+| Regroup | **Page Down** jumps behind your partner in the same world; five-second cooldown. |
+| Revive your partner | Talk to them: **“I will help you.”** Costs one healing potion. If nobody can help, normal death still applies. |
+| Trade | Talk to your partner: **“Show me your wares!”** Close the trade window; they accept with **Insert** or decline with **Delete**. |
+
+Edit your `g3together.ini` and restart to customize messages, appearance and the regroup key:
+
+```ini
+language = auto
+look = Diego
+partner_key = F9
+```
+
+`auto` follows the game's text language: German, Polish, otherwise English. Override with `en`, `de` or `pl`; omitting the setting gives English. Each player chooses independently, without changing the game's language.
+
+The host chooses `reputation = shared` (default), `together` (shared guilt) or `personal`; see [reputation rules](docs/PLAYING.md#known-limitations).
+
+## Know the limits
+
+- **Crashes and sync issues remain possible.** Save before difficult fights; see [known issues and workarounds](docs/PLAYING.md#known-issues-21-october-2026).
+- **Human testing is limited.** Setup was checked on test folders; trading through the game's functions was checked by bots. Mouse trading and forward swimming still need human testing.
+- **Untested story paths:** Adanos and Beliar endings, Xardas' plan, the fifth temple, Cape Dun's uprising, midgame town liberation, drive-away quests and plundering.
+- **Soul travel:** your partner sees your ghost, not the body left behind.
+- **Fire/ice effects that extinguish burning or freezing** on NPCs simulated by your partner only take effect on your PC.
+
+Read the [full limitations](docs/PLAYING.md#known-limitations), including saving while transformed, before a longer campaign.
 
 ## Player guides
 
-- **English:** [Install and play](docs/PLAYING.md) · [Join a host](docs/JOINING.md) · [Playtest checklist](docs/PLAYTEST.md)
-- **Deutsch:** [Installieren und spielen](docs/SPIELEN.md) · [Beim Host beitreten](docs/MITSPIELER.md) · [Spieltest-Checkliste](docs/TESTPLAN.md)
-- **Polski:** [Instalacja i gra](docs/GRANIE.md) · [Dołączanie do hosta](docs/DOLACZANIE.md)
+| Language | Install and play | Join a host | Help test |
+| --- | --- | --- | --- |
+| English | [Player guide](docs/PLAYING.md) | [Joining guide](docs/JOINING.md) | [Playtest checklist](docs/PLAYTEST.md) |
+| Deutsch | [Installieren und spielen](docs/SPIELEN.md) | [Beim Host beitreten](docs/MITSPIELER.md) | [Spieltest-Checkliste](docs/TESTPLAN.md) |
+| Polski | [Instalacja i gra](docs/GRANIE.md) | [Dołączanie do hosta](docs/DOLACZANIE.md) | — |
 
-Use the same tested setup on both PCs: Gothic 3 from Steam, Community Patch **1.75.14**, then
-[Parallel Universe Patch **1.1.1**](https://www.worldofgothic.de/dl/download_678.htm), then the same G3 Together build.
-This is the tested baseline; compatibility without Parallel Universe Patch has not been established.
-Mod messages come in English, German and Polish. The setup writes `language = auto`, which follows the language of
-the game's texts (anything other than German or Polish gives English); `language = en`, `de` or `pl` in
-`g3together.ini` fixes one, and without the line they are English. Each player can choose independently; this does not
-change the game's own language.
+### Found a bug?
+
+[Report a bug](https://github.com/GGM1k3y23/g3-together/issues) with the time, host, actions and what **each player** saw. Preserve both players' logs before restarting. With Python installed, run from the extracted package folder using your game path:
+
+```powershell
+python "tools\collect_logs.py" "C:\Games\Gothic 3"
+```
+
+Share both players' ZIPs privately with the host first. User paths and IP addresses are redacted; review before sharing further. Do not attach saves or unredacted INIs. [Without Python](docs/JOINING.md#if-something-goes-wrong), collect logs manually.
 
 ## For developers
 
-How the mod is built up and tested: [development stages](docs/STAGES.md). The test bot is compiled in and only active
-in disposable copies that contain `qa-enable.txt`.
-
-### Layout
-
-```
-dev/
-  g3-together/     this repository: src/, thirdparty/enet/, qa/ (bot suites)
-  g3-workspace/    private, never committed: test copies of the game, isolation receipts,
-                   Gothic 3 SDK checkout, builds, run logs, reverse-engineering output
-  coop-anything/   the playbook clone; findings go back there as pull requests
-```
+Built on the unofficial [Gothic 3 SDK](https://github.com/georgeto/gothic3sdk) for the Genome engine. [Development stages](docs/STAGES.md) covers implementation and testing, following the [coop-anything](https://github.com/cranebeaker/coop-anything) playbook.
 
 ### Build
 
-The SDK is not part of this repository. By default CMake looks for it in
-`../g3-workspace/tools/gothic3sdk`; override with `-DG3SDK_DIR=<path>`. MSVC, 32-bit:
+Use **MSVC, 32-bit**. This example needs Visual Studio 2026 C++ tools and [CMake 4.2+](https://cmake.org/cmake/help/latest/generator/Visual%20Studio%2018%202026.html) for its generator (project minimum: 3.24).
 
+The SDK is a separate checkout. Its default path is `../g3-workspace/tools/gothic3sdk`; add `-DG3SDK_DIR="C:/path/to/gothic3sdk"` to the first command to override it. From the repository root:
+
+```powershell
+cmake -S . -B build -G "Visual Studio 18 2026" -A Win32
+cmake --build build --config Release
 ```
-cmake -S . -B <build dir> -G "Visual Studio 18 2026" -A Win32
-cmake --build <build dir> --config Release
+
+### Test workspace
+
+```text
+dev/
+  g3-together/     Public source: src/, thirdparty/enet/, qa/, docs/, tools/
+  g3-workspace/   Private SDK, builds, isolated game copies, receipts, logs and research
+  coop-anything/  Development playbook; findings go back as pull requests
 ```
 
-In the workspace, `build-mod.ps1` does both.
+Keep the workspace private and uncommitted. Its `build-mod.ps1` helper is not included here.
 
-### Bot suites
+Bot suites need a **configured private workspace** with `project.json`, deployment receipts and isolation checks; a fresh clone is insufficient. Default: `../g3-workspace`; override with `G3_WORKSPACE`.
 
-`qa/together.py --suite stage1|stage2|stage3a|stage3b [--negative-control]` launches the isolated test
-copies from the workspace (`../g3-workspace`, or the `G3_WORKSPACE` environment variable), drives them
-through the mod's QA command file and prints `RESULT: PASS/FAIL`. It refuses to run unless the workspace's
-isolation checks pass, and it hashes the owner's real save folder before and after every run.
+```powershell
+python qa/together.py --suite stage2
+python qa/together.py --suite stage2 --negative-control
+```
+
+These `stage2` runs drive two isolated game copies; the negative control is expected to report `RESULT: FAIL`. The runner checks isolation and hashes the owner's real saves before and after each run. Other suites include `stage1`, `stage3a` and `stage3b`; see [development stages](docs/STAGES.md).
+
+The compiled QA bot activates only with `qa-enable.txt`. Use it only in disposable test installations.
+
+## License and credits
+
+**GPL-3.0-or-later** — see [COPYING](COPYING). Built on the unofficial [Gothic 3 SDK](https://github.com/georgeto/gothic3sdk); bundles [ENet 1.3.18](https://github.com/lsalzman/enet) under its [MIT license](thirdparty/enet/LICENSE).
