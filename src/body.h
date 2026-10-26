@@ -73,6 +73,7 @@ struct Target
 extern unsigned actionsStarted, actionsShown, actionsPlayed, pacifies, ownerReleases;
 extern int motionOwner;  // QA: owner set on slot 0 after a replayed action (0 = leave)
 extern unsigned combatMoves, combatMoveFaults;  // attacks/parades/staggers replayed as the game's combat move
+extern bool stanceSync;                         // QA: off = a body keeps its own AniState
 extern bool combatReplay;                       // QA: off = replay those by motion name too
 // QA: StartPlayAni replays by kind (0 attack/parade/stagger by name, 1 knock-down/get-up, 2 gestures and the rest):
 // started, on slot 0 right after the start, still on slot 0 150 ms later

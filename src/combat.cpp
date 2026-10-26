@@ -12,6 +12,8 @@
 #include <Game.h>
 #include <Script.h>
 #include <Windows.h>
+#include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -32,6 +34,9 @@ namespace {
 bool installed = false;
 bool bypass = false;     // negative control: the filter lets everything through
 bool forwarded = false;  // client: applying a hit the host forwarded, judged here (Filter lets it through)
+DWORD paradeUntil = 0;   // QA guard: the hero holds its parade until then, as with the block key held down
+bool guarded = false;    // QA guard was used: forwarded blows are logged with their cost
+std::vector<std::pair<eCEntity*, DWORD>> npcParades;  // QA npcguard: NPCs (here simulated) holding their parade until then
 DWORD lastTry = 0;
 gFScript original = nullptr;
 unsigned filterCalls = 0;
@@ -72,6 +77,25 @@ unsigned duelHitsRefused = 0, duelKnockouts = 0;
 // game decided for that hit on the sender's machine (HitOutcome), and the owner knocks out where the game did.
 bool knockOuts = true;  // QA negative control: remotekooff (a lethal claim kills, as before)
 bool shapeHits = true;  // QA negative control: shapehitsoff (an animal form's hits go out as one of our NPCs', as before)
+// P4, the hit judgement (AssessHit): a puppet carries its player's AniState (body.cpp), so a player who parries is a puppet in
+// parade here, and our judgement of a blow on it took the block (ParadeStumble, no damage recorded, AddHitPoints never called):
+// the blow never reached the player, who blocked for free (stageShieldBlock 25.10.: no stamina, no stumble, the shield talent
+// unused; alone the client pays 17 stamina a blocked blow). The parade belongs to the player's machine, which judges the blow
+// against its real hero (block, shield talent, stamina, stumble). So the judgement here sees the puppet standing, the blow
+// goes on to AddHitPoints and to the player (rule 4). The scripts that judge a blow, wrapped like AddHitPoints.
+char const* const Judgements[] = {"DoLogicalDamage", "OnDamage"};
+gFScript judge[2] = {};
+bool puppetParade = true;  // QA negative control: puppetparadeoff (the puppet's parade counts here, as before)
+unsigned paradesPassedOn = 0;  // blows on a parrying puppet judged as unblocked here, so that its player judges the block
+// The other way round (stageNpcBlock 25.10.): an NPC of the host parries a client's blow. The client judged it against its
+// mirror, whose parade and turn come with the snapshots, late: 2 of 3 blows hurt the parrying NPC (20 hit points each), the
+// third was blocked on the mirror only (no claim; on the host no stumble, no stamina). Alone, the host's blow was blocked
+// every time (ZS_ParadeStumble, 40 stamina, no hit points). The block belongs to the NPC's owner: the client judges the blow
+// with its mirror standing and claims the damage, the owner decides from its NPC whether it blocks and applies the game's
+// block for an NPC (AssessHit SG+2c5a0..2c70b: half the damage from stamina, a quarter less with a shield in hand, what
+// stamina lacks from hit points; ZS_ParadeStumble).
+bool npcBlocks = true;  // QA negative control: npcblockoff (judged on the mirror, as before)
+unsigned mirrorParadesPassedOn = 0, npcBlocksApplied = 0;
 unsigned knockedOut = 0, finishRefused = 0;
 uint8_t lastOutcome = 0;  // client: the outcome of the last claim sent (QA HITNPC line)
 std::unordered_map<std::string, DWORD> knockedAt;  // owner: when a claim knocked the victim out (IsDown follows a frame later)
@@ -171,6 +195,50 @@ eCEntity* Attacker(gCScriptProcessingUnit* spu, GELPVoid other)
     return owner.GetInstance() ? owner.GetInstance() : source.GetInstance();
 }
 
+GEInt Judge(int which, gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid other, GEInt args)
+{
+    Entity victim = self ? *static_cast<Entity*>(self) : Entity(spu ? spu->GetSelfEntity() : nullptr);
+    if (bypass || victim.Routine.AniState != gEAniState_Parade) return judge[which](spu, self, other, args);
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    eCEntity* attacker = Attacker(spu, other);
+    const bool puppet = puppetParade && remote::PuppetOwner(victim.GetInstance());
+    const bool mirror = npcBlocks && npcs::IsMirrored(victim.GetInstance()) && attacker && (attacker == hero || attacker == remote::ControlledBody());
+    if (!puppet && !mirror) return judge[which](spu, self, other, args);
+    victim.Routine.AniState = gEAniState_Stand;
+    const GEInt result = judge[which](spu, self, other, args);
+    if (victim.Routine.AniState == gEAniState_Stand) victim.Routine.AniState = gEAniState_Parade;  // the snapshots set it anyway
+    ++(puppet ? paradesPassedOn : mirrorParadesPassedOn);
+    return result;
+}
+
+// Owner of the NPC: whether it blocks a player's blow, as AssessHit asks (IsBlocking SG+d480): parrying, able to parry that
+// move, facing the attacker.
+bool Blocks(Entity& npc, eCEntity* attacker)
+{
+    return CallScript("IsInParadeMode", npc.GetInstance(), nullptr, 0) && CallScript("CanParadeMoveOf", npc.GetInstance(), attacker, 0) &&
+           npc.IsInFOV(Entity(attacker));
+}
+
+// The game's block for an NPC (AssessHit, the victim not the player): half the blow's damage from stamina, a quarter of that
+// less with a shield in the left hand, what stamina lacks from hit points; the NPC stumbles back (ZS_ParadeStumble).
+void Block(Entity& npc, eCEntity* attacker, int32_t delta)
+{
+    int cost = delta / 2;
+    Entity left = npc.Inventory.GetItemFromSlot(gESlot_LeftHand);
+    if (left.GetInstance() && left.Interaction.GetUseType() == gEUseType_Shield) cost -= cost / 4;
+    const int stamina = static_cast<int>(npc.DamageReceiver.StaminaPoints), hitPoints = HitPoints(npc);
+    CallScript("AddStaminaPoints", npc.GetInstance(), nullptr, cost);
+    if (stamina + cost < 0) CallScript("AddHitPoints", npc.GetInstance(), attacker, stamina + cost);
+    npc.Routine.FullStop();
+    npc.Routine.SetTask(bCString("ZS_ParadeStumble"));
+    ++npcBlocksApplied;
+    Logf("combat: %s blocked a player's blow of %d: stamina %d -> %d hit points %d -> %d", npc.GetName().GetText(), -delta, stamina,
+         static_cast<int>(npc.DamageReceiver.StaminaPoints), hitPoints, HitPoints(npc));
+}
+
+GEInt GE_STDCALL JudgeLogical(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid other, GEInt args) { return Judge(0, spu, self, other, args); }
+GEInt GE_STDCALL JudgeOnDamage(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid other, GEInt args) { return Judge(1, spu, self, other, args); }
+
 GEInt GE_STDCALL Filter(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid other, GEInt args)
 {
     ++filterCalls;
@@ -247,6 +315,15 @@ GEInt GE_STDCALL Filter(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid oth
 // The weapon's damage type is None outside a swing (the game sets it for the swing); set it for this hit.
 GEInt GameHit(Entity& victim, eCEntity* source, int* pending)
 {
+    // QA guard: the local hero still parries (the block key held); the parade state alone falls back to standing.
+    if (paradeUntil && static_cast<int32_t>(GetTickCount() - paradeUntil) < 0 && victim.GetInstance() == gCSession::GetInstance().GetHero()) {
+        victim.Routine.AniState = gEAniState_Parade;
+        Entity by(source);
+        Entity owner = by.Interaction.GetOwner();
+        if (owner.GetInstance()) by = owner;
+        Logf("combat: guard judged: parade_mode=%d fov=%d attacker=%s", CallScript("IsInParadeMode", victim.GetInstance(), nullptr, 0),
+             victim.IsInFOV(by) ? 1 : 0, by.GetInstance() ? by.GetName().GetText() : "none");
+    }
     Entity weapon(source);
     const bool armed = source && source->GetPropertySet(eEPropertySetType_Damage);
     const gEDamageType type = armed ? static_cast<gEDamageType>(weapon.Damage.DamageType) : gEDamageType_None;
@@ -316,6 +393,19 @@ void OnHitNpc(uint8_t from, uint8_t const guid[16], int32_t delta, uint8_t const
     ++claimsApplied;
     // Applied with the sender's puppet as attacker; the filter's rule for hits by puppets must not drop it.
     struct Pass { Pass() { forwarded = true; } ~Pass() { forwarded = false; } } pass;
+    if (attacker && target.Routine.AniState == gEAniState_Parade)
+        Logf("combat: a player's blow on %s parrying: parade_mode=%d can_parade=%d fov=%d", target.GetName().GetText(),
+             CallScript("IsInParadeMode", target.GetInstance(), nullptr, 0), CallScript("CanParadeMoveOf", target.GetInstance(), attacker, 0),
+             target.IsInFOV(Entity(attacker)) ? 1 : 0);
+    if (npcBlocks && attacker && !target.IsDown() && !target.IsDead() && Blocks(target, attacker)) {
+        Block(target, attacker, delta);
+        if (reactHits && target.NPC.GetCurrentTarget().GetInstance() != attacker) {
+            CallScript("AssessTarget", target.GetInstance(), attacker, gEAttackReason_ReactToDamage);
+            ++reactionsStarted;
+        }
+        witness::HitSeen(target.GetInstance(), attacker);
+        return;
+    }
     // P7: a blow on one lying knocked out is the game's finishing blow, whatever its hit points (the host's hero: five blows
     // without effect while it fell, then dead). Judged here: the sender's copy is not down there, so its game judged every
     // such blow a new knock-out (stageMurder 24.10.). The fall is timed for our own knock-outs only (2 s).
@@ -446,10 +536,14 @@ void OnHitPlayer(int32_t delta, uint8_t const attacker[16], uint8_t attackerPlay
     char const* kind = "";
     Entity self(hero);
     int pending = 0;
+    const int hpBefore = self.PlayerMemory.GetHitPoints(), spBefore = self.PlayerMemory.GetStaminaPoints();
     forwarded = true;
-    GameHit(self, DamageSource(static_cast<eCDynamicEntity*>(by), &kind), &pending);
+    const GEInt result = GameHit(self, DamageSource(static_cast<eCDynamicEntity*>(by), &kind), &pending);
     forwarded = false;
     ++forwardedJudged;
+    if (guarded)  // QA guard
+        Logf("combat: forwarded blow judged here: result=%#x pending=%d hp %d -> %d sp %d -> %d", result, pending, hpBefore,
+             self.PlayerMemory.GetHitPoints(), spBefore, self.PlayerMemory.GetStaminaPoints());
 }
 }
 
@@ -462,6 +556,16 @@ void Start()
 void Tick()
 {
     if (!unconfirmed.empty()) ConfirmKills();
+    for (auto it = npcParades.begin(); it != npcParades.end();) {  // QA npcguard
+        if (static_cast<int32_t>(GetTickCount() - it->second) >= 0) { it = npcParades.erase(it); continue; }
+        Entity(it->first).Routine.AniState = gEAniState_Parade;
+        ++it;
+    }
+    if (paradeUntil) {  // QA guard: the block key held down, every frame (the snapshots carry it to the puppet)
+        eCEntity* hero = gCSession::GetInstance().GetHero();
+        if (static_cast<int32_t>(GetTickCount() - paradeUntil) >= 0) paradeUntil = 0;
+        else if (hero) Entity(hero).Routine.AniState = gEAniState_Parade;
+    }
     if (installed || !gCSession::GetInstance().IsGameRunning()) return;
     const DWORD now = GetTickCount();
     if (now - lastTry < 1000) return;
@@ -472,6 +576,13 @@ void Tick()
     script->m_funcScript = &Filter;
     installed = true;
     Log("combat: AddHitPoints filter installed");
+    const gFScript wrappers[] = {&JudgeLogical, &JudgeOnDamage};
+    for (int i = 0; i < 2; ++i) {
+        gSScript* judgement = Find(GetScriptAdminExt().GetScripts(), Judgements[i]);
+        if (!judgement) { Logf("combat: no %s script; a parrying puppet is judged here", Judgements[i]); continue; }
+        judge[i] = judgement->m_funcScript;
+        judgement->m_funcScript = wrappers[i];
+    }
 }
 
 // The damage source the game itself uses: the weapon in the right hand (its Damage properties set the
@@ -510,13 +621,15 @@ void HitNpc(char const* guid, LogFn log)
     eCEntity* source = body && body != hero ? body : DamageSource(hero, &kind);  // an animal form strikes itself
     if (source == body && body != hero) kind = "shape";
     const int before = HitPoints(target);
+    const int spBefore = HasDamageReceiver(target.GetInstance()) ? static_cast<int>(target.DamageReceiver.StaminaPoints) : -1;
     const unsigned sentBefore = claimsSent, callsBefore = filterCalls;
     int pending = 0;
     const GEInt result = GameHit(target, source, &pending);
-    sprintf_s(line, "HITNPC guid=%s name=%s source=%s:%s owner=%s result=%#x filtered=%u pending=%d task=%s before=%d after=%d dead=%d claim_sent=%d outcome=%u", guid,
+    sprintf_s(line, "HITNPC guid=%s name=%s source=%s:%s owner=%s result=%#x filtered=%u pending=%d task=%s before=%d after=%d dead=%d claim_sent=%d outcome=%u sp_before=%d sp_after=%d", guid,
               target.GetName().GetText(), kind, Entity(source).GetName().GetText(), Entity(source).Interaction.GetOwner().GetName().GetText(),
               result, filterCalls - callsBefore, pending, target.Routine.GetCurrentTask().GetText(), before, HitPoints(target),
-              target.IsDead() ? 1 : 0, claimsSent != sentBefore, claimsSent != sentBefore ? lastOutcome : 0u);
+              target.IsDead() ? 1 : 0, claimsSent != sentBefore, claimsSent != sentBefore ? lastOutcome : 0u, spBefore,
+              HasDamageReceiver(target.GetInstance()) ? static_cast<int>(target.DamageReceiver.StaminaPoints) : -1);
     log(line);
 }
 
@@ -662,6 +775,26 @@ void Report(LogFn log)
     log(line);
 }
 
+void PuppetParadeOff(LogFn log)
+{
+    puppetParade = false;
+    log("PUPPETPARADEOFF ok=1 (a parrying puppet's block is judged here, as before 25.10.)");
+}
+
+void ParadeReport(LogFn log)
+{
+    char line[200];
+    sprintf_s(line, "PARADE wrapped=%d,%d passed_on=%u on=%d mirror_passed_on=%u npc_blocks=%u npc_blocks_on=%d", judge[0] ? 1 : 0,
+              judge[1] ? 1 : 0, paradesPassedOn, puppetParade ? 1 : 0, mirrorParadesPassedOn, npcBlocksApplied, npcBlocks ? 1 : 0);
+    log(line);
+}
+
+void NpcBlockOff(LogFn log)
+{
+    npcBlocks = false;
+    log("NPCBLOCKOFF ok=1 (a client's blow on a parrying NPC is judged on its mirror, as before 25.10.)");
+}
+
 void ShapeHitsOff(LogFn log)
 {
     shapeHits = false;
@@ -723,11 +856,12 @@ void HeroState(LogFn log)
     if (!hero) { log("HERO none"); return; }
     Entity self(hero);
     gCGUIManager* gui = session.GetGUIManager();
-    sprintf_s(line, "HERO hp=%d max=%d dead=%d down=%d task=%s state=%s ani_state=%d ai_mode=%d paused=%d running=%d page=%d",
+    sprintf_s(line, "HERO hp=%d max=%d dead=%d down=%d task=%s state=%s ani_state=%d ai_mode=%d paused=%d running=%d page=%d sp=%d action=%d",
               self.PlayerMemory.GetHitPoints(), self.PlayerMemory.GetHitPointsMax(), self.IsDead() ? 1 : 0, self.IsDown() ? 1 : 0,
               self.Routine.GetCurrentTask().GetText(), self.Routine.GetCurrentState().GetText(),
               static_cast<int>(self.Routine.AniState), static_cast<int>(self.Routine.AIMode), session.IsPaused() ? 1 : 0,
-              session.IsGameRunning() ? 1 : 0, gui ? static_cast<int>(gui->GetActivePage()) : -1);
+              session.IsGameRunning() ? 1 : 0, gui ? static_cast<int>(gui->GetActivePage()) : -1, self.PlayerMemory.GetStaminaPoints(),
+              static_cast<int>(self.Routine.Action));
     log(line);
 }
 
@@ -743,12 +877,16 @@ void HurtHero(char const* guid, LogFn log)
     char const* kind = "";
     eCEntity* source = DamageSource(static_cast<eCDynamicEntity*>(attacker.GetInstance()), &kind);
     Entity self(hero);
-    const int before = self.PlayerMemory.GetHitPoints();
+    const int before = self.PlayerMemory.GetHitPoints(), spBefore = self.PlayerMemory.GetStaminaPoints();
     int pending = 0;
+    // The blow as the game alone judges it on this machine, also from a mirrored NPC (whose hits rule 1 drops otherwise).
+    forwarded = true;
     const GEInt result = GameHit(self, source, &pending);
-    sprintf_s(line, "HURTHERO attacker=%s source=%s:%s result=%#x pending=%d before=%d after=%d dead=%d down=%d task=%s",
+    forwarded = false;
+    sprintf_s(line, "HURTHERO attacker=%s source=%s:%s result=%#x pending=%d before=%d after=%d dead=%d down=%d task=%s sp_before=%d sp_after=%d",
               attacker.GetName().GetText(), kind, Entity(source).GetName().GetText(), result, pending, before,
-              self.PlayerMemory.GetHitPoints(), self.IsDead() ? 1 : 0, self.IsDown() ? 1 : 0, self.Routine.GetCurrentTask().GetText());
+              self.PlayerMemory.GetHitPoints(), self.IsDead() ? 1 : 0, self.IsDown() ? 1 : 0, self.Routine.GetCurrentTask().GetText(),
+              spBefore, self.PlayerMemory.GetStaminaPoints());
     log(line);
 }
 
@@ -786,10 +924,160 @@ void Swing(char const* state, LogFn log)
     log(line);
 }
 
-// QA, stage A: an NPC (GUID) hits player 2's puppet on the host through the game's hit judgement.
-void HitPuppetBy(char const* guid, LogFn log)
+// QA, P4 hit judgement: the local hero holds a shield (template, created) in the left hand beside its weapon and
+// parries the way the block key does (PS_Melee_Parade), with full stamina, so that the next hit is judged as a block.
+void Guard(char const* shield, LogFn log)
+{
+    char line[400];
+    eCDynamicEntity* hero = gCSession::GetInstance().GetHero();
+    if (!hero) { log("REFUSED guard: no hero"); return; }
+    Entity self(hero);
+    GEInt left = -1;
+    if (shield && *shield) {
+        self.Inventory.CreateItems(Template(shield), 0, 1);
+        left = self.Inventory.FindStackIndex(Template(shield));
+    }
+    const GEInt right = self.Inventory.FindStackIndex(gESlot_RightHand);
+    const GEBool held = left >= 0 ? self.Inventory.HoldStacks(left, right) : GEFalse;
+    if (std::strcmp(self.Routine.GetCurrentTask().GetText(), "PS_Melee") != 0) self.Routine.SetTask(bCString("PS_Melee"));
+    self.Routine.SetState(bCString("PS_Melee_Parade"));
+    self.Routine.AniState = gEAniState_Parade;  // what IsInParadeMode asks
+    paradeUntil = GetTickCount() + 15000;
+    guarded = true;
+    self.PlayerMemory.SetStaminaPoints(self.PlayerMemory.GetStaminaPointsMax());
+    Entity inLeft = self.Inventory.GetItemFromSlot(gESlot_LeftHand);
+    sprintf_s(line, "GUARD shield=%s stack=%d held=%d left_hand=%s task=%s state=%s action=%d shield_2=%d sp=%d hp=%d",
+              shield ? shield : "-", left, held ? 1 : 0, inLeft.GetInstance() ? inLeft.GetName().GetText() : "none",
+              self.Routine.GetCurrentTask().GetText(), self.Routine.GetCurrentState().GetText(), static_cast<int>(self.Routine.Action),
+              self.Inventory.IsSkillActive(Template("Perk_Shield_2")) ? 1 : 0, self.PlayerMemory.GetStaminaPoints(),
+              self.PlayerMemory.GetHitPoints());
+    log(line);
+}
+
+// QA, P4 hit judgement: "<guid>_<who>" (hero or puppet<id>): the NPC, simulated here, turns to face that one and parries for
+// 15 s with full stamina, so that blows from there are judged as blocked.
+void NpcGuard(char const* argument, LogFn log)
+{
+    char line[300], guid[64] = {};
+    char const* cut = std::strrchr(argument, '_');
+    if (cut && cut - argument < static_cast<ptrdiff_t>(sizeof(guid))) std::memcpy(guid, argument, cut - argument);
+    _GUID raw;
+    if (!cut || !ParseGuid(guid, raw)) { log("REFUSED npcguard: \"<guid>_<hero|puppetN>\""); return; }
+    Entity npc = Entity(bCPropertyID(bCGuid(raw)));
+    eCEntity* who = !std::strcmp(cut + 1, "hero") ? gCSession::GetInstance().GetHero()
+                    : !std::strncmp(cut + 1, "puppet", 6) ? remote::PuppetOf(static_cast<uint8_t>(std::atoi(cut + 7))) : nullptr;
+    if (!npc.GetInstance() || !who || !HasDamageReceiver(npc.GetInstance())) { log("REFUSED npcguard: no such NPC or no one to face"); return; }
+    const bCVector at = npc.GetInstance()->GetWorldPosition(), to = who->GetWorldPosition();
+    float dx = to.GetX() - at.GetX(), dz = to.GetZ() - at.GetZ();
+    const float yaw = std::atan2(dx, dz);
+    const float place[3] = {at.GetX(), at.GetY(), at.GetZ()}, rotation[4] = {0.0f, std::sin(yaw / 2), 0.0f, std::cos(yaw / 2)};
+    npc.MoveTo(body::Pose(*npc.GetInstance(), place, rotation));
+    npc.DamageReceiver.StaminaPoints = npc.DamageReceiver.StaminaPointsMax;
+    npc.Routine.AniState = gEAniState_Parade;
+    npcParades.emplace_back(npc.GetInstance(), GetTickCount() + 15000);
+    sprintf_s(line, "NPCGUARD name=%s facing=%s fov=%d parade_mode=%d sp=%d hp=%d mirrored=%d", npc.GetName().GetText(), Entity(who).GetName().GetText(),
+              npc.IsInFOV(Entity(who)) ? 1 : 0, CallScript("IsInParadeMode", npc.GetInstance(), nullptr, 0),
+              static_cast<int>(npc.DamageReceiver.StaminaPoints), HitPoints(npc), npcs::IsMirrored(npc.GetInstance()) ? 1 : 0);
+    log(line);
+}
+
+// QA, P4 hit judgement: the NPC (GUID), simulated here, stops what it does (its fight too) and stands idle, so that it keeps
+// its place and turn for the next blow.
+void NpcStill(char const* guid, LogFn log)
+{
+    char line[200];
+    _GUID raw;
+    if (!ParseGuid(guid, raw)) { log("REFUSED npcstill: bad GUID"); return; }
+    Entity npc = Entity(bCPropertyID(bCGuid(raw)));
+    if (!npc.GetInstance() || npc.IsDead() || npcs::IsMirrored(npc.GetInstance())) { log("REFUSED npcstill: no such NPC simulated here"); return; }
+    npc.Routine.FullStop();
+    npc.NPC.SetCurrentTarget(Entity());
+    npc.Routine.SetTask(bCString(body::IdleTask()));
+    sprintf_s(line, "NPCSTILL name=%s task=%s", npc.GetName().GetText(), npc.Routine.GetCurrentTask().GetText());
+    log(line);
+}
+
+// QA, P4 hit judgement: how this machine sees player 2's puppet against an NPC (GUID): parrying, facing it.
+void PuppetParade(char const* guid, LogFn log)
+{
+    char line[200];
+    _GUID raw;
+    eCEntity* puppet = remote::PuppetOf(2);
+    if (!ParseGuid(guid, raw) || !puppet) { log("REFUSED puppetparade: bad GUID or no puppet"); return; }
+    Entity npc = Entity(bCPropertyID(bCGuid(raw)));
+    if (!npc.GetInstance()) { log("REFUSED puppetparade: no such NPC"); return; }
+    Entity victim(puppet);
+    sprintf_s(line, "PUPPETPARADE parade=%d fov=%d ani_state=%d", CallScript("IsInParadeMode", puppet, nullptr, 0),
+              victim.IsInFOV(npc) ? 1 : 0, static_cast<int>(victim.Routine.AniState));
+    log(line);
+}
+
+// QA: how this machine shows player 2's puppet: PUPPETSTATE ani_state task motion (P1: boulders, stations).
+void PuppetState(LogFn log)
 {
     char line[300];
+    eCEntity* puppet = remote::PuppetOf(2);
+    if (!puppet) { log("REFUSED puppetstate: no puppet"); return; }
+    Entity body(puppet);
+    char motion[160] = "-";
+    body::CurrentMotion(puppet, motion, sizeof(motion));
+    sprintf_s(line, "PUPPETSTATE ani_state=%d task=%s motion=%s", static_cast<int>(body.Routine.AniState),
+              body.Routine.GetCurrentTask().GetText(), motion);
+    log(line);
+}
+
+// QA: an NPC's state as the judgement reads it here: NPCSTATE name task ani_state parade_mode sp hp.
+void NpcState(char const* guid, LogFn log)
+{
+    char line[300];
+    _GUID raw;
+    if (!ParseGuid(guid, raw)) { log("REFUSED npcstate: bad GUID"); return; }
+    Entity npc = Entity(bCPropertyID(bCGuid(raw)));
+    if (!npc.GetInstance() || !HasDamageReceiver(npc.GetInstance())) { log("REFUSED npcstate: no such NPC"); return; }
+    sprintf_s(line, "NPCSTATE name=%s task=%s ani_state=%d parade_mode=%d sp=%d hp=%d", npc.GetName().GetText(),
+              npc.Routine.GetCurrentTask().GetText(), static_cast<int>(npc.Routine.AniState),
+              CallScript("IsInParadeMode", npc.GetInstance(), nullptr, 0), static_cast<int>(npc.DamageReceiver.StaminaPoints), HitPoints(npc));
+    log(line);
+}
+
+// QA, P4 hit judgement: what the game's own scripts say on this machine about a blow of an NPC (GUID) on the local hero:
+// parrying (IsInParadeMode), able to parry that move (CanParadeMoveOf), the attacker's strength and the hero's
+// protection against its weapon.
+void HitProbe(char const* guid, LogFn log)
+{
+    char line[400];
+    _GUID raw;
+    eCDynamicEntity* hero = gCSession::GetInstance().GetHero();
+    if (!ParseGuid(guid, raw) || !hero) { log("REFUSED hitprobe: bad GUID or no hero"); return; }
+    Entity attacker = Entity(bCPropertyID(bCGuid(raw)));
+    if (!attacker.GetInstance()) { log("REFUSED hitprobe: no such NPC"); return; }
+    char const* kind = "";
+    eCEntity* source = DamageSource(static_cast<eCDynamicEntity*>(attacker.GetInstance()), &kind);
+    Entity self(hero);
+    Entity weapon(source);
+    if (paradeUntil && static_cast<int32_t>(GetTickCount() - paradeUntil) < 0) self.Routine.AniState = gEAniState_Parade;
+    sprintf_s(line, "HITPROBE attacker=%s source=%s parade_mode=%d can_parade=%d strength=%d level=%d current_level=%d hero_level=%d "
+              "protection=%d hero_strength=%d ani_state=%d action=%d attacker_action=%d damage=%d type=%d fov=%d",
+              attacker.GetName().GetText(), kind, CallScript("IsInParadeMode", hero, nullptr, 0),
+              CallScript("CanParadeMoveOf", hero, attacker.GetInstance(), 0), CallScript("GetStrength", attacker.GetInstance(), nullptr, 0),
+              static_cast<int>(attacker.NPC.Level), CallScript("GetCurrentLevel", attacker.GetInstance(), nullptr, 0),
+              static_cast<int>(self.NPC.Level), CallScript("GetProtection", hero, source, 0),
+              CallScript("GetStrength", hero, nullptr, 0), static_cast<int>(self.Routine.AniState), static_cast<int>(self.Routine.Action),
+              static_cast<int>(attacker.Routine.Action),
+              source && source->GetPropertySet(eEPropertySetType_Damage) ? static_cast<int>(weapon.Damage.DamageAmount) : -1,
+              source && source->GetPropertySet(eEPropertySetType_Damage) ? static_cast<int>(weapon.Damage.DamageType) : -1,
+              self.IsInFOV(attacker) ? 1 : 0);
+    log(line);
+}
+
+// QA, stage A: an NPC (GUID) hits player 2's puppet on the host through the game's hit judgement.
+void HitPuppetBy(char const* argument, LogFn log)
+{
+    char line[500], guid[64] = {};
+    // "<guid>_parade": the puppet parries at that moment, as the snapshots of a parrying player show it (P4, stageShieldBlock).
+    char const* cut = std::strstr(argument, "_parade");
+    const bool parade = cut != nullptr;
+    std::memcpy(guid, argument, cut && cut - argument < 63 ? cut - argument : std::min<size_t>(std::strlen(argument), 63));
     _GUID raw;
     eCEntity* puppet = remote::PuppetOf(2);
     if (!ParseGuid(guid, raw) || !puppet) { log("REFUSED hitpuppetby: bad GUID or no puppet"); return; }
@@ -799,10 +1087,18 @@ void HitPuppetBy(char const* guid, LogFn log)
     eCEntity* source = DamageSource(static_cast<eCDynamicEntity*>(attacker.GetInstance()), &kind);
     const unsigned sentBefore = playerHitsSent;
     Entity victim(puppet);
+    if (parade) victim.Routine.AniState = gEAniState_Parade;
+    // How the host sees the puppet when the blow comes: parrying (IsInParadeMode), facing the attacker, its motion.
+    const GEInt parrying = CallScript("IsInParadeMode", puppet, nullptr, 0);
+    const bool fov = victim.IsInFOV(attacker);
+    const int aniState = static_cast<int>(victim.Routine.AniState);
+    char motion[128] = "-";
+    body::CurrentMotion(puppet, motion, sizeof(motion));
     int pending = 0;
     const GEInt result = GameHit(victim, source, &pending);
-    sprintf_s(line, "HITPUPPETBY attacker=%s source=%s:%s result=%#x pending=%d sent=%d", attacker.GetName().GetText(), kind,
-              Entity(source).GetName().GetText(), result, pending, playerHitsSent != sentBefore);
+    sprintf_s(line, "HITPUPPETBY attacker=%s source=%s:%s result=%#x pending=%d sent=%d puppet_parade=%d puppet_fov=%d puppet_ani_state=%d motion=%s",
+              attacker.GetName().GetText(), kind, Entity(source).GetName().GetText(), result, pending, playerHitsSent != sentBefore,
+              parrying, fov ? 1 : 0, aniState, motion);
     log(line);
 }
 

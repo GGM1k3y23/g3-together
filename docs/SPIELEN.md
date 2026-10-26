@@ -119,6 +119,8 @@ beschriebenen Tests liefen auf einem PC mit zwei Spielkopien; Spielen über das 
 - Quests und bereits geführte Dialoge sind gemeinsam; Quest-Belohnungen bekommen alle. Kill-Aufträge zählen auch Gegner, die
   der Mitspieler weit weg vom Host erledigt. Gibt einer eine Quest ab, bekommen **alle** die Erfahrung dafür, das **Gold** nur der,
   der abgibt.
+- Die Hauptgeschichte ist bis zum Ende gemeinsam: Gibt einer die Artefakte an einem Götterschrein ab, wechselt das Kapitel
+  für beide, und startet einer den Epilog, sieht der andere dieselben Bilder und das Spielende zur selben Zeit.
 - Ein Hocker, eine Bank, ein Lagerfeuer oder ein anderer Platz hat einen Benutzer: Solange dein Mitspieler ihn benutzt,
   kommst du nicht dran („<Name> benutzt das gerade.“), und NPCs nehmen ihn auch nicht.
 - Gegenstände, Truhen, Leichen und Handel: Was einer nimmt, ist für alle weg. Wem einer die Taschen geleert hat, den kann
@@ -137,6 +139,10 @@ beschriebenen Tests liefen auf einem PC mit zwei Spielkopien; Spielen über das 
   Prügeln ein, verfolgt wird nur der Mörder. Wachen warnen einen Spieler, der neben ihnen die Waffe zieht oder einen
   bewachten Ort betritt, und greifen ihn dann an. Einen Mord durch den Begleiter eines Spielers bemerken sie wie im
   Einzelspiel.
+- Zuschauer kommen zum Kampf jedes Spielers und sehen einen Niederschlag, egal wer ihn ausführt. Gegner und Zuschauer
+  merken sich, wie ein Kampf ausging, und ein NPC, das einem Spieler noch böse ist, hält es nur diesem vor.
+- Blocken wie im Einzelspiel für beide Spieler: Ein Block kostet Ausdauer, und das Schild-Talent zählt. Ein NPC, das
+  pariert, blockt die Schläge beider Spieler gleich.
 - Mithören: Wer höchstens etwa 20 m entfernt steht, hört den Dialog des Mitspielers. Sind die Untertitel des Spiels an,
   erscheint auch der Text, in der eigenen Spielsprache, solange man nicht selbst in einem Dialog ist. Man sieht auch die
   Antworten, die der Mitspieler wählen kann, und dann die gewählte; wer spricht, wählt.
@@ -249,6 +255,10 @@ beschriebenen Tests liefen auf einem PC mit zwei Spielkopien; Spielen über das 
 - Noch nicht geprüft, weil die Bots diese Szenen nicht aufbauen können: der Aufstand in Kap Dun, eine Stadt mitten im
   Spiel befreien (die Bots prüften Ardea zu Beginn), Vertreiben-Quests (ihr Dialog-Kampf) und Plündern. Sie stehen in der
   Spieltest-Checkliste.
+- Die Hauptgeschichte spielten die Bots bis zum Ende mit Innos (mit den Feuerkelchen in Nordmar). Die Enden mit Adanos
+  und Beliar, Xardas' Plan und der fünfte Tempel sind noch nicht gemeinsam durchgespielt, und was nach dem Spielende mit
+  der Verbindung passiert, ist noch nicht bekannt.
+- Vorwärtsschwimmen hat noch kein Mensch ausprobiert (die Bots können nicht vorwärts schwimmen).
 - Nicht getestet: Monster, die auf einen am Boden liegenden Helden weiter einschlagen; Spielen über das echte Internet (getestet wurde auf einem PC mit zwei Spielkopien);
   mehr als zwei Spieler. Alles hier wurde mit Bots getestet. Ein erster kurzer Test mit Menschen (zwei Fenster auf einem
   PC) fand zwei Fehler: Gegner ignorierten den Mitspieler, und Kämpfe waren beim Mitspieler nicht zu sehen. Beide sind

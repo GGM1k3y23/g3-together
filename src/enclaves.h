@@ -21,6 +21,8 @@ void SyncOff(LogFn log);  // QA negative control: no reputation sync on this mac
 void KeepLocalOff(LogFn log);                      // QA negative control: host counters overwrite unreported deeds
 void PauseScan(char const* ms, LogFn log);         // QA: no scan for ms milliseconds
 void AddCrime(char const* argument, LogFn log);    // QA: "<enclave>-<crime>-<n>", a deed counted here
+void SetKnown(char const* argument, LogFn log);  // QA crimeknown <enclave>-<crime>: what the town knows of the player
+void SetSuspect(char const* argument, LogFn log);  // QA crimesuspect <enclave>-<crime>-<n>: deeds of that kind commented on
 bool Together();  // reputation = together (the host's mode): what a witness holds against one player, it holds against all
 // P7 (plan to 90 %; C re/findings/notify-enclave-murder-followup-20261024-c.md): the game counts a murder in NotifyEnclave
 // (mode 0, from the victim's Kill) only when the killer is this machine's hero or one of its party. A lethal claim of

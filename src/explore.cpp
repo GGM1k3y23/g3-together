@@ -3,6 +3,7 @@
 
 #include "ai.h"
 #include "body.h"
+#include "guards.h"
 #include "npcs.h"
 #include "remote.h"
 #include "net.h"
@@ -23,6 +24,30 @@
 
 namespace g3t::explore {
 namespace {
+// QA scriptwatch: count the calls of up to eight scripts (by the script table), with the last call's self and other.
+constexpr int WatchMax = 8;
+struct Watched {
+    std::string name, self, other;
+    gFScript original = nullptr;
+    unsigned calls = 0;
+};
+Watched watched[WatchMax];
+int watchedCount = 0;
+
+template <int I>
+GEInt GE_STDCALL WatchWrap(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid other, GEInt args)
+{
+    Watched& w = watched[I];
+    ++w.calls;
+    Entity s = self ? *static_cast<Entity*>(self) : Entity(spu ? spu->GetSelfEntity() : nullptr);
+    Entity o = other ? *static_cast<Entity*>(other) : Entity(spu ? spu->GetOtherEntity() : nullptr);
+    w.self = s.GetInstance() ? s.GetName().GetText() : "-";
+    w.other = o.GetInstance() ? o.GetName().GetText() : "-";
+    return w.original(spu, self, other, args);
+}
+const gFScript watchWrappers[WatchMax] = {&WatchWrap<0>, &WatchWrap<1>, &WatchWrap<2>, &WatchWrap<3>,
+                                          &WatchWrap<4>, &WatchWrap<5>, &WatchWrap<6>, &WatchWrap<7>};
+
 bool ParseXyz(char const* text, float out[3])
 {
     return sscanf_s(text, "%f_%f_%f", &out[0], &out[1], &out[2]) == 3;
@@ -87,7 +112,7 @@ void Teleport(char const* xyz, LogFn log)
 
 void Attitude(char const* name, LogFn log)
 {
-    char line[200];
+    char line[260];
     eCEntity* hero = gCSession::GetInstance().GetHero();
     Entity npc = Entity::GetEntity(bCString(name));
     if (!hero || !npc.GetInstance()) { log("REFUSED attitude: no hero or no such NPC"); return; }
@@ -95,7 +120,11 @@ void Attitude(char const* name, LogFn log)
     const GEInt toHero = admin.CallScript(bCString("GetAttitude"), npc.GetInstance(), hero, 0);
     eCEntity* puppet = remote::PuppetOf(2);
     const GEInt toPuppet = puppet ? admin.CallScript(bCString("GetAttitude"), npc.GetInstance(), puppet, 0) : -1;
-    sprintf_s(line, "ATTITUDE name=%s hero=%d puppet=%d task=%s", name, toHero, toPuppet, npc.Routine.GetCurrentTask().GetText());
+    // P7 (26.10.): the parts the game asks for its own player, as this machine's hero sees them (the focus name's colour).
+    const GEInt toPlayer = admin.CallScript(bCString("GetAttitudeToPlayer"), npc.GetInstance(), hero, 0);
+    const GEInt focus = admin.CallScript(bCString("GetFocusNameAttitude"), npc.GetInstance(), hero, 0);
+    sprintf_s(line, "ATTITUDE name=%s hero=%d puppet=%d task=%s to_player=%d focus=%d", name, toHero, toPuppet, npc.Routine.GetCurrentTask().GetText(),
+              toPlayer, focus);
     log(line);
 }
 
@@ -284,6 +313,53 @@ void FarKill(char const* name, LogFn log)
     admin.CallScript(bCString("OnCheatKill"), hero, npc.GetInstance(), 0);
     sprintf_s(line, "FARKILL name=%s hp=%d dead=%d task=%s", name, static_cast<int>(npc.DamageReceiver.HitPoints), npc.IsDead() ? 1 : 0,
               npc.Routine.GetCurrentTask().GetText());
+    log(line);
+}
+
+// QA (main story): the chapter lives in the local hero's PlayerMemory (SetChapter, info command 53); GetAttitude reads it
+// through Entity::GetPlayer (chapter 2: the chosen god's enemies, re/out/notify-enclave-predicate-20261024-c.c).
+void Chapter(LogFn log)
+{
+    char line[80];
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    sprintf_s(line, "CHAPTER value=%d", hero ? static_cast<int>(Entity(hero).PlayerMemory.Chapter) : -1);
+    log(line);
+}
+
+// QA (P2, PS_QuickUse): the item on quick slot 1 and the Community Patch's key handler for it (OnPlayerUseQuickSlot, Script_paru
+// 0xd450: FindStackIndexByQuickSlot, ExecuteItem), as pressing the slot's key does.
+void QuickUse(char const* item, LogFn log)
+{
+    char line[200];
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    if (!hero) { log("REFUSED quickuse: no hero"); return; }
+    Entity self(hero);
+    const GEInt stack = self.Inventory.FindStackIndex(Template(item));
+    if (stack < 0) { sprintf_s(line, "REFUSED quickuse %s: not carried", item); log(line); return; }
+    const GEInt before = self.Inventory.GetAmount(stack);
+    const GEBool assigned = self.Inventory.AssignStackToQuickSlot(stack, 1);
+    const GEInt result = GetScriptAdminExt().CallScript(bCString("OnPlayerUseQuickSlot"), hero, nullptr, 1);
+    sprintf_s(line, "QUICKUSE item=%s stack=%d before=%d assigned=%d result=%d task=%s", item, stack, before, assigned ? 1 : 0, result,
+              self.Routine.GetCurrentTask().GetText());
+    log(line);
+}
+
+// QA (P2, PS_Swim): gECharMovementMode of the hero and of each puppet (7 swim, 8 dive, 10 wade).
+void MoveMode(LogFn log)
+{
+    char line[200];
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    int n = sprintf_s(line, "MOVEMODE hero=%d", hero ? static_cast<int>(Entity(hero).CharacterMovement.GetMovementMode()) : -1);
+    for (int id = 1; id <= 4 && n > 0; ++id)
+        if (eCEntity* puppet = remote::PuppetOf(id))
+            n += sprintf_s(line + n, sizeof(line) - n, " puppet%d=%d", id, static_cast<int>(Entity(puppet).CharacterMovement.GetMovementMode()));
+    log(line);
+}
+
+void Sector(char const* name, LogFn log)
+{
+    char line[160];
+    sprintf_s(line, "SECTOR name=%s on=%d", name, world.GetSectorStatus(bCString(name)) ? 1 : 0);
     log(line);
 }
 
@@ -719,7 +795,7 @@ void InfoDescribe(char const* name, LogFn log)
 
 namespace g3t::explore {
 // QA, stage E4: "Attacker_Target": an NPC attacks another NPC (AssessTarget, reason Enemy). The target's name is the
-// part after the last underscore.
+// part after the last underscore; "hero": this machine's hero (upsetdiag 26.10., the single-player reference).
 void NpcFight(char const* argument, LogFn log)
 {
     char line[300];
@@ -727,7 +803,8 @@ void NpcFight(char const* argument, LogFn log)
     const size_t cut = arg.rfind('_');
     if (cut == std::string::npos) { log("REFUSED npcfight: Attacker_Target"); return; }
     Entity attacker = Entity::GetEntity(bCString(arg.substr(0, cut).c_str()));
-    Entity target = Entity::GetEntity(bCString(arg.substr(cut + 1).c_str()));
+    Entity target = arg.substr(cut + 1) == "hero" ? Entity(gCSession::GetInstance().GetHero())
+                                                  : Entity::GetEntity(bCString(arg.substr(cut + 1).c_str()));
     if (!target.GetInstance()) {  // the target by GUID (some names do not resolve, e.g. QP_Fisher in stage P3a)
         unsigned long d1 = 0;
         unsigned d2 = 0, d3 = 0, b[8] = {};
@@ -742,6 +819,20 @@ void NpcFight(char const* argument, LogFn log)
     const GEInt result = GetScriptAdminExt().CallScript(bCString("AssessTarget"), attacker.GetInstance(), target.GetInstance(), gEAttackReason_Enemy);
     sprintf_s(line, "NPCFIGHT attacker=%s target=%s result=%d task=%s", arg.substr(0, cut).c_str(), arg.substr(cut + 1).c_str(), result,
               attacker.Routine.GetCurrentTask().GetText());
+    log(line);
+}
+
+// The game's script for an NPC that gives up a fight (CancelAttack 0x1a4d0: LastFightAgainstPlayer Cancel and the time for
+// its player, back to its routine), against its current target: where the chase would end it (upsetdiag 26.10.).
+void CancelAttack(char const* name, LogFn log)
+{
+    char line[300];
+    Entity npc = Entity::GetEntity(bCString(name));
+    if (!npc.GetInstance() || !npc.GetInstance()->GetPropertySet(eEPropertySetType_NPC)) { log("REFUSED cancelattack: no such NPC"); return; }
+    eCEntity* target = npc.NPC.GetCurrentTarget().GetInstance();
+    const GEInt result = GetScriptAdminExt().CallScript(bCString("CancelAttack"), npc.GetInstance(), target, 0);
+    sprintf_s(line, "CANCELATTACK name=%s target=%s result=%d task=%s last=%d", name, target ? Entity(target).GetName().GetText() : "-", result,
+              npc.Routine.GetCurrentTask().GetText(), static_cast<int>(npc.NPC.LastFightAgainstPlayer));
     log(line);
 }
 
@@ -871,4 +962,67 @@ void NearNpcs(LogFn log)
               body::scriptAnis, body::scriptAniFaults, body::loopRestarts);
     log(line);
 }
+
+void ScriptWatch(char const* name, LogFn log)
+{
+    char line[300];
+    if (!name || !*name) {
+        for (int i = 0; i < watchedCount; ++i) {
+            sprintf_s(line, "SCRIPTWATCH name=%s calls=%u self=%s other=%s", watched[i].name.c_str(), watched[i].calls,
+                      watched[i].self.c_str(), watched[i].other.c_str());
+            log(line);
+        }
+        log("SCRIPTWATCH end");
+        return;
+    }
+    for (int i = 0; i < watchedCount; ++i)
+        if (watched[i].name == name) { log("SCRIPTWATCH refused already watched"); return; }
+    gSScript* script = nullptr;
+    if (watchedCount >= WatchMax || !GetScriptAdminExt().GetScripts().GetAt(bCString(name), script) || !script || !script->m_funcScript) {
+        sprintf_s(line, "SCRIPTWATCH refused name=%s (no such script or %d watched)", name, watchedCount);
+        log(line);
+        return;
+    }
+    Watched& w = watched[watchedCount];
+    w.name = name;
+    w.original = script->m_funcScript;
+    script->m_funcScript = watchWrappers[watchedCount++];
+    sprintf_s(line, "SCRIPTWATCH name=%s watched=1", name);
+    log(line);
+}
+
+// QA (P7, GetZoneAttitudeToPlayer): an NPC's zone attitude and attitude to the player (the scripts read GetPlayer's zone,
+// security level and fame) for the hero, and for puppet 2 asked plainly and with the puppet as the game's player.
+void ZoneAttitude(char const* name, LogFn log)
+{
+    char line[500];
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    Entity npc = Entity::GetEntity(bCString(name));
+    if (!hero || !npc.GetInstance()) { log("REFUSED zoneatt: no hero or no such NPC"); return; }
+    auto& admin = GetScriptAdminExt();
+    eCEntity* puppet = remote::PuppetOf(2);
+    auto zoneOf = [](eCEntity* e, char* out, size_t size) {
+        Entity zone = e ? Entity(e).GetZone() : Entity();
+        sprintf_s(out, size, "%s/%d", zone.GetInstance() ? zone.GetName().GetText() : "-",
+                  zone.GetInstance() ? static_cast<int>(zone.GetAIZoneSecurityLevel()) : -1);
+    };
+    char heroZone[96], puppetZone[96];
+    zoneOf(hero, heroZone, sizeof(heroZone));
+    zoneOf(puppet, puppetZone, sizeof(puppetZone));
+    const GEInt heroZoneAtt = admin.CallScript(bCString("GetZoneAttitudeToPlayer"), npc.GetInstance(), hero, 0);
+    const GEInt heroAtt = admin.CallScript(bCString("GetAttitudeToPlayer"), npc.GetInstance(), hero, 0);
+    GEInt plainZoneAtt = -9, actingZoneAtt = -9, actingAtt = -9, puppetAtt = -9;
+    if (puppet) {
+        plainZoneAtt = admin.CallScript(bCString("GetZoneAttitudeToPlayer"), npc.GetInstance(), puppet, 0);
+        puppetAtt = admin.CallScript(bCString("GetAttitude"), npc.GetInstance(), puppet, 0);
+        guards::Acting acting(puppet);
+        actingZoneAtt = admin.CallScript(bCString("GetZoneAttitudeToPlayer"), npc.GetInstance(), puppet, 0);
+        actingAtt = admin.CallScript(bCString("GetAttitudeToPlayer"), npc.GetInstance(), puppet, 0);
+    }
+    sprintf_s(line, "ZONEATT name=%s hero_zone=%s hero_zoneatt=%d hero_att=%d puppet_zone=%s puppet_zoneatt=%d puppet_zoneatt_acting=%d"
+                    " puppet_att_acting=%d puppet_attitude=%d", name, heroZone, heroZoneAtt, heroAtt, puppetZone, plainZoneAtt, actingZoneAtt,
+              actingAtt, puppetAtt);
+    log(line);
+}
+
 }

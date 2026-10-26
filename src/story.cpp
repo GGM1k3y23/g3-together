@@ -112,6 +112,11 @@ bool InfoApply(char const* name, uint8_t given)
 // PlayerMemory.PlayerKnows); other dialogs check them. Shared like quests, so that every hero knows what one
 // learned (the client's Diego dialog set Diego_WarIsLost on the client's hero only; stage H exploration).
 std::unordered_map<std::string, uint8_t> everSeen;  // events that were set at some point: 0 once cleared
+// The chapter lives beside them in the hero's PlayerMemory (SetChapter, info command 53: 2 once a god is chosen) and decides
+// attitudes through Entity::GetPlayer (re/out/notify-enclave-predicate-20261024-c.c): shared as one more entry of this kind.
+// When the client chose Innos, the host's hero stayed in chapter 1 (storyinnosdiag, 25.10.).
+constexpr char ChapterEntry[] = "G3T_Chapter";
+bool chapterSharing = true;  // QA negative control: chaptersyncoff
 bool EventsReady() { return Running() && gCSession::GetInstance().GetHero(); }
 
 void EventSnapshot(States& states)
@@ -124,11 +129,18 @@ void EventSnapshot(States& states)
         for (int i = 0; i < knows.GetCount(); ++i) everSeen[knows.AccessAt(i).GetText()] = 1;
     }
     for (auto const& entry : everSeen) states[entry.first] = entry.second;
+    if (chapterSharing) states[ChapterEntry] = static_cast<uint8_t>(Entity(hero).PlayerMemory.Chapter);
 }
 
 bool EventApply(char const* name, uint8_t known)
 {
     Entity hero(gCSession::GetInstance().GetHero());
+    if (!std::strcmp(name, ChapterEntry)) {
+        if (!chapterSharing) return true;
+        if (known && static_cast<int>(hero.PlayerMemory.Chapter) != known) Logf("story: chapter %d -> %d", static_cast<int>(hero.PlayerMemory.Chapter), known);
+        if (known) hero.PlayerMemory.Chapter = known;
+        return true;
+    }
     const bCString event(name);
     if (known) hero.PlayerMemory.SetGameEvent(event);
     else hero.PlayerMemory.ClearGameEvent(event);
@@ -285,6 +297,12 @@ void Report(LogFn log)
         log(line);
     }
     log("STORY end");
+}
+
+void ChapterOff(LogFn log)
+{
+    chapterSharing = false;
+    log("CHAPTERSYNCOFF ok=1");
 }
 
 void Disable(LogFn log)

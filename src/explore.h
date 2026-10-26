@@ -16,6 +16,12 @@ void FarNpcs(LogFn log);                    // FARNPC lines: NPCs anywhere, foun
 void Find(char const* name, LogFn log);     // FIND line: one named entity wherever it is
 void FarKill(char const* name, LogFn log);
 void FarHeal(char const* name, LogFn log);  // QA (stageEscort): that NPC's hit points back
+void Chapter(LogFn log);                    // QA (main story): CHAPTER line, the local hero's chapter (PlayerMemory)
+void Sector(char const* name, LogFn log);   // QA (main story): SECTOR line, whether that world sector is on
+void QuickUse(char const* item, LogFn log); // QA (P2): QUICKUSE line, that item on quick slot 1 used as its key does (OnPlayerUseQuickSlot)
+void ScriptWatch(char const* name, LogFn log);  // QA: count calls of a script (name) or report them all (empty)
+void ZoneAttitude(char const* name, LogFn log);  // QA (P7): ZONEATT line, zone attitude and attitude to the player for hero and puppet 2
+void MoveMode(LogFn log);                   // QA (P2, PS_Swim): MOVEMODE line, the movement mode of the hero and of the puppets
 void NpcRoutine(char const* name, LogFn log);  // QA (followdiag): FullStop and ContinueRoutine, as at a dialog's end    // kill a named NPC wherever it is (hit points 0, OnCheatKill)
 void FarMove(char const* argument, LogFn log);  // "X_Y_Z_<name>": move a named entity wherever it is
 void TeleportTo(char const* name, LogFn log);  // the game's own teleport to a named entity
@@ -25,6 +31,7 @@ void InfoScan(char const* command, LogFn log);  // QA: dialogs whose script uses
 void QuestCounters(char const* name, LogFn log);  // QA: kill/defeat quests with target counters
 void NearNpcs(LogFn log);  // QA: NPCs near the hero with target and visible motion
 void NpcFight(char const* argument, LogFn log);  // QA: "Attacker_Target": an NPC attacks another NPC
+void CancelAttack(char const* name, LogFn log);  // QA: that NPC gives up its fight (the game's CancelAttack against its target)
 void DuelHero(char const* name, LogFn log);  // QA: that NPC attacks the local hero for a duel (a knock-out, not a death)
 void Aggro(char const* argument, LogFn log);  // QA: "Name_Reason": an NPC attacks player 2's puppet (AssessTarget)
 void AssessHero(char const* argument, LogFn log);  // QA: "Name_Reason": an NPC attacks the local hero (AssessTarget)

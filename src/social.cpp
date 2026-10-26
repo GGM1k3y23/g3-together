@@ -95,6 +95,36 @@ void Owned(char const* radius, LogFn log)
     log(line);
 }
 
+// QA (P7, using other people's things): interact objects within `radius` cm of the hero that stand in an indoor owner zone,
+// as AssessUseInteractObject's helper asks (SG 0x30840 via 0xaf20), with their use function, type and user.
+void OwnedObjects(char const* radius, LogFn log)
+{
+    const float within = radius && *radius ? static_cast<float>(std::atof(radius)) : 3000.0f;
+    char line[400], guid[48];
+    const bTObjArray<Entity> all = Entity::GetEntities();
+    int found = 0;
+    for (int i = 0; i < all.GetCount(); ++i) {
+        Entity entity = all.GetAt(i);
+        eCEntity* instance = entity.GetInstance();
+        if (!instance || !instance->GetPropertySet(eEPropertySetType_Interaction) || instance->GetPropertySet(eEPropertySetType_NPC)) continue;
+        const float distance = DistanceToHero(instance);
+        if (distance > within) continue;
+        Entity zone = entity.GetIndoorOwnerZone(100.0f);
+        if (!zone.GetInstance()) continue;
+        Entity zoneOwner = zone.GetAIZoneOwner();
+        FormatGuid(instance, guid, sizeof(guid));
+        const bCVector& at = instance->GetWorldPosition();
+        sprintf_s(line, "OWNEDOBJ guid=%s name=%s distance_cm=%.0f pos=%.0f_%.0f_%.0f usetype=%d usefunc=%s user=%s zone=%s zone_owner=%s security=%d", guid,
+                  entity.GetName().GetText(), distance, at.GetX(), at.GetY(), at.GetZ(), static_cast<int>(entity.Interaction.UseType),
+                  entity.Interaction.UseFunc.IsEmpty() ? "-" : entity.Interaction.UseFunc.GetText(), entity.Interaction.GetUser().GetInstance() ? entity.Interaction.GetUser().GetName().GetText() : "-",
+                  zone.GetName().GetText(), zoneOwner.GetInstance() ? zoneOwner.GetName().GetText() : "-", static_cast<int>(zone.GetAIZoneSecurityLevel()));
+        log(line);
+        ++found;
+    }
+    sprintf_s(line, "OWNEDOBJ end found=%d", found);
+    log(line);
+}
+
 void Crime(char const* name, LogFn log)
 {
     char line[600];

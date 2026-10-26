@@ -9,9 +9,9 @@ Bundles [ENet](https://github.com/lsalzman/enet) 1.3.18 (MIT, thirdparty/enet/LI
 exactly the same version. Unpack it and run `Setup.cmd` (German: `Einrichten.cmd`): it finds Gothic 3, checks the patches,
 copies the mod and writes `g3together.ini`.
 
-> **Beta.** Tested with bots that drive two real game clients on one PC (140 automated runs before this version) and with
-> one evening of human play. Nobody has finished the story in co-op yet and play over the internet is barely tested.
-> Expect bugs and back up your saves.
+> **Beta.** Tested with bots that drive two real game clients on one PC (165 automated runs before this version) and with
+> one evening of human play. Bots played the main story to Innos' ending, but no two people have finished it in co-op yet,
+> and play over the internet is barely tested. Expect bugs and back up your saves.
 
 ## What works
 
@@ -22,9 +22,14 @@ copies the mod and writes `g3together.ini`.
   a murder counts for their town whichever PC simulates them.
 - Quests and dialogs are shared; a player standing nearby hears the other player's conversation and sees the answers
   they can pick. An NPC talks to one player at a time, and NPCs with news walk up to either player.
+- The main story is shared to the end: the chapter changes for both when one player hands over the artefacts, and both
+  see the epilogue together.
 - Guides and escorts go with the player who took the quest; waiting until morning and animals coming back work the same
   for both.
-- Witnesses and guards react to either player's fights, murders, drawn weapons and trespassing as in single-player.
+- Witnesses and guards react to either player's fights, knock-outs, murders, drawn weapons and trespassing as in
+  single-player, and NPCs remember a fight with each player separately.
+- Blocking works as in single-player for both players: a block costs stamina, the shield talent counts, and NPCs parry
+  either player's blows.
 - Looting corpses and chests, Quick Loot and trading with NPCs: both players see the same contents, nothing is duplicated.
   A pocket one player picked is picked for both.
 - Trading with your partner: talk to their character and choose "Show me your wares!". The game's own trade window opens
@@ -49,6 +54,8 @@ copies the mod and writes `g3together.ini`.
 - Ice and fire spells that put out burning or freezing act on the other player's NPCs only on your own PC.
 - Not checked yet, because the bots cannot set them up: the uprising in Cape Dun, freeing a town in the middle of the
   game, quests to drive someone away and plundering.
+- The Adanos and Beliar endings, Xardas' plan and the fifth temple have not been played through together yet; swimming
+  forward has not been tried by a person.
 - Only two players have been tested; more may work but are untested.
 
 Found a bug? Note the time and what happened, then send both players' logs (`tools/collect_logs.py` in the package).

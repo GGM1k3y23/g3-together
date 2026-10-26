@@ -2,6 +2,7 @@
 #include "guards.h"
 
 #include "ai.h"
+#include "fightmem.h"
 #include "log.h"
 #include "net.h"
 #include "npcs.h"
@@ -86,15 +87,26 @@ GEInt GE_STDCALL Perceive(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid o
     if (!npc || !npc->GetPropertySet(eEPropertySetType_NPC) || remote::IsPuppet(npc) || npcs::IsMirrored(npc)) return result;
     Entity guard(npc);
     if (guard.IsDead() || guard.IsDown()) return result;
-    // Not again while it already reacts to a player (the reaction states look around too: that restarted them every
-    // frame), at most twice a second per NPC, and not for 8 s after it reacted (an observing NPC let go of the puppet
-    // within a second and started over: sneakhomediag 25.10.).
-    if (remote::IsPuppet(guard.NPC.GetCurrentTarget().GetInstance())) return result;
+    // At most twice a second per NPC, not for 8 s after it reacted (an observing NPC let go of the puppet within a second
+    // and started over: sneakhomediag 25.10.), and the rules not while it already reacts to a player (the reaction states
+    // look around too: that restarted them every frame).
     const DWORD now = GetTickCount();
     if (lastCheck.size() > 4096) lastCheck.clear();
     DWORD& last = lastCheck[npc];
     if (static_cast<int32_t>(last - now) > 0 || now - last < 500) return result;
     last = now;
+    // A fight it gave up against another player first, as the game asks IsUpset of its own player before the rules
+    // (fightmem.cpp); not while it fights.
+    if (static_cast<gEAIMode>(guard.Routine.AIMode) != gEAIMode_Combat) {
+        for (int id = 1; id <= net::MaxPlayers; ++id) {
+            eCEntity* puppet = remote::PuppetOf(id);
+            if (!puppet || Distance(npc, puppet) > 3000.0f || !fightmem::Upset(npc, puppet)) continue;
+            ++reactions;
+            remote::NoteContact(npc, puppet);
+            return 1;
+        }
+    }
+    if (remote::IsPuppet(guard.NPC.GetCurrentTarget().GetInstance())) return result;
     for (int id = 1; id <= net::MaxPlayers; ++id) {
         eCEntity* puppet = remote::PuppetOf(id);
         if (!puppet || Distance(npc, puppet) > 3000.0f) continue;  // the game's own checks decide nearer ones
@@ -121,6 +133,61 @@ GEInt GE_STDCALL Perceive(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid o
                  guard.NPC.GetCurrentTarget().GetInstance() ? guard.NPC.GetCurrentTarget().GetName().GetText() : "-",
                  static_cast<int>(Entity(puppet).Routine.AniState));
             return reacted;
+        }
+    }
+    return result;
+}
+
+// The intent to kill (HasAttackReasonToKill, 0x103b0) holds for gate guards and intruders only against Entity::GetPlayer
+// in its zone (re/out/p7open-b.c): Muntasir's guards never meant to kill the intruding client (intruderkodiag 25.10.: 0 for
+// the client's puppet, 1 for the host's hero; after a knock-out they let it be, the host they fought on). Asked about a
+// puppet, the game's player is that puppet meanwhile.
+gFScript originalKill = nullptr;
+bool fightsOn = true;  // QA negative control: fightsoff
+unsigned killAsked = 0, killYes = 0;
+
+// A puppet's zone as the game's checks read it: Entity::GetZone answers an NPC's navigation's current zone (Script.dll
+// 0x19410, re/out/zone-b.c), which the game's own movement keeps up. A puppet is placed, not walked: it had none at times,
+// and asked then, the kill intent said no (stageIntruderFight 25.10.: every "no" with the puppet in no zone, every "yes" in
+// one). Before such a question and every half second, a puppet without a zone gets the zone at its position
+// (gCNavigationAdmin::GetZone). QA zonefixoff: not.
+bool zoneFix = true;
+unsigned zonesSet = 0;
+
+void KeepZone(eCEntity* puppet)
+{
+    static gCNavigationAdmin* admin = nullptr;
+    if (!zoneFix || !puppet) return;
+    if (!admin) admin = static_cast<gCNavigationAdmin*>(eCModuleAdmin::GetInstance().FindModule(bCString("gCNavigationAdmin")));
+    auto* navigation = static_cast<gCNavigation_PS*>(puppet->GetPropertySet(eEPropertySetType_Navigation));
+    // Only where it has none: the zone at the position can be the town around a guarded place (Nav_Zone with security 0
+    // where the game's own tracking had the guarded one, stageIntruderFight 26.10.).
+    if (!admin || !navigation || navigation->GetCurrentZoneEntityProxy().GetEntity()) return;
+    eCEntityProxy here;
+    GEBool path = GEFalse;
+    if (admin->GetZone(*puppet, here, path, GEFalse) != bEResult_Ok || !here.GetEntity()) return;
+    navigation->AccessCurrentZoneEntityProxy() = here;
+    ++zonesSet;
+}
+
+GEInt GE_STDCALL KillIntent(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid other, GEInt args)
+{
+    eCEntity* asked = other ? static_cast<Entity*>(other)->GetInstance() : (spu ? spu->GetOtherEntity() : nullptr);
+    eCEntity* puppet = fightsOn && enabled && remote::IsPuppet(asked) ? asked : nullptr;
+    KeepZone(puppet);
+    Acting acting(puppet);
+    const GEInt result = originalKill(spu, self, other, args);
+    if (puppet) {
+        ++killAsked;
+        if (result) ++killYes;
+        eCEntity* judge = self ? static_cast<Entity*>(self)->GetInstance() : (spu ? spu->GetSelfEntity() : nullptr);
+        if (judge && judge->GetPropertySet(eEPropertySetType_NPC) && killAsked <= 40) {
+            Entity npc(judge);
+            Entity zone = Entity(puppet).GetZone();
+            Logf("guards: %s means to kill a puppet: %d (attack reason %d, its target %s, puppet in %s, security %d)", npc.GetName().GetText(),
+                 static_cast<int>(result), static_cast<int>(npc.NPC.AttackReason),
+                 remote::IsPuppet(npc.NPC.GetCurrentTarget().GetInstance()) ? "the puppet" : "another",
+                 zone.GetInstance() ? zone.GetName().GetText() : "-", zone.GetInstance() ? static_cast<int>(zone.GetAIZoneSecurityLevel()) : -1);
         }
     }
     return result;
@@ -169,6 +236,8 @@ Acting::Acting(eCEntity* puppet) : before(actor)
 
 Acting::~Acting() { actor = before; }
 
+eCEntity* CurrentActor() { return actor; }
+
 eCEntity* StateActor(eCEntity* self, char const* state)
 {
     if (!installed || !enabled || !self || !state || !FollowsPlayer(state) || !self->GetPropertySet(eEPropertySetType_NPC)) return nullptr;
@@ -185,6 +254,7 @@ static void WatchZones()
     lastZoneLook = now;
     for (int id = 1; id <= net::MaxPlayers; ++id) {
         eCEntity* puppet = remote::PuppetOf(id);
+        KeepZone(puppet);
         eCEntity* zone = puppet ? Entity(puppet).GetZone().GetInstance() : nullptr;
         if (zone == zoneOf[id]) continue;
         zoneOf[id] = zone;
@@ -221,6 +291,10 @@ void Tick()
     originalIsPlayer = reinterpret_cast<IsPlayerFn>(ai::PatchImport(game, "Script.dll", "?IsPlayer@Entity@@QBE_NXZ", reinterpret_cast<void*>(&ActingIsPlayer)));
     if (originalGetPlayer && originalIsPlayer) {
         originalPerceive = reinterpret_cast<gFScript>(ai::JumpTo(code, reinterpret_cast<void*>(&Perceive)));
+        // This build: the same prologue as AssessActivePerception's first six bytes.
+        static const unsigned char prologue[] = {0x55, 0x8b, 0xec, 0x83, 0xe4, 0xf8};
+        auto* kill = reinterpret_cast<unsigned char*>(game) + 0x103b0;
+        if (!std::memcmp(kill, prologue, sizeof(prologue))) originalKill = reinterpret_cast<gFScript>(ai::JumpTo(kill, reinterpret_cast<void*>(&KillIntent)));
         GE_MAP_FOR_EACH (name, callback, GetScriptAdminExt().GetScriptAICallbacks())
         {
             if (!callback || !callback->m_funcScriptAICallback) continue;
@@ -234,16 +308,19 @@ void Tick()
         }
     }
     installed = true;
-    Logf("guards: GetPlayer %s, IsPlayer %s, AssessActivePerception %s, OnReactToZone %s, OnReactToWeapon %s",
+    Logf("guards: GetPlayer %s, IsPlayer %s, AssessActivePerception %s, OnReactToZone %s, OnReactToWeapon %s, "
+         "HasAttackReasonToKill %s",
          originalGetPlayer ? "redirectable" : "not found", originalIsPlayer ? "redirectable" : "not found",
-         originalPerceive ? "wrapped" : "not wrapped", originalOnZone ? "wrapped" : "not found", originalOnWeapon ? "wrapped" : "not found");
+         originalPerceive ? "wrapped" : "not wrapped", originalOnZone ? "wrapped" : "not found", originalOnWeapon ? "wrapped" : "not found",
+         originalKill ? "wrapped" : "not wrapped");
 }
 
 void Report(LogFn log)
 {
-    char line[240];
-    sprintf_s(line, "GUARDS installed=%d enabled=%d perceive=%d checks=%u reactions=%u state_runs=%u zones_entered=%u", installed ? 1 : 0,
-              enabled ? 1 : 0, originalPerceive ? 1 : 0, checks, reactions, stateRuns, zonesEntered);
+    char line[320];
+    sprintf_s(line, "GUARDS installed=%d enabled=%d perceive=%d checks=%u reactions=%u state_runs=%u zones_entered=%u fights=%d kill_asked=%u kill_yes=%u zones_set=%u",
+              installed ? 1 : 0, enabled ? 1 : 0, originalPerceive ? 1 : 0, checks, reactions, stateRuns, zonesEntered, fightsOn ? 1 : 0,
+              killAsked, killYes, zonesSet);
     log(line);
 }
 
@@ -251,6 +328,18 @@ void Off(LogFn log)
 {
     enabled = false;
     log("TRESPASSOFF ok=1");
+}
+
+void FightsOff(LogFn log)
+{
+    fightsOn = false;
+    log("FIGHTSOFF ok=1");
+}
+
+void ZoneFixOff(LogFn log)
+{
+    zoneFix = false;
+    log("ZONEFIXOFF ok=1");
 }
 
 void SneakCheckOn(LogFn log)

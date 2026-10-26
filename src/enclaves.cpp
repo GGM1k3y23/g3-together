@@ -691,4 +691,47 @@ void AddCrime(char const* argument, LogFn log)
     sprintf_s(line, "CRIMEADD enclave=%s crime=%d now=%d", name, index, c.crime[index]);
     log(line);
 }
+
+// QA (guard news, 26.10.): how many deeds of a kind the town's guards have commented on (SuspectComment; crimeadd left it
+// at the new count, crimenewsdiag 26.10.). A guard has news while the count is above it (HasGuardNews, re/out/news2-b.c).
+void SetSuspect(char const* argument, LogFn log)
+{
+    char name[64] = {};
+    int index = -1, n = 0;
+    if (sscanf_s(argument, "%63[^-]-%d-%d", name, static_cast<unsigned>(sizeof(name)), &index, &n) != 3 || index < 0 || index >= Crimes) {
+        log("REFUSED crimesuspect: <enclave>-<crime 0..4>-<n>");
+        return;
+    }
+    Entity e = PSEnclave::GetEnclave(bCString(name));
+    gCEnclave_PS* enclave = Native(e);
+    if (!enclave) { log("REFUSED crimesuspect: no such enclave"); return; }
+    Counters c = Read(enclave);
+    c.suspect[index] = n;
+    Write(e, c);
+    const Counters now = Read(enclave);
+    char line[120];
+    sprintf_s(line, "CRIMESUSPECT enclave=%s crime=%d suspect=%d count=%d", name, index, now.suspect[index], now.crime[index]);
+    log(line);
+}
+
+// QA (guard news, 26.10.): what a town knows of the player ("<enclave>-<gEPlayerCrime>", 3 theft, 4 murder), as
+// MemorizePlayerCrime leaves it; shared like any change of the counters.
+void SetKnown(char const* argument, LogFn log)
+{
+    char name[64] = {};
+    int value = -1;
+    if (sscanf_s(argument, "%63[^-]-%d", name, static_cast<unsigned>(sizeof(name)), &value) != 2 || value < 0 || value >= Crimes) {
+        log("REFUSED crimeknown: <enclave>-<crime 0..4>");
+        return;
+    }
+    Entity e = PSEnclave::GetEnclave(bCString(name));
+    gCEnclave_PS* enclave = Native(e);
+    if (!enclave) { log("REFUSED crimeknown: no such enclave"); return; }
+    Counters c = Read(enclave);
+    c.known = value;
+    Write(e, c);
+    char line[120];
+    sprintf_s(line, "CRIMEKNOWN enclave=%s known=%d", name, value);
+    log(line);
+}
 }

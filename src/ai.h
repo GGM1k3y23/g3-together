@@ -15,6 +15,7 @@ unsigned UnknownCount(); // wrapper calls that named no wrapped state (must stay
 void Describe(char const* name, void (*log)(char const*));
 void ListNames(char const* text, void (*log)(char const*));  // QA: registered names containing text
 void DumpNames(char const* path, void (*log)(char const*));  // QA: every registered name, its module+RVA and source file, as TSV
+void Count(char const* names, void (*log)(char const*));     // QA aicount <prefix>: calls of AI states/functions by name
 void FindByRva(char const* rvaHex, void (*log)(char const*)); // QA: registered names whose function is Script_Game.dll+rva
 void ContinueRoutineReport(void (*log)(char const*));  // QA: CONTINUEROUTINE line (puppets kept out of their routine)
 void ContinueRoutineOn(void (*log)(char const*));      // QA negative control: ContinueRoutine runs for puppets again

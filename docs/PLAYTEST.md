@@ -114,6 +114,18 @@ and saving on the host. Test separate regions and rejoining in a follow-up sessi
 | Free a town | A town other than Ardea (Montera, for example) freed in the middle of the game: the town is free and the quest done on both PCs. |
 | Drive away, plunder | A quest to drive someone away (its dialog fight) and a plundering quest: both players see the result, the quest counts for both. |
 
+### Optional: the features of 0.5.1
+
+| Stage | Steps and observations |
+|---|---|
+| Blocking | The joining player blocks a few blows of an enemy with a weapon or a shield: the block costs stamina (more without the shield talent), as in single-player. |
+| NPC parry | The joining player hits an NPC of the host's region that parries (a guard in a duel, for example): parried blows do less damage and cost the NPC stamina, as when the host hits it. |
+| Onlookers | The joining player knocks a citizen out in a town while others watch: the onlookers come over and react as when the host does it. |
+| Grudge | The joining player starts a fight with an NPC and walks away: when the joining player comes back, the NPC is still angry at that player only, not at the host. |
+| Chapter | One player hands over the artefacts at a god's shrine: the chapter changes for both (other NPCs talk to both players as in the new chapter). |
+| The end | One player starts the epilogue: the other sees the same pictures at the same time, up to the game's end. Note what happens to the connection afterwards. |
+| Swimming | The joining player swims forward in the sea: the host sees that player swim, not glide. |
+
 ## Recording a bug
 
 Each player records a separate entry for each problem:

@@ -10,6 +10,7 @@ using LogFn = void (*)(char const*);
 // OWNED lines: world items within radius cm (default 3000) of the hero that lie in an indoor owner zone, with the zone's
 // owner and security level (what AddEnclaveTheftCount and IsBotheredByPlayerTheftOf ask), then OWNED end.
 void Owned(char const* radius, LogFn log);
+void OwnedObjects(char const* radius, LogFn log);  // QA ownedobj: OWNEDOBJ lines, interact objects in an indoor owner zone
 // CRIME line: what the named NPC remembers (LastPlayerCrime, AttackReason, LastPlayerAR, target, task) and its enclave's
 // counters (CrimeCount, SuspectComment per crime 0..4, KnownPlayerCrime, PlayerFame).
 void Crime(char const* name, LogFn log);

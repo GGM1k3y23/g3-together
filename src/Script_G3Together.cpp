@@ -15,6 +15,7 @@
 #include "clock.h"
 #include "guide.h"
 #include "arena.h"
+#include "ending.h"
 #include "infocmd.h"
 #include "partner.h"
 #include "items.h"
@@ -28,6 +29,7 @@
 #include "respawn.h"
 #include "occupancy.h"
 #include "address.h"
+#include "fightmem.h"
 #include "dialogaudio.h"
 #include "config.h"
 #include "trace.h"
@@ -131,6 +133,7 @@ class Module : public eCEngineComponentBase
         g3t::infocmd::OnWorldChange();
         g3t::guide::OnWorldChange();
         g3t::arena::OnWorldChange();
+        g3t::ending::OnWorldChange();
         g3t::doors::OnWorldChange();
         g3t::enclaves::OnWorldChange();
         g3t::occupancy::OnWorldChange();
@@ -193,6 +196,7 @@ class Module : public eCEngineComponentBase
         g3t::infocmd::Tick();
         g3t::guide::Tick();
         g3t::arena::Tick();
+        g3t::ending::Tick();
         g3t::containers::Tick();
         g3t::trade::Tick();
         g3t::mapmarks::Tick();
@@ -203,6 +207,7 @@ class Module : public eCEngineComponentBase
         g3t::respawn::Tick();
         g3t::occupancy::Tick();
         g3t::address::Tick();
+        g3t::fightmem::Tick();
         g3t::dialogaudio::Tick();
         g3t::offer::Tick();
         g3t::qa::Tick();

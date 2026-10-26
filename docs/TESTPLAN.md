@@ -100,6 +100,18 @@ Wenn nur 60 Minuten verfügbar sind: zuerst Beitritt, Kampf, Aufhelfen, Gefolgsm
 | Stadt befreien | Eine andere Stadt als Ardea (zum Beispiel Montera) mitten im Spiel befreien: Die Stadt ist bei beiden frei, die Quest bei beiden erledigt. |
 | Vertreiben, Plündern | Eine Vertreiben-Quest (mit ihrem Dialog-Kampf) und eine Plündern-Quest: Beide sehen das Ergebnis, die Quest zählt für beide. |
 
+### Optional: die Neuheiten von 0.5.1
+
+| Abschnitt | Schritte und Beobachtungen |
+|---|---|
+| Blocken | Der Mitspieler blockt ein paar Schläge eines Gegners mit Waffe oder Schild: Der Block kostet Ausdauer (ohne Schild-Talent mehr), wie im Einzelspiel. |
+| Parade eines NPC | Der Mitspieler schlägt auf ein NPC aus dem Gebiet des Hosts, das pariert (etwa eine Wache im Duell): Parierte Schläge richten weniger Schaden an und kosten das NPC Ausdauer, wie bei Schlägen des Hosts. |
+| Zuschauer | Der Mitspieler schlägt in einer Stadt einen Bürger nieder, während andere zusehen: Die Zuschauer kommen und reagieren wie beim Host. |
+| Groll | Der Mitspieler fängt mit einem NPC Streit an und geht weg: Kommt er zurück, ist das NPC nur ihm noch böse, nicht dem Host. |
+| Kapitel | Einer gibt die Artefakte an einem Götterschrein ab: Das Kapitel wechselt für beide (andere NPCs sprechen mit beiden wie im neuen Kapitel). |
+| Das Ende | Einer startet den Epilog: Der andere sieht dieselben Bilder zur selben Zeit, bis zum Spielende. Notieren, was danach mit der Verbindung passiert. |
+| Schwimmen | Der Mitspieler schwimmt im Meer vorwärts: Der Host sieht ihn schwimmen, nicht gleiten. |
+
 ## Bei einem Fehler
 
 Jeder Spieler legt für jeden Fehler einen eigenen Eintrag an:

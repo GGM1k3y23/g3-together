@@ -26,12 +26,17 @@ private:
     eCEntity* before;
 };
 
+// The puppet that stands for the game's player right now, none for the local hero (QA, p7probe.cpp).
+eCEntity* CurrentActor();
+
 // ai.cpp, before an AI state of `self` runs: the puppet it reacts to when that state follows the player, else none.
 eCEntity* StateActor(eCEntity* self, char const* state);
 
 using LogFn = void (*)(char const*);
 void Report(LogFn log);  // QA: GUARDS line
 void Off(LogFn log);     // QA negative control (trespassoff): no checks against puppets
+void ZoneFixOff(LogFn log);    // QA negative control (zonefixoff): puppets keep whatever zone their navigation has
+void FightsOff(LogFn log);     // QA negative control (fightsoff): the intent to kill a puppet as before 25.10. night
 void SneakCheckOn(LogFn log);  // QA negative control (sneakcheckon): sneaking is checked against puppets again
 void Sneak(char const* on, LogFn log);  // QA: "1" the local hero sneaks, "0" it runs again
 void Homes(char const* argument, LogFn log);  // QA: HOME lines, NPCs near the hero away from (or with "all" at) their home zone

@@ -117,6 +117,8 @@ these guides used two game copies on one PC; play over the real internet remains
   NPC stands at the same place on both PCs.
 - Quest state and previously completed dialogs are shared. Quest rewards go to everyone. Kill
   quests also count enemies killed in the joining player's region.
+- The main story is shared to the end: when one player hands over the artefacts at a god's shrine, the chapter changes
+  for both, and when one player starts the epilogue, the other sees the same pictures and the game's end at the same time.
 - A stool, bench, campfire or other place has one user: while your partner uses it, you are kept off ("<Name> is
   using this."), and NPCs do not take it either.
 - Items, chests, corpses and trading are shared: what one player takes is gone for everyone. An NPC whose pocket one
@@ -140,6 +142,10 @@ these guides used two game copies on one PC; play over the real internet remains
   the thief. Fights and murders by either player are seen the same way: onlookers and guards come in during a beating,
   and only the murderer is pursued. Guards warn and then attack a player who draws a weapon near them or walks into a
   place they guard. A murder by a player's companion is noticed as in single-player.
+- Onlookers come over to either player's fight and see a knock-out, whoever did it. The opponent and the onlookers
+  remember how a fight ended, and an NPC that is still angry at one player holds it against that player only.
+- Blocking works as in single-player for both players: a block costs stamina and the shield talent counts. An NPC that
+  parries blocks either player's blows the same way.
 - A player within about 20 m hears the other player's dialog. With the game's subtitles on, the lines' text shows as
   well, in your own game language, unless you are in a dialog yourself. You also see the answers your partner can pick
   and then the one they picked; the one who talks chooses.
@@ -240,6 +246,10 @@ these guides used two game copies on one PC; play over the real internet remains
 - Not checked yet, because the bots cannot set these scenes up: the uprising in Cape Dun, freeing a town in the middle of
   the game (bots checked Ardea in the opening), quests to drive someone away (their dialog fight) and plundering. They
   are on the playtest checklist.
+- The main story was played by bots to Innos' ending (with the Nordmar fire chalices). The Adanos and Beliar endings,
+  Xardas' plan and the fifth temple have not been played through together yet, and what happens to the connection after
+  the game's end is not known yet.
+- Swimming forward has not been tried by a person yet (the bots cannot swim forward).
 - Untested: monsters continuing to attack a downed hero, real internet
   play, and more than two players. The features above were checked with bots. A first short human
   test with two windows on one PC found two bugs: enemies ignored the joining player, and combat

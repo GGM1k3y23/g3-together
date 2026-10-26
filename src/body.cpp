@@ -21,6 +21,7 @@ unsigned combatMoves = 0, combatMoveFaults = 0;
 // ~80 % of the client's mirrors had nothing running). 0 = leave as StartPlayAni set it.
 int motionOwner = 0;
 bool combatReplay = true;  // QA comparison: combatreplayoff
+bool stanceSync = true;    // QA negative control: stanceoff (a body keeps its own AniState)
 unsigned kindStarted[3] = {}, kindPlayed[3] = {}, kindShown[3] = {};
 unsigned scriptAnis = 0, scriptAniFaults = 0, loopRestarts = 0;
 bool scriptAniReplay = true;  // QA comparison: scriptanioff
@@ -414,7 +415,7 @@ void Drive(Entity& entity, State& state, Target const& target, uint32_t now)
     } else if (moving || (!action && state.walking && error > 60.0f)) {
         // Up from a knock-down and off at once: a body left in its sitting state cannot walk and froze on its get-up
         // motion (19.10.: most of the raid's frozen mirrors). Take the stance here too, as below when standing.
-        if (static_cast<int32_t>(state.actionUntil - now) <= 0 && target.aniState >= 0 &&
+        if (stanceSync && static_cast<int32_t>(state.actionUntil - now) <= 0 && target.aniState >= 0 &&
             static_cast<int>(entity.Routine.AniState) != target.aniState)
             entity.Routine.AniState = static_cast<gEAniState>(target.aniState);
         // A stance motion replayed while the player stood (an idle loop, a gesture: StartPlayAni or a play-ani instruction)
@@ -457,7 +458,7 @@ void Drive(Entity& entity, State& state, Target const& target, uint32_t now)
         // standing state (stage A: the client fell, its puppet on the host kept standing); take the stance first.
         // Not during an action: an attack changes the body's stance by itself, and setting it back started that
         // stance's standing loop, which cut the attack within 150 ms (stage V2: 44 of 919 attacks showed).
-        if (!acting && target.aniState >= 0 && static_cast<int>(entity.Routine.AniState) != target.aniState) {
+        if (stanceSync && !acting && target.aniState >= 0 && static_cast<int>(entity.Routine.AniState) != target.aniState) {
             entity.Routine.AniState = static_cast<gEAniState>(target.aniState);
             *state.playing = '\0';
         }

@@ -8,6 +8,7 @@
 #include "items.h"
 #include "downed.h"
 #include "guards.h"
+#include "fightmem.h"
 #include "infocmd.h"
 #include "ransack.h"
 
@@ -46,6 +47,9 @@ bool moveLengthGuard = true;  // QA negative control: movelengthoff
 unsigned moveLengthCalls = 0, moveLengthSanitized = 0, moveLengthUnknown = 0;
 bool statesWrapped = false;
 unsigned skipped = 0;
+// QA aicount: how often AI states or functions whose name starts with the prefix ran, by the local hero and by anyone else.
+std::string countPrefix;
+std::unordered_map<std::string, std::pair<unsigned, unsigned>> counted;
 unsigned unknown = 0;  // calls whose stack top named no wrapped state: must stay 0
 unsigned wrapped = 0;
 std::unordered_map<std::string, gFScriptAIState> originalStates;
@@ -102,6 +106,10 @@ GEBool Run(std::unordered_map<std::string, Fn> const& originals, bTObjStack<gScr
     }
     auto it = originals.find(name);
     if (it == originals.end()) { ++unknown; return GEFalse; }
+    if (!countPrefix.empty() && !std::strncmp(name, countPrefix.c_str(), countPrefix.size())) {
+        auto& c = counted[name];
+        ++(self && self == gCSession::GetInstance().GetHero() ? c.first : c.second);
+    }
     if (downed::RedirectDeath(self, name)) return GEFalse;  // the local hero is knocked out instead of dying
     if (strcmp(name, "IS_Running_ProcessInfo") == 0) infocmd::Observe(spu);  // a dialog script line runs
     if (strcmp(name, "ZS_RansackBody") == 0) ransack::OnRobbing(spu);         // one of our NPCs robs a body (a puppet?)
@@ -112,8 +120,13 @@ GEBool Run(std::unordered_map<std::string, Fn> const& originals, bTObjStack<gScr
         items::AfterTake(spu);
         return result;
     }
-    guards::Acting player(guards::StateActor(self, name));  // a guard's reaction to another player follows that player
-    return it->second(stack, spu);
+    // A guard's reaction to another player follows that player; an attack on a puppet is a fight with its player (fightmem.cpp).
+    eCEntity* actor = guards::StateActor(self, name);
+    eCEntity* fighter = actor ? nullptr : fightmem::StateActor(self, name);
+    guards::Acting player(actor ? actor : fighter);
+    const GEBool result = it->second(stack, spu);
+    if (fighter) fightmem::AfterState(self);
+    return result;
 }
 
 GEBool GE_STDCALL FilterState(bTObjStack<gScriptRunTimeSingleState>& stack, gCScriptProcessingUnit* spu)
@@ -315,6 +328,21 @@ void MoveLengthOff(void (*log)(char const*))
 {
     moveLengthGuard = false;
     log("MOVELENGTHOFF ok=1");
+}
+
+void Count(char const* names, void (*log)(char const*))
+{
+    // A name prefix: count those from now on (and start again); empty: show the counts.
+    if (names && *names) {
+        counted.clear();
+        countPrefix = names;
+    }
+    char line[200];
+    for (auto const& entry : counted) {
+        sprintf_s(line, "AICOUNT name=%s hero=%u others=%u", entry.first.c_str(), entry.second.first, entry.second.second);
+        log(line);
+    }
+    log("AICOUNT end");
 }
 
 void FindByRva(char const* rvaHex, void (*log)(char const*))

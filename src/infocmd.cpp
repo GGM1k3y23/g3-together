@@ -4,11 +4,13 @@
 #include "occupancy.h"
 #include "respawn.h"
 #include "address.h"
+#include "fightmem.h"
 #include "infocmd.h"
 
 #include "body.h"
 #include "downed.h"
 #include "guide.h"
+#include "ending.h"
 #include "log.h"
 #include "net.h"
 #include "npcs.h"
@@ -155,6 +157,14 @@ void Apply(net::WorldState const& s, uint8_t from)
     }
     if (s.kind == 14) {  // another machine rolled for a dead NPC's return (respawn.cpp)
         respawn::OnState(from, s);
+        return;
+    }
+    if (s.kind == 17) {  // another player's epilogue started (ending.cpp)
+        ending::OnState(from, s);
+        return;
+    }
+    if (s.kind == 18) {  // an NPC's memory of a fight with a player (fightmem.cpp)
+        fightmem::OnState(from, s);
         return;
     }
     if (s.kind == 16) {  // a client asks for an NPC with an important info for its hero (address.cpp)
@@ -453,6 +463,24 @@ void JoinQa(char const* argument, LogFn log)
 }
 
 namespace g3t::infocmd {
+// QA, P9: "Name" (or "Name_mob"): as a dialog's SetPartyEnabled (SetMobEnabled) true on that NPC (the one who may join the
+// player's party or mob then), passed on like the command.
+void PartyEnableQa(char const* argument, LogFn log)
+{
+    char line[160];
+    std::string name = argument ? argument : "";
+    const bool mob = name.size() > 4 && name.compare(name.size() - 4, 4, "_mob") == 0;
+    if (mob) name.resize(name.size() - 4);
+    Entity npc = Entity::GetEntity(bCString(name.c_str()));
+    if (!npc.GetInstance()) { log("REFUSED partyenable: no such NPC"); return; }
+    if (mob) npc.Dialog.MobEnabled = GETrue;
+    else npc.Dialog.PartyEnabled = GETrue;
+    Changed(npc.GetInstance());
+    sprintf_s(line, "PARTYENABLE name=%s party_enabled=%d mob_enabled=%d", name.c_str(), npc.Dialog.PartyEnabled ? 1 : 0,
+              npc.Dialog.MobEnabled ? 1 : 0);
+    log(line);
+}
+
 void OnWorldChange()
 {
     fights.clear();

@@ -174,7 +174,8 @@ void SetClockHandler(ClockHandler handler);
 // attacked, routine = the attack reason's name); kind 4/5: a client took over / gave back a companion (guid); kind 6: host to player `guard`: that claim is refused
 // or ended; kind 7: host to player `guard`: this NPC from the host's save is your companion; kind 8/9: downed.cpp;
 // kind 10: a door or lock (doors.cpp: guard = open, alignment = locked, npcClass bits 1 door, 2 lock); kind 16: client to host,
-// player `guard` asks for NPC guid that has an important info for its hero (address.cpp).
+// player `guard` asks for NPC guid that has an important info for its hero (address.cpp); kind 18: for player `guard`, NPC
+// guid now remembers its fight with that player as `npc` (LastFightAgainstPlayer, fightmem.cpp).
 // Client: to the host; host: to every client except `except`.
 #pragma pack(push, 1)
 struct WorldState {

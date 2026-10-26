@@ -748,6 +748,481 @@ def stageArtifactFound(copies, report, negative=False):
     assert all(a < b for a, b in report['xp'].values()), f"not both earned the quest's experience: {report['xp']}"
 
 
+def story_view(c, quests, events, sectors):
+    """One machine's main-story state: quest statuses, known events, sectors, the hero's chapter and experience."""
+    view = {'quests': {q: quest_status(c.bot, q) for q in quests}}
+    view['events'] = {e: report_line(c.bot, 'event ' + e, 'EVENT ').split('known=')[-1][:1] for e in events}
+    view['sectors'] = {s: report_line(c.bot, 'sector ' + s, 'SECTOR ').split('on=')[-1][:1] for s in sectors}
+    view['chapter'] = report_line(c.bot, 'chapter', 'CHAPTER ').split('value=')[-1]
+    view['xp'] = xp_of(c.bot)
+    return view
+
+
+def talk_choose(copy, owner, infos, report, tag):
+    """One talk with `owner` (an NPC or a dialog object such as Innos_Tester): the infos picked in that order where offered."""
+    teleport_to(copy.bot, owner)
+    time.sleep(3)
+    line, offered = talk_infos(copy, owner)
+    report[tag] = {'talk': line[:300], 'chosen': []}
+    for info in infos:
+        if info not in offered:  # a child offered only after its parent: look again
+            now = report_line(copy.bot, 'talkstate', 'TALKSTATE')
+            report[tag]['chosen'].append(f'{info} not offered at the start; {now[:100]}')
+            if 'running=1' not in now:
+                continue
+        report[tag]['chosen'].append(report_line(copy.bot, 'talkinfo ' + info, ('TALKINFO', 'REFUSED talkinfo'))[:80])
+        for _ in range(25):  # its lines play out
+            time.sleep(2)
+            if f'current={info} ' not in report_line(copy.bot, 'talkstate', 'TALKSTATE'):
+                break
+    report[tag]['end'] = report_line(copy.bot, 'endtalk', ('TALKSTATE', 'REFUSED endtalk'))
+
+
+def stageStoryInnos(copies, report, negative=False):
+    """P4 main story (Kapitel-Checkliste: Hauptstory), the client alone on Innos' way: the host runs the artefact quests, the
+    client finds the five artefacts and the scepter, chooses Innos at Innos_Tester (Ready info FILLER34: RunQuest Innos_Contact,
+    Innos_chosen, a sector; its child, the Delivery FILLER36: four quests closed, the artefacts given, SetChapter 2); then the
+    two Innos quests succeed (QA) and the client takes the rewards and the epilogue's start (SKALVERAM3188, 3196, 3210). After
+    each step the story is the same on both machines: quests, events, the sector and the heroes' chapter (before, the host's
+    hero stayed in chapter 1, run 221246). G3_WHO=host: the host walks the way (single-player control). The epilogue itself
+    (the hero's own infos, EndGame) is only looked at: the infos each hero is offered. Negative control: chaptersyncoff on
+    both."""
+    # FILLER34 wants the scepter of Varant as well (CondItems, Infos.pak; run 215102 offered only FILLER38 without it).
+    artefacts = ['It_Artefact_Amulet', 'It_Artefact_Crown', 'It_Artefact_Ring_01', 'It_Artefact_Ring_02', 'It_Artefact_Robe', 'It_Scepter']
+    finds = ['PC_Hero_FindAmulet', 'PC_Hero_FindCrown', 'PC_Hero_FindRing_01', 'PC_Hero_FindRing_02', 'PC_Hero_FindRobe', 'PC_Hero_FindArtefacts',
+             'PC_Hero_FindScepter']
+    quests = finds + ['Innos_Contact', 'Beliar_Contact', 'Adanos_DestroyArtefacts', 'Zuben_XardasPlan', 'Rhobar_XardasPlan',
+                      'Innos_KillZuben', 'Innos_FreeMyrtana']
+    events = ['Innos_chosen', 'Innos_Zuben_OK', 'Innos_Myrtana_OK', 'Epilog_Innos', 'Epilog_FirstInfo']
+    sectors = ['G3_Nordmar_01_Story_Innos_01']
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    if negative:
+        report['negative'] = [report_line(c.bot, 'chaptersyncoff', 'CHAPTERSYNCOFF ') for c in (host, client)]
+    actor = host if os.environ.get('G3_WHO') == 'host' else client  # host: the single-player control
+    report['actor'] = actor.tag
+    views = report['views'] = {}
+    look = lambda tag: views.__setitem__(tag, {c.tag: story_view(c, quests, events, sectors) for c in (host, client)})
+    look('start')
+    report['runs'] = [report_line(host.bot, 'runquest ' + q, 'QUEST ') for q in finds + ['Rhobar_XardasPlan', 'Zuben_XardasPlan']]
+    time.sleep(5)
+    look('quests_run')
+    for item in artefacts:
+        report_line(actor.bot, 'receiveitem ' + item, ('RECEIVEITEM ', 'REFUSED receiveitem'))
+        time.sleep(2)
+    time.sleep(10)
+    look('artefacts_found')
+    report_line(actor.bot, 'unarm', 'UNARM')
+    talk_choose(actor, 'Innos_Tester', ['FILLER34', 'FILLER36'], report, 'choose')  # the Delivery is the Ready info's child
+    time.sleep(8)
+    look('handed_over')
+    report['artefacts_left'] = {i: carried(actor.bot, i) for i in artefacts}
+    for q in ('Innos_KillZuben', 'Innos_FreeMyrtana'):  # the long way (Zuben, seven towns) skipped: the quests succeed
+        report.setdefault('ending_quests', []).append(report_line(host.bot, 'runquest ' + q, 'QUEST '))
+        time.sleep(1)
+        report['ending_quests'].append(report_line(host.bot, 'succeedquest ' + q, 'QUEST '))
+    time.sleep(6)
+    look('ending_quests_done')
+    talk_choose(actor, 'Innos_Tester', ['SKALVERAM3188', 'SKALVERAM3196'], report, 'rewards')
+    # After one reward the other was gone from the offer (host alone, run 220505): its event set by QA, so the epilogue can start.
+    report['myrtana_ok'] = report_line(actor.bot, 'setevent Innos_Myrtana_OK', 'EVENT ')
+    report['zuben_ok'] = report_line(actor.bot, 'setevent Innos_Zuben_OK', 'EVENT ')
+    time.sleep(3)
+    talk_choose(actor, 'Innos_Tester', ['SKALVERAM3210'], report, 'epilog_start')
+    time.sleep(6)
+    look('epilog_started')
+    # The epilogue: infos of the hero himself (owner PC_Hero, BPANKRATZ31831 ...; the last ends with EndGame). Only what each
+    # hero is offered; nothing chosen, the game would end.
+    report['epilog_offer'] = {}
+    for c in (host, client):
+        line, offered = talk_infos(c, 'PC_Hero')
+        report['epilog_offer'][c.tag] = line[:300]
+        report_line(c.bot, 'endtalk', ('TALKSTATE', 'REFUSED endtalk'))
+    for tag, view in views.items():  # the story is the same on both machines after every step
+        mine, theirs = view['host'], view['client']
+        for part in ('quests', 'events', 'sectors', 'chapter'):
+            assert mine[part] == theirs[part], f'{tag}: {part} differ: host {mine[part]}, client {theirs[part]}'
+    assert views['handed_over']['host']['chapter'] == '2', f"no chapter 2 after the hand-over: {views['handed_over']}"
+    gained = {t: views['epilog_started'][t]['xp'] - views['start'][t]['xp'] for t in ('host', 'client')}
+    report['xp_gained'] = gained
+    assert gained['host'] == gained['client'], f'experience differs: {gained}'
+
+
+def stageStoryNordmar(copies, report, negative=False):
+    """P4 main story (Kapitel-Checkliste: Hauptstory), the client alone on the other story steps: the host runs the quests of
+    the fire chalices and the teleport stone to the king; the client finds all chalices (PC_Hero_FindAllFiremageCups, the
+    amount from the quest's counter: 12), throws them into the holy fire at HolyFire_Tester (Activator SKALVERAM3658, Delivery
+    SKALVERAM3657: a sector) and finds It_Teleport_VangardTempel. After each step the story is the same
+    on both machines (quests, events, sectors, chapter) and both earn the same experience. G3_WHO=host: the host does it
+    (single-player control). Negative control: storyoff on the client."""
+    quests = ['PC_Hero_FindAllFiremageCups', 'PC_Hero_Bless_FiremageCups', 'PC_Hero_FIndTeleportToKing']
+    events = []
+    sectors = ['G3_Nordmar_01_Monastery_FiremageCups_Blessed']
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    if negative:
+        story_off(client)
+    actor = host if os.environ.get('G3_WHO') == 'host' else client
+    report['actor'] = actor.tag
+    views = report['views'] = {}
+    look = lambda tag: views.__setitem__(tag, {c.tag: story_view(c, quests, events, sectors) for c in (host, client)})
+    look('start')
+    report['runs'] = [report_line(host.bot, 'runquest ' + q, 'QUEST ') for q in ('PC_Hero_FindAllFiremageCups', 'PC_Hero_FIndTeleportToKing')]
+    time.sleep(5)
+    if not negative:
+        wait_for(lambda: quest_status(client.bot, 'PC_Hero_FindAllFiremageCups') == RUNNING and ['yes'], 20, 'the quests run on the client too')
+    start = host.bot.send('questcounters PC_Hero_FindAllFiremageCups', 20)
+    report['cups_counter'] = host.bot.line('QUESTCOUNTER name=', 15, 'questcounters', start)
+    m = re.search(r'It_FiremageCup:-?\d+/(\d+)', report['cups_counter'])
+    cups = int(m[1]) if m and int(m[1]) > 0 else int(os.environ.get('G3_CUPS', '5'))
+    report['cups'] = cups
+    look('quests_run')
+    for _ in range(cups):
+        report_line(actor.bot, 'receiveitem It_FiremageCup', ('RECEIVEITEM ', 'REFUSED receiveitem'))
+        time.sleep(1)
+    time.sleep(8)
+    look('cups_found')
+    report_line(actor.bot, 'unarm', 'UNARM')
+    talk_choose(actor, 'HolyFire_Tester', ['SKALVERAM3658', 'SKALVERAM3657'], report, 'holy_fire')
+    time.sleep(8)
+    look('cups_blessed')
+    report['cups_left'] = carried(actor.bot, 'It_FiremageCup')
+    # The fifth temple is left out: its book has no entity of either name in the world (the info's owner is
+    # MonasteryBooik_Tester, the quest's delivery MonasteryBook_Tester; findall found neither, run 224630).
+    report['stone'] = report_line(actor.bot, 'receiveitem It_Teleport_VangardTempel', ('RECEIVEITEM ', 'REFUSED receiveitem'))
+    time.sleep(10)
+    look('stone_found')
+    for tag, view in views.items():
+        mine, theirs = view['host'], view['client']
+        for part in ('quests', 'events', 'sectors', 'chapter'):
+            assert mine[part] == theirs[part], f'{tag}: {part} differ: host {mine[part]}, client {theirs[part]}'
+    final = views['stone_found']['host']['quests']
+    report['final'] = final
+    assert all(final[q] == SUCCESS for q in quests), \
+        f'not every step succeeded: {final}'
+    gained = {t: views['stone_found'][t]['xp'] - views['start'][t]['xp'] for t in ('host', 'client')}
+    report['xp_gained'] = gained
+    assert gained['host'] == gained['client'] and gained['host'] > 0, f'experience differs: {gained}'
+
+
+def swimdiag(copies, report, negative=False):
+    """P2 swimming (PS_Swim, OnMovementModeChanged): where is water? The client goes to a spot by water (G3_WATER_AT, an NPC;
+    default QP_Fisher, the fisherman) and steps out in 16 directions, 4 to 24 m, until its movement mode is swim, dive or
+    wade (QA movemode: 7, 8, 10). There it stays and moves a little; the host's puppet of it over 20 s: movement mode and
+    motion (TRACE). Diagnostic."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    at = os.environ.get('G3_WATER_AT', 'QP_Fisher')
+    report['at'] = teleport_to(client.bot, at) if at != 'start' else 'start'  # start: where the client stands after the join
+    time.sleep(4)
+    base = hero_pos(client.bot)
+    mode = lambda c: dict(re.findall(r'(\w+)=(-?\d+)', report_line(c.bot, 'movemode', 'MOVEMODE ')))
+    found = None
+    report['probe'] = []
+    # G3_WATER_SPOT x_y_z (found 26.10.: 102767_-608_-4075, sea 160 m from the start) and G3_WATER_SHORE x_y_z for the host:
+    # no probing.
+    xyz = lambda v: tuple(float(c) for c in v.split('_'))
+    if os.environ.get('G3_WATER_SPOT'):
+        move_hero(client.bot, xyz(os.environ['G3_WATER_SPOT']))
+        time.sleep(4)
+        report['probe'].append(('spot', 0, mode(client).get('hero'), round(hero_pos(client.bot)[1])))
+        found = hero_pos(client.bot) if report['probe'][-1][2] in ('7', '8', '10') else None
+    for dist in [] if os.environ.get('G3_WATER_SPOT') else [int(v) for v in os.environ.get('G3_WATER_STEPS', '600,1200,2000,3000,4500,6000').split(',')]:
+        for k in [int(v) for v in os.environ.get('G3_WATER_DIRS', ','.join(map(str, range(16)))).split(',')]:
+            a = 2 * math.pi * k / 16
+            p = (base[0] + dist * math.cos(a), base[1] + int(os.environ.get('G3_WATER_DROP', '0')), base[2] + dist * math.sin(a))  # at the spot's height: over water it falls in
+            move_hero(client.bot, p)
+            time.sleep(float(os.environ.get('G3_WATER_WAIT', '3')))  # a long fall needs longer
+            m = mode(client).get('hero')
+            report['probe'].append((dist, k, m, round(hero_pos(client.bot)[1])))
+            if m in ('7', '8', '10'):
+                found = hero_pos(client.bot)
+                break
+        if found:
+            break
+    report['water'] = tuple(round(v) for v in found) if found else None
+    if not found:
+        report['status_note'] = 'diagnostic only: no water found'
+        return
+    # The host near, so it shows the puppet: by the NPC, or (start) on the last dry probe before the water.
+    if os.environ.get('G3_WATER_SHORE'):
+        move_hero(host.bot, xyz(os.environ['G3_WATER_SHORE']))
+    elif at != 'start':
+        teleport_to(host.bot, at)
+    else:
+        dry = [q for q in report['probe'] if q[2] == '1']
+        d, k = (dry[-1][0], dry[-1][1]) if dry else (0, 0)
+        a = 2 * math.pi * k / 16
+        move_hero(host.bot, (base[0] + d * math.cos(a), dry[-1][3] + 100 if dry else base[1], base[2] + d * math.sin(a)))
+    time.sleep(4)
+    samples = []
+    for i in range(10):
+        move_hero(client.bot, (found[0] + 150 * (i % 2), found[1], found[2]))
+        time.sleep(2)
+        lines = [l for l in host.mod_log().splitlines()[-300:] if 'TRACE puppet2 ' in l]
+        motion = re.search(r' motion=(\S+)', lines[-1])[1] if lines else '-'
+        samples.append({'client': mode(client).get('hero'), 'host_puppet': mode(host).get('puppet2'), 'host_motion': motion[:70]})
+    report['samples'] = samples
+    # G3_WATER_SWIM=1: the client swims forward by the game's AI goto (QA runto), 8 m along the shore and back; both sides'
+    # motions every 0.5 s (does the puppet play the swim strokes or glide?).
+    if os.environ.get('G3_WATER_SWIM'):
+        strokes = []
+        for k, dx in enumerate((800, -800, 800)):
+            here = hero_pos(client.bot)
+            strokes.append(report_line(client.bot, f'runto {here[0]:.0f}_{here[1]:.0f}_{here[2] + dx:.0f}', ('RUNTO ', 'REFUSED runto')))
+            for _ in range(8):
+                time.sleep(0.5)
+                own = [l for l in client.mod_log().splitlines()[-40:] if 'TRACE hero ' in l]
+                seen = [l for l in host.mod_log().splitlines()[-300:] if 'TRACE puppet2 ' in l]
+                strokes.append({'client': (re.search(r' motion=(\S+)', own[-1])[1][:60] if own else '-'), 'mode': mode(client).get('hero'),
+                                'pos': tuple(round(v) for v in hero_pos(client.bot)),
+                                'host': (re.search(r' motion=(\S+)', seen[-1])[1][:60] if seen else '-')})
+        report['strokes'] = strokes
+    report['status_note'] = 'diagnostic only'
+
+
+def equipped_stacks(bot, guid):
+    """An NPC's equipped stacks (slot not 0) as name@slot (QA stacks)."""
+    start = bot.send('stacks ' + guid, 20)
+    bot.line('STACKS end', 10, 'stacks', start)
+    return sorted(f'{m[1]}@{m[2]}' for m in re.finditer(r'^STACK \d+ name=(\S+) amount=\d+ slot=(\d+)', bot.log()[start:], re.M) if m[2] != '0')
+
+
+def stageEnterRange(copies, report, negative=False):
+    """P3 refilling per machine (OnEnterProcessingRange, RefreshHitPoints, RefreshWeaponry): an NPC that comes into a machine's
+    processing range is refilled there and its routine reset, as in the single-player game when the player comes back. Here
+    the host stays by a wounded NPC (it simulates it, the client mirrors it); the client goes 400 m away and comes back, so the
+    NPC enters the client's range again: afterwards it has the host's hit points on both machines, not refilled on the
+    client, and it wears the same weapons (QA stacks). Negative control: npcrecvoff on the client before it comes back."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    rows = npcs(host.bot)
+    me = hero_pos(host.bot)
+    living = [(distance(v['pos'], me), g, v) for g, v in rows.items() if not v['dead'] and not v['mirrored'] and v['hp'] > 60
+              and v['name'] not in ('Gorn', 'Diego', 'Milten', 'Lester', 'PC_Hero')]
+    assert living, 'no NPC the host simulates near it'
+    _, guid, npc = min(living)
+    report['npc'] = {'name': npc['name'], 'hp': npc['hp']}
+    wounded = max(10, npc['hp'] // 3)
+    report['wound'] = report_line(host.bot, f'npchp {guid}_{wounded}', ('NPCHP ', 'STATUSOF ', 'REFUSED'))
+    time.sleep(4)
+    report['client_before'] = npcs(client.bot).get(guid, {})
+    report['equipped_before'] = {c.tag: equipped_stacks(c.bot, guid) for c in (host, client)}
+    x, y, z = hero_pos(client.bot)
+    report['away'] = move_hero(client.bot, (x + 40000, y + 200, z))
+    time.sleep(8)
+    if negative:
+        report['negative'] = report_line(client.bot, 'npcrecvoff', 'NPCRECVOFF')
+    move_hero(client.bot, (x, y, z))
+    time.sleep(8)
+    host_view, client_view = npcs(host.bot).get(guid, {}), npcs(client.bot).get(guid, {})
+    report['after'] = {'host': {k: host_view.get(k) for k in ('hp', 'mirrored', 'task')}, 'client': {k: client_view.get(k) for k in ('hp', 'mirrored', 'task')}}
+    report['find'] = {c.tag: re.sub(r'FIND name=\S+ found=1 ', '', find_npc(c.bot, npc['name']))[:180] for c in (host, client)}
+    report['equipped_after'] = {c.tag: equipped_stacks(c.bot, guid) for c in (host, client)}
+    assert client_view, f"{npc['name']} is gone on the client"
+    assert host_view.get('hp') == wounded, f"the host's {npc['name']} changed: {host_view}"
+    assert client_view.get('hp') == host_view.get('hp'), f"the client refilled {npc['name']}: client {client_view.get('hp')}, host {host_view.get('hp')}"
+    # RefreshWeaponry ran on the client's copy as it came back: it wears what the host's wears (26.10.: Hamlar It_1H_Sword_01 slot 6).
+    assert report['equipped_after']['client'] == report['equipped_after']['host'], f"the weapons differ after the return: {report['equipped_after']}"
+
+
+def stageQuickUse(copies, report, negative=False):
+    """P2 quick slots (PS_QuickUse, the Community Patch's OnPlayerUseQuickSlot and OnPlayerAssignStackKey): the client puts a
+    healing potion on quick slot 1 and uses it as its key does (QA quickuse): one potion fewer and the hero healed on the
+    client, nothing changes for the host's hero, and the host still shows the client (its own hero's matter, as alone)."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    potion = os.environ.get('G3_POTION', 'It_Potion_Health')
+    report['give'] = report_line(client.bot, f'givepotion {potion}-2', ('GIVEPOTION ', 'REFUSED givepotion'))  # as stage A2 does
+    report_line(client.bot, 'sethp 20', 'SETHP ')
+    hp = lambda c: int(re.search(r' hero=(-?\d+)', report_line(c.bot, 'hp', 'HP '))[1])
+    before = report['before'] = {'client_potions': carried(client.bot, potion), 'client_hp': hp(client), 'host_potions': carried(host.bot, potion),
+                                 'host_hp': hp(host)}
+    report['use'] = report_line(client.bot, 'quickuse ' + potion, ('QUICKUSE ', 'REFUSED quickuse'))
+    time.sleep(6)
+    after = report['after'] = {'client_potions': carried(client.bot, potion), 'client_hp': hp(client), 'host_potions': carried(host.bot, potion),
+                               'host_hp': hp(host)}
+    report['host_sees_client'] = remotes(host.bot).get(2, {}).get('puppet')
+    assert after['client_potions'] == before['client_potions'] - 1, f'the potion was not used: {before} -> {after}'
+    assert after['client_hp'] > before['client_hp'], f'the client was not healed: {before} -> {after}'
+    assert (after['host_potions'], after['host_hp']) == (before['host_potions'], before['host_hp']), f'the host changed: {before} -> {after}'
+    assert report['host_sees_client'], 'the host lost the client'
+
+
+def stageSleepBed(copies, report, negative=False):
+    """P2 sleeping in a bed (PS_Interact_SleepBed, PlayerSleep): the client goes to the nearest bed (G3_Object_Interact_Bed_01 to
+    _06; each owns four Sleep infos, 0, 8, 12 and 20 o'clock), uses it the game's way (QA use: PS_Interact_SleepBed, which talks
+    to the bed), chooses 'until 8' (FILLERX293 + 4 per bed number) and the talk ends: the client's hero is refilled
+    (PlayerSleep), and the clock moves on for both (clock.cpp asks the host). G3_BED=Sleep_Ground: a sleeping place on the ground
+    (use type 75, PS_Interact_SleepGround; 57 found by objectscan): the state sleeps until 8 at once where no Sleep info
+    asks, but these are the NPCs' free points (Nav_Freepoints_Sleep_Ground): the hero does not lie down there (26.10.).
+    Negative control: clockoff on the client."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    if negative:
+        report_line(client.bot, 'clockoff', 'CLOCKOFF ')
+    me = hero_pos(client.bot)
+    names = [os.environ['G3_BED']] if os.environ.get('G3_BED') else [f'G3_Object_Interact_Bed_{n:02d}' for n in range(1, 7)]
+    beds = [(distance(p, me), name, p) for name in names for p, dead in find_all(client.bot, name)]
+    assert beds, f'no {names} in the world'
+    report['tried'] = []
+    report['talk'] = None
+    for _, bed, spot in sorted(beds)[:8]:  # the nearest that lets the hero lie down and talk (Bed_01 at 86282,743,31395 never did)
+        move_hero(client.bot, (spot[0] + 100, spot[1] + 50, spot[2]))
+        time.sleep(4)
+        if not report['tried']:
+            report['hp_set'] = report_line(client.bot, 'sethp 20', 'SETHP ')
+            report['clock_before'] = {c.tag: clock_of(c.bot)[1] for c in (host, client)}
+        use = report_line(client.bot, 'use ' + bed, ('USE ', 'REFUSED use'))
+        # A place without a Sleep info (PS_Interact_SleepGround, re/out/p2-rest-20261026-b.c: FUN_10030d50 finds no info) sleeps
+        # until 8 at once (FUN_10076440 with 8), without asking.
+        before = report['clock_before']['client']['timestamp']
+        def asked_or_slept():
+            st = report_line(client.bot, 'talkstate', 'TALKSTATE')
+            if 'running=1' in st:
+                return [st]
+            now = clock_of(client.bot)[1]  # slept: 8 o'clock and more than an hour on (a try takes half an hour of game time)
+            return ['slept'] if now['hour'] == 8 and now['timestamp'] - before >= 3600 else None
+        try:
+            report['talk'] = wait_for(asked_or_slept, 25, 'the bed asks how long to sleep')[0]
+        except AssertionError:
+            report['tried'].append({'bed': bed, 'pos': tuple(round(v) for v in spot), 'use': use[:100]})
+            continue
+        report['bed'] = {'name': bed, 'pos': tuple(round(v) for v in spot)}
+        break
+    assert report['talk'], f"no bed asked how long to sleep: {report['tried']}"
+    if report['talk'] == 'slept':
+        report['sleep'] = 'direct ok=1'
+        time.sleep(10)
+    # The 8 o'clock info of the bed the talk is with (FILLERX293 + 4 per bed number; Sleep_Ground: whichever runs).
+    partner = re.search(r'partner=(\S+)', report['talk'])[1] if report['talk'] != 'slept' else ''
+    number = int(partner[-2:]) if partner.startswith('G3_Object_Interact_Bed_') else 0
+    candidates = [f'FILLERX{293 + 4 * (n - 1)}' if n < 3 else f'FILLERX{2101 + 4 * (n - 3)}' for n in ([number] if number else range(1, 7))]
+    report['partner'] = partner
+    for info in (candidates if partner else []):
+        report['info'] = info
+        report['sleep'] = report_line(client.bot, 'talkinfo ' + info, ('TALKINFO ', 'REFUSED talkinfo'))
+        if ' ok=1' in report['sleep']:
+            break
+    if partner:
+        time.sleep(12)
+        report_line(client.bot, 'endtalk', ('TALKSTATE', 'REFUSED endtalk'))
+        time.sleep(8)
+    report['clock_after'] = {c.tag: clock_of(c.bot)[1] for c in (host, client)}
+    report['hp_after'] = re.search(r' hero=(\d+) max=(\d+)', report_line(client.bot, 'hp', 'HP ')).groups()
+    jump = {t: report['clock_after'][t]['timestamp'] - report['clock_before'][t]['timestamp'] for t in ('host', 'client')}
+    report['jump_s'] = jump
+    gap = abs(report['clock_after']['host']['timestamp'] - report['clock_after']['client']['timestamp'])
+    report['gap_s'] = gap
+    assert ' ok=1' in report['sleep'], f'the bed would not let the client sleep: {report["sleep"]}'
+    assert jump['client'] >= 1800, f"the client did not sleep: {jump}"
+    assert int(report['hp_after'][0]) > 20, f'the sleep did not refill the hero: {report["hp_after"]}'
+    assert jump['host'] >= 1800 and gap <= 180, f'the host clock did not follow: jump {jump}, gap {gap} s'
+
+
+def stageEnding(copies, report, negative=False):
+    """P4 main story's end (owner 25.10.: both players see the end, not only the one who triggers it). The epilogue is a chain
+    of the hero's own infos (BPANKRATZ31831 for Innos; the last ends with EndGame) and played only where it started
+    (storyepilogdiag 25.10.: the host's info manager stayed idle while the client's played 15 pictures). The client's
+    epilogue starts (its events by QA, then BPANKRATZ31831 in a talk with the hero himself): the host starts the same info
+    for its own hero, and the chain runs on both. G3_WHO=host: the host starts it. G3_TO_END=1: wait for the end as well.
+    Negative control: endingsyncoff on the other machine."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    actor = host if os.environ.get('G3_WHO') == 'host' else client
+    other = client if actor is host else host
+    report['actor'] = actor.tag
+    if negative:
+        report['negative'] = report_line(other.bot, 'endingsyncoff', 'ENDINGSYNCOFF ')
+    report['events'] = [report_line(actor.bot, 'setevent ' + e, 'EVENT ') for e in ('Innos_chosen', 'Epilog_Innos', 'Epilog_FirstInfo')]
+    time.sleep(4)
+    report['talk'], offered = talk_infos(actor, 'PC_Hero')
+    first = next((i for i in offered if i != 'BPANKRATZ30'), None)
+    assert first, f'no epilogue offered: {report["talk"]}'
+    report['start'] = report_line(actor.bot, 'talkinfo ' + first, ('TALKINFO', 'REFUSED talkinfo'))
+    state = lambda c: dict(re.findall(r'(\w+)=(\S+)', report_line(c.bot, 'talkstate', 'TALKSTATE')))
+    report['other_started'] = wait_for(lambda: (lambda st: st.get('running') == '1' and st.get('partner') == 'PC_Hero' and [st])(state(other)), 30,
+                                       f'the epilogue plays on the {other.tag} too')[0]
+    seen = {c.tag: set() for c in (host, client)}
+    samples = []
+    for _ in range(36 if os.environ.get('G3_TO_END') == '1' else 8):
+        time.sleep(5)
+        sample = {}
+        for c in (host, client):
+            try:
+                st = state(c)
+                seen[c.tag].add(st.get('current', '-'))
+                sample[c.tag] = f"{st.get('running')}:{st.get('current')}"
+            except Exception as error:
+                sample[c.tag] = f'no answer: {str(error)[:60]}'
+        samples.append(sample)
+    report['samples'] = samples
+    report['infos_seen'] = {t: sorted(v - {'-'}) for t, v in seen.items()}
+    report['ending'] = {c.tag: report_line(c.bot, 'ending', 'ENDING ') for c in (host, client)}
+    assert len(report['infos_seen'][other.tag]) >= 3, f"the epilogue did not run on the {other.tag}: {report['infos_seen']}"
+
+
+def storyepilogdiag(copies, report, negative=False):
+    """P4 main story's end (Kapitel-Checkliste: ein Ende): the epilogue is a chain of infos of the hero himself (owner PC_Hero,
+    BPANKRATZ31831 ... for Innos; the last one ends with EndGame). Its events (Epilog_Innos, Epilog_FirstInfo) are shared, so
+    both heroes are offered it (stageStoryInnos). Here the client plays it through: the events set by QA, then every epilogue
+    info the hero is offered, until EndGame. Watched on both machines: the talk, whether the client is still in the world and
+    on the host, and the mods' logs. G3_WHO=host: the host plays it. Diagnostic."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    actor = host if os.environ.get('G3_WHO') == 'host' else client
+    other = client if actor is host else host
+    report['actor'] = actor.tag
+    report['events'] = [report_line(actor.bot, 'setevent ' + e, 'EVENT ') for e in ('Innos_chosen', 'Epilog_Innos', 'Epilog_FirstInfo')]
+    time.sleep(4)
+    report['other_events'] = [report_line(other.bot, 'event ' + e, 'EVENT ') for e in ('Epilog_Innos', 'Epilog_FirstInfo')]
+    report['chain'] = []
+    for _ in range(8):
+        try:
+            line, offered = talk_infos(actor, 'PC_Hero')
+        except Exception as error:
+            report['chain'].append(f'no answer: {str(error)[:100]}')
+            break
+        todo = [i for i in offered if i != 'BPANKRATZ30']
+        report['chain'].append(line[:200])
+        if not todo:
+            report_line(actor.bot, 'endtalk', ('TALKSTATE', 'REFUSED endtalk'))
+            break
+        report['chain'].append(report_line(actor.bot, 'talkinfo ' + todo[0], ('TALKINFO', 'REFUSED talkinfo'))[:80])
+        for _ in range(40):  # pictures, subtitles and waits play out
+            time.sleep(2)
+            try:
+                state = report_line(actor.bot, 'talkstate', 'TALKSTATE')
+            except Exception as error:
+                state = f'no answer: {str(error)[:80]}'
+                break
+            if f'current={todo[0]} ' not in state:
+                break
+        report['chain'].append(state[:120])
+        if state.startswith('no answer'):
+            break
+    samples = []
+    for _ in range(12):
+        time.sleep(5)
+        sample = {}
+        for c in (host, client):
+            try:
+                sample[c.tag] = report_line(c.bot, 'talkstate', 'TALKSTATE')[:80]
+            except Exception as error:
+                sample[c.tag] = f'no answer: {str(error)[:60]}'
+        try:
+            r = remotes(host.bot).get(2, {})
+            sample['host_sees_client'] = {k: r.get(k) for k in ('same_world', 'age_ms', 'puppet')}
+        except Exception as error:
+            sample['host_sees_client'] = f'no answer: {str(error)[:60]}'
+        samples.append(sample)
+    report['after'] = samples
+    for c in (host, client):
+        report[c.tag + '_log'] = [l[-150:] for l in c.mod_log().splitlines()
+                                  if 'EndGame' in l or 'world deactivated' in l or 'left' in l.lower() or 'menu' in l.lower()][-10:]
+    report['status_note'] = 'diagnostic only'
+
+
 def town_status(bot, town):
     start = bot.send('enclaves', 20)
     bot.line('ENCLAVES end', 15, 'enclaves', start)
@@ -1080,8 +1555,21 @@ def stageGuide(copies, report, negative=False):
     clear_raid(host, report)
     if negative:
         report_line(client.bot, 'guidesyncoff', 'GUIDESYNCOFF')
+    watching = [n for n in os.environ.get('G3_SCRIPTWATCH', '').split(',') if n]  # scripts counted on both machines (P9)
+    for c in (host, client):
+        for n in watching:
+            report_line(c.bot, 'scriptwatch ' + n, 'SCRIPTWATCH ')
+
+    def watched():
+        for c in (host, client):
+            start = c.bot.send('scriptwatch', 20)
+            c.bot.line('SCRIPTWATCH end', 10, 'scriptwatch', start)
+            report[c.tag + '_scripts'] = [l[12:] for l in c.bot.log()[start:].splitlines() if l.startswith('SCRIPTWATCH name=')]
     if os.environ.get('G3_WHO') == 'host':
-        return guide_host_case(host, client, quest, npc, report)
+        guide_host_case(host, client, quest, npc, report)
+        if watching:
+            watched()
+        return
     teleport_to(host.bot, npc)
     x, y, z = hero_pos(host.bot)
     move_hero(host.bot, (x + 3000, y, z))
@@ -1113,6 +1601,8 @@ def stageGuide(copies, report, negative=False):
     report['host_view'] = next((v for v in npcs(host.bot).values() if v['name'] == npc), {})
     assert report['host_view'].get('mirrored') and report['host_view'].get('owner') == 2, f'the host does not mirror the client\'s {npc}'
     report['quest'] = {c.tag: quest_status(c.bot, quest) for c in (host, client)}
+    if watching:
+        watched()
     assert report['quest'] == {'host': 1, 'client': 1}, f'the quest no longer runs on both: {report["quest"]}'
 
 
@@ -1471,7 +1961,8 @@ def stageShapeFight(copies, report, negative=False):
     """P6, a player in an animal form fights as the player (the game counts the creature it controls as Entity::GetPlayer;
     GetHero stays the hidden human body): the client turns into a wolf and strikes a villager the host simulates; its hits
     go to the host as the player's claims (before: as hits of one of the client's NPCs, no experience, no knock-out
-    judgement, no murder), and the client earns the experience of the knock-out or kill. Negative control: shapehitsoff on
+    judgement, no murder), and the client earns the experience of the knock-out or kill. G3_SHAPE_ITEM=It_Potion_Wolf: the
+    client turns by drinking the game's transformation potion (MagicTransform) instead. Negative control: shapehitsoff on
     the client."""
     host, client = join_both(copies)
     clear_raid(host, report)
@@ -1486,8 +1977,17 @@ def stageShapeFight(copies, report, negative=False):
     goal = npcs(host.bot)[target]['pos']
     move_hero(client.bot, (goal[0] + 150, goal[1], goal[2]))
     time.sleep(2)
-    report['transform'] = report_line(client.bot, 'transform Wolf', ('TRANSFORM ',))
+    # G3_SHAPE_ITEM (a transformation potion, It_Potion_Wolf): the client drinks it from a quick slot, so the game's own
+    # MagicTransform turns it (SendPerceptionTransform, the potion's spawn), instead of the QA transform.
+    item = os.environ.get('G3_SHAPE_ITEM')
+    if item:
+        report['give'] = report_line(client.bot, f'givepotion {item}-2', ('GIVEPOTION ', 'REFUSED givepotion'))
+    shape = lambda: (report_line(client.bot, 'quickuse ' + item, ('QUICKUSE ', 'REFUSED quickuse')) if item
+                     else report_line(client.bot, 'transform Wolf', ('TRANSFORM ',)))
+    report['transform'] = shape()
     time.sleep(4)
+    report['shape'] = report_line(client.bot, 'transformstate', ('TRANSFORMSTATE ',))
+    assert ' same=0 ' in report['shape'], f"the client did not change its shape: {report['shape']}"
     before = report['before'] = hp_counters(client.bot)
     report_line(host.bot, f"npchp {report['target']}_30", 'NPCHP ')
     report['hits'] = []
@@ -1506,7 +2006,7 @@ def stageShapeFight(copies, report, negative=False):
     # Rewarded the player's way (GiveXP for this hero); a slave is worth no experience (24.10.: xp 750 -> 750).
     assert after['xp_awarded'] > before['xp_awarded'], f"the wolf's kill was not rewarded to the player: {before} -> {after}"
     # The other way round: an NPC of the host strikes the wolf; the creature takes it, not the hidden human body.
-    report['retransform'] = report_line(client.bot, 'transform Wolf', ('TRANSFORM ',))
+    report['retransform'] = shape()
     time.sleep(3)
     shape_before = report['shape_before'] = report_line(client.bot, 'transformstate', ('TRANSFORMSTATE ',))
     striker = next((g for g, v in npcs(host.bot).items() if not v['dead'] and not v['mirrored'] and g != target and 'Orc' not in v['name']
@@ -1808,6 +2308,287 @@ def murderwitnessdiag(copies, report, negative=False):
     watch('client_ko', client, good[1], False)
     time.sleep(4)
     watch('client_kill', client, good[1], True)
+
+
+def defeatwitnessdiag(copies, report, negative=False):
+    """P7 measurement, onlookers of a knock-out outside a bout (AssessDefeat, Script_Game 0x29fb0: help the one knocked
+    out, attack the other or flee; a duel returns at once): (1) the host's hero knocks a town member out (single-player
+    behaviour), (2) the client's hero knocks another out (the host's hero 600 away; the host tells those around with
+    SendPerceptionDefeat, witness.cpp KnockOutSeen). Records the FIGHTMEM counters (defeats_seen, defeats_yes), the
+    fightmem 'saw ... knocked out' lines and the tasks near each victim; asserts nothing. Negative (host): murderseenoff."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    town, good = murder_town(host, report)
+    if negative:
+        report['negative'] = report_line(host.bot, 'murderseenoff', 'MURDERSEENOFF ')
+
+    def around(bot, pos):
+        return {v['name']: v['task'] for v in npcs(bot).values()
+                if not v['dead'] and sum((a - b) ** 2 for a, b in zip(v['pos'], pos)) < 2500 ** 2}
+
+    def knock(label, attacker, victim):
+        marks = {c.tag: len(c.mod_log()) for c in (host, client)}
+        counts = {c.tag: report_line(c.bot, 'fightmem', 'FIGHTMEM ') for c in (host, client)}
+        guid = next((g for g, v in npcs(host.bot).items() if v['name'] == victim), None)
+        assert guid, f'{victim} is not among the host NPCs'
+        pos = npcs(host.bot)[guid]['pos']
+        tasks_before = around(host.bot, pos)
+        report_line(host.bot, f'npchp {victim}_30', 'NPCHP ')
+        report_line(attacker.bot, 'sethp 1000', 'SETHP ')
+        hits = []
+        for _ in range(60):
+            report_line(attacker.bot, 'arm ' + WEAPON, 'ARM ')
+            hits.append(hit_npc(attacker.bot, guid)['line'][-100:])
+            time.sleep(0.6)
+            state = npcs(host.bot).get(guid, {})
+            if state.get('dead') or state.get('task') in KO_TASKS:
+                break
+            time.sleep(0.6)
+        time.sleep(6)
+        report[label] = {
+            'victim': victim, 'state': npcs(host.bot).get(guid, {}).get('task'), 'hits': hits[-3:],
+            'tasks_before': tasks_before, 'tasks_after': around(host.bot, pos),
+            'fightmem_before': counts, 'fightmem': {c.tag: report_line(c.bot, 'fightmem', 'FIGHTMEM ') for c in (host, client)},
+            'log': {c.tag: [l[13:] for l in c.mod_log()[marks[c.tag]:].splitlines() if 'knocked out by' in l or 'knocked' in l][-30:]
+                    for c in (host, client)}}
+
+    teleport_to(host.bot, good[0])
+    report_line(host.bot, 'arm ' + WEAPON, 'ARM ')
+    time.sleep(4)
+    knock('host_ko', host, good[0])
+    teleport_to(host.bot, good[1])
+    teleport_to(client.bot, good[1])
+    x, y, z = hero_pos(host.bot)
+    move_hero(host.bot, (x + 600, y, z))
+    time.sleep(4)
+    knock('client_ko', client, good[1])
+
+
+def stageDefeatSeen(copies, report, negative=False):
+    """P7, onlookers of the other player's knock-out (AssessDefeat, Script_Game 0x29fb0). The game tells those around of
+    its own player's knock-outs from its hit path (SendPerceptionDefeat after a hit judged as a knock-out); the client's
+    knock-outs are applied on the host (combat.cpp), which tells those around (witness.cpp KnockOutSeen) with the puppet as
+    the player (fightmem.cpp). defeatwitnessdiag 26.10. (Ishtar): onlookers of the host's hero (knocked out by a guard)
+    took up the fight against it; onlookers of the client's knock-out of Surus attacked the puppet. In the first town with
+    routine status (G3_TOWN), the client knocks a member out, the host's hero 6 m off: at least one NPC on the host judges
+    the knock-out with the puppet (FIGHTMEM defeats). Whether one reacts depends on the scene as in single-player (Ishtar
+    26.10.: once two attacked the puppet, once all were fighting it already and none did); recorded, not asserted.
+    Negative control (host): murderseenoff (nobody is told)."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    town, good = murder_town(host, report)
+    if negative:
+        report['negative'] = report_line(host.bot, 'murderseenoff', 'MURDERSEENOFF ')
+    victim = good[1]
+    teleport_to(host.bot, victim)
+    teleport_to(client.bot, victim)
+    x, y, z = hero_pos(host.bot)
+    move_hero(host.bot, (x + 600, y, z))
+    time.sleep(4)
+    mark = len(host.mod_log())
+    before = report_line(host.bot, 'fightmem', 'FIGHTMEM ')
+    guid = next((g for g, v in npcs(host.bot).items() if v['name'] == victim), None)
+    assert guid, f'{victim} is not among the host NPCs'
+    report_line(host.bot, f'npchp {victim}_30', 'NPCHP ')
+    report_line(client.bot, 'sethp 1000', 'SETHP ')
+    hits = []
+    for _ in range(60):
+        report_line(client.bot, 'arm ' + WEAPON, 'ARM ')
+        hits.append(hit_npc(client.bot, guid)['line'][-100:])
+        time.sleep(0.6)
+        state = npcs(host.bot).get(guid, {})
+        if state.get('dead') or state.get('task') in KO_TASKS:
+            break
+        time.sleep(0.6)
+    time.sleep(6)
+    after = report_line(host.bot, 'fightmem', 'FIGHTMEM ')
+    seen = [l[13:] for l in host.mod_log()[mark:].splitlines() if f'saw {victim} knocked out by' in l]
+    report.update({'victim': victim, 'state': state.get('task'), 'hits': hits[-3:], 'fightmem': [before, after], 'seen': seen[:12]})
+    count = lambda line, key: int(re.search(rf' {key}=(\d+)', line)[1])
+    report['puppet_defeats'] = count(after, 'defeats') - count(before, 'defeats')
+    assert state.get('task') in KO_TASKS, f'the client did not knock {victim} out: {state}'
+    puppet_seen = [l for l in seen if '(a puppet)' in l]
+    if negative:
+        assert report['puppet_defeats'] == 0 and not puppet_seen, f'murderseenoff: still judged {report["puppet_defeats"]}, {puppet_seen}'
+        return
+    assert report['puppet_defeats'] >= 1, f'no NPC on the host judged the knock-out of {victim} by the puppet: {before} -> {after}'
+
+
+def run_up(copy, host, npc):
+    """The player at `copy` comes back to `npc`: 8 m off, then runs up to it (the game's perception, Script_Game
+    0x8bd0, takes the player in view with a free line of sight, or within 10 m when not standing)."""
+    teleport_to(copy.bot, npc)
+    x, y, z = hero_pos(copy.bot)
+    move_hero(copy.bot, (x + 800, y + 30, z))
+    time.sleep(1)
+    pos = next((v['pos'] for v in npcs(host.bot).values() if v['name'] == npc), None)
+    if pos:
+        return report_line(copy.bot, f'runto {pos[0]:.0f}_{pos[1]:.0f}_{pos[2]:.0f}', ('RUNTO ', 'REFUSED runto'))
+    return 'no position'
+
+
+def upsetdiag(copies, report, negative=False):
+    """P7 measurement, a fight the NPC gave up (CancelAttack 0x1a4d0: LastFightAgainstPlayer Cancel and
+    SetLastFightTimestamp 0x113d0, both only for GetPlayer) and the grudge on sight (IsUpset 0x115d0, AssessActivePerception
+    slot 0, the local player only: Cancel, a timestamp, LastPlayerAR within its time window, then AssessTarget again). An
+    NPC (G3_UPSET_NPC) attacks the actor (G3_WHO=host: the host's hero, QA npcfight, the single-player reference; else the
+    client's puppet, QA aggro); the actor jumps 60 m away and the NPC gives up (QA cancelattack, the game's script; the
+    chase after the puppet did not end in 40 s, G3_UPSET_CHASE=1 waits for it); then the other player walks up to it,
+    then the actor comes back. Records the NPC's memory (fightmemory, crime: reason, last_player_ar, target) on both machines
+    after each step; asserts nothing."""
+    npc = os.environ.get('G3_UPSET_NPC', 'Javier')
+    who = os.environ.get('G3_WHO', 'host')
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    actor, other = (host, client) if who == 'host' else (client, host)
+    for c in (host, client):  # the host first: it simulates the town
+        teleport_to(c.bot, npc)
+        time.sleep(2)
+
+    def mem(tag):
+        report.setdefault('mem', {})[tag] = {c.tag: {
+            'fm': re.sub(r'^name=\S+ ', '', report_line(c.bot, f'fightmemory {npc}', ('FIGHTMEMORY ', 'REFUSED fightmemory'))[12:]),
+            'crime': {k: crime_of(c.bot, npc).get(k) for k in ('reason', 'last_player_ar', 'target', 'task')}} for c in (host, client)}
+
+    def away(c, dx):
+        x, y, z = hero_pos(c.bot)
+        move_hero(c.bot, (x + dx, y + 30, z))
+
+    away(other, 4000)
+    report_line(actor.bot, 'sethp 1000', 'SETHP ')
+    mem('start')
+    if actor is host:
+        report['attack'] = report_line(host.bot, f'npcfight {npc}_hero', ('NPCFIGHT ', 'REFUSED npcfight'))
+    else:
+        report['attack'] = report_line(host.bot, f'aggro {npc}_12', ('AGGRO ', 'REFUSED aggro'))
+    time.sleep(float(os.environ.get('G3_UPSET_FIGHT', '0.3')))  # soon: in Reddock the town joined in and knocked the hero out
+    away(actor, 6000)
+    report['fighting'] = report_line(host.bot, f'fightmemory {npc}', ('FIGHTMEMORY ', 'REFUSED fightmemory'))[12:]
+    if os.environ.get('G3_UPSET_CHASE') != '1':  # the chase did not end for the puppet (26.10.): the game's give-up script
+        report['cancel'] = report_line(host.bot, f'cancelattack {npc}', ('CANCELATTACK ', 'REFUSED cancelattack'))
+    timeline = []
+    for _ in range(40):
+        time.sleep(1)
+        task = crime_of(host.bot, npc).get('task', '-')
+        timeline.append(task)
+        if len(timeline) > 3 and not task.startswith('ZS_Attack') and not timeline[-2].startswith('ZS_Attack'):
+            break
+    report['timeline'] = timeline[::3]
+    time.sleep(3)
+    mem('given_up')
+    run_up(other, host, npc)
+    time.sleep(10)
+    mem('other_near')
+    away(other, 4000)
+    time.sleep(3)
+    report['run_up'] = run_up(actor, host, npc)
+    time.sleep(10)
+    mem('actor_back')
+    report['actor_hero'] = report_line(actor.bot, 'hp', 'HP ')
+    report['log'] = {c.tag: [l[13:] for l in c.mod_log().splitlines() if 'fightmem:' in l][-12:] for c in (host, client)}
+
+
+def stageUpset(copies, report, negative=False):
+    """P7, the grudge on sight for the other player (IsUpset 0x115d0, asked by AssessActivePerception for the game's own
+    player only: a fight the NPC gave up, CancelAttack, within a while by the reason it fought for, then AssessTarget again).
+    The host keeps the client's fights apart (fightmem.cpp; before, CancelAttack with the puppet as the player left the
+    cancelled fight in the host's NPC, held against the host's hero) and asks IsUpset for the puppet (guards.cpp). An NPC
+    (G3_UPSET_NPC, Javier in Reddock) attacks the client's puppet (QA aggro, reason Enemy), the client jumps 60 m off and
+    the NPC gives up (QA cancelattack, the game's script): the host keeps Cancel for player 2 and its NPC the host hero's
+    memory; the host's hero walks up: the NPC leaves it alone; the client comes back: within 15 s the NPC attacks the
+    puppet again. Negative control: grudgeoff on the host."""
+    npc = os.environ.get('G3_UPSET_NPC', 'Javier')
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    if negative:
+        assert 'ok=1' in report_line(host.bot, 'grudgeoff', 'GRUDGEOFF ')
+    for c in (host, client):  # the host first: it simulates the town
+        teleport_to(c.bot, npc)
+        time.sleep(2)
+
+    def memory():
+        return report_line(host.bot, f'fightmemory {npc}', ('FIGHTMEMORY ', 'REFUSED fightmemory'))[12:]
+
+    def away(c, dx):
+        x, y, z = hero_pos(c.bot)
+        move_hero(c.bot, (x + dx, y + 30, z))
+
+    away(host, 4000)
+    before = re.search(r' last=(\d+)', memory())[1]
+    report_line(client.bot, 'sethp 1000', 'SETHP ')
+    report['attack'] = report_line(host.bot, f'aggro {npc}_12', ('AGGRO ', 'REFUSED aggro'))
+    time.sleep(1)
+    report['fighting'] = memory()
+    away(client, 6000)
+    report['cancel'] = report_line(host.bot, f'cancelattack {npc}', ('CANCELATTACK ', 'REFUSED cancelattack'))
+    time.sleep(3)
+    report['given_up'] = memory()
+    run_up(host, host, npc)
+    time.sleep(8)
+    report['host_near'] = memory()
+    away(host, 4000)
+    time.sleep(2)
+    report['run_up'] = run_up(client, host, npc)
+    timeline = []
+    for _ in range(15):
+        time.sleep(1)
+        line = memory()
+        timeline.append(re.sub(r'^name=\S+ ', '', line)[:120])
+        if 'task=ZS_Attack' in line and 'target=G3T_Player2' in line:
+            break
+    report['client_back'] = timeline[-4:]
+    report['fightmem'] = report_line(host.bot, 'fightmem', 'FIGHTMEM ')
+    report['log'] = [l[13:] for l in host.mod_log().splitlines() if 'still holds' in l or 'called off' in l][-6:]
+    assert 'target=G3T_Player2' in report['fighting'], f'{npc} did not attack the puppet: {report["fighting"]}'
+    if not negative:
+        assert 'kept=2:3:' in report['given_up'], f'the host does not keep the fight {npc} gave up against player 2: {report["given_up"]}'
+        assert f' last={before} ' in report['given_up'], f"the client's fight went into {npc}'s memory of the host's hero: {before} -> {report['given_up']}"
+    assert 'target=PC_Hero' not in report['host_near'], f"{npc} took the client's fight out on the host's hero: {report['host_near']}"
+    assert 'target=G3T_Player2' in timeline[-1] and 'task=ZS_Attack' in timeline[-1], f'{npc} did not take up the fight against the returning client: {timeline[-3:]}'
+
+
+def aggressordiag(copies, report, negative=False):
+    """P7 measurement, one blow on a friendly NPC (AssessAgressor 0x24490, re/out/aggressor-b.c: in its routine an NPC
+    friendly to the attacker takes it up with ZS_ReactToDamage, any other attacks, AssessTarget reason 9; the client's
+    blows on the host make the NPC judge the puppet with AssessTarget reason 9 directly, combat.cpp). In Reddock the host's
+    hero strikes one rebel once (single-player reference), then the client strikes another once (the host 7 m off).
+    Records p7probe lines (AssessAgressor), the struck NPC's task and target for 8 s, and its attitude; asserts nothing."""
+    names = os.environ.get('G3_AGG_NPCS', 'Norris,Copper').split(',')
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    for c in (host, client):
+        report_line(c.bot, 'p7probeon', 'P7PROBEON ')
+    for c in (host, client):  # the host first: it simulates the town
+        teleport_to(c.bot, names[0])
+        time.sleep(2)
+
+    def strike(striker, name, tag):
+        teleport_to(striker.bot, name)
+        time.sleep(2)
+        marks = {c.tag: len(c.mod_log()) for c in (host, client)}
+        guid = next((g for g, v in npcs(host.bot).items() if v['name'] == name), None)
+        assert guid, f'{name} is not among the host NPCs'
+        attitude = report_line(host.bot, 'attitude ' + name, ('ATTITUDE ', 'REFUSED attitude'))
+        report_line(striker.bot, 'arm ' + WEAPON, 'ARM ')
+        time.sleep(1)
+        hit = hit_npc(striker.bot, guid)['line'][-100:]
+        samples = []
+        for _ in range(8):
+            time.sleep(1)
+            cr = crime_of(host.bot, name)
+            samples.append(f"{cr.get('task')}:{cr.get('target')}")
+        report[tag] = {'npc': name, 'attitude': attitude, 'hit': hit, 'samples': samples,
+                       'probe': {c.tag: [l[13:] for l in c.mod_log()[marks[c.tag]:].splitlines() if 'AssessAgressor' in l][-8:]
+                                 for c in (host, client)}}
+
+    strike(host, names[0], 'host_blow')
+    x, y, z = hero_pos(host.bot)
+    move_hero(host.bot, (x + 3000, y + 30, z))
+    time.sleep(3)
+    teleport_to(host.bot, names[1])
+    x, y, z = hero_pos(host.bot)
+    move_hero(host.bot, (x + 700, y + 30, z))
+    strike(client, names[1], 'client_blow')
 
 
 def stageMurderWitness(copies, report, negative=False):
@@ -2121,6 +2902,886 @@ def talk_through(copy, npc, seconds=40, choices=20):
     return picked
 
 
+def p7opendiag(copies, report, negative=False):
+    """P7 measurement (owner 25.10. evening: the open P7 points, measure first): with QA p7probeon on both machines, the
+    actor (the client; G3_WHO=host: the host, the single-player reference) in Reddock (A) draws its weapon next to Brenton,
+    (B) beats a town member down while others watch, (C) uses objects there; then (D) walks into Muntasir's guarded place
+    in Ishtar with 60 hit points and stays. Records per scene and machine how often OnWatchFight, SendPerceptionWarn,
+    AssessWarn, HasAttackReasonToKill, SendPerceptionUseInteractObject and AssessUseInteractObject ran (with a puppet,
+    positive), the onlookers' fight memory (LastFightAgainstPlayer, 5 = Friendly) and what the NPCs around do; asserts
+    nothing."""
+    who = os.environ.get('G3_WHO', 'client')
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    actor, other = (host, client) if who == 'host' else (client, host)
+    for c in (host, client):
+        report[f'{c.tag}_probe_on'] = report_line(c.bot, 'p7probeon', 'P7PROBEON ')
+
+    def probes():
+        out = {}
+        for c in (host, client):
+            start = c.bot.send('p7probe', 20)
+            c.bot.line('P7PROBE end', 15, 'p7probe', start)
+            out[c.tag] = {m[1]: (int(m[2]), int(m[3]), int(m[4])) for m in re.finditer(r'P7PROBE name=(\S+) calls=(\d+) puppet=(\d+) positive=(\d+)', c.bot.log()[start:])}
+        return out
+
+    def delta(before, after):
+        return {tag: {n: tuple(a - b for a, b in zip(after[tag][n], before[tag].get(n, (0, 0, 0)))) for n in after[tag]
+                      if after[tag][n] != before[tag].get(n, (0, 0, 0))} for tag in after}
+
+    def around(pos, radius=1500):
+        rows = npcs(host.bot)
+        names = sorted({v['name'] for v in rows.values() if not v['dead'] and not v['name'].startswith('G3T_') and distance(v['pos'], pos) < radius})
+        return {n: (lambda c: f"{c.get('task')}>{c.get('target')}:{c.get('reason')}")(crime_of(host.bot, n)) for n in names}
+
+    def logs(mark):
+        return {c.tag: [l[13:] for l in c.mod_log()[mark[c.tag]:].splitlines() if 'p7probe:' in l][-14:] for c in (host, client)}
+
+    def arrive(anchor, aside):
+        # The host first, so that it simulates the town (a client arriving alone takes the region, stage E).
+        for c in (host, client):
+            teleport_to(c.bot, anchor)
+            if c is other:
+                x, y, z = hero_pos(c.bot)
+                move_hero(c.bot, (x + aside, y + 30, z))
+            time.sleep(2)
+
+    # (A) weapon next to Brenton
+    town, good = murder_town(host, report, 'Reddock')
+    arrive('Brenton', 1500)
+    spot = hero_pos(actor.bot)
+    time.sleep(3)
+    before, mark = probes(), {c.tag: len(c.mod_log()) for c in (host, client)}
+    report_line(actor.bot, 'arm ' + WEAPON, 'ARM ')
+    report['A_act'] = report_line(actor.bot, 'act PS_Melee-PS_Melee_Loop', ('ACT ', 'REFUSED act'))
+    time.sleep(12)
+    report['A_around'] = around(spot)
+    report['A_probe'] = delta(before, probes())
+    report['A_log'] = logs(mark)
+    report_line(actor.bot, 'act PS_Normal-PS_Normal_Loop', ('ACT ', 'REFUSED act'))
+    move_hero(actor.bot, (spot[0] - 4000, spot[1] + 30, spot[2]))
+    time.sleep(15)
+
+    # (B) a fight others watch: the actor beats a town member down
+    victim = good[0]
+    arrive(victim, 1500)
+    guid = next(g for g, v in npcs(host.bot).items() if v['name'] == victim)
+    pos = npcs(host.bot)[guid]['pos']
+    onlookers = sorted({v['name'] for g, v in npcs(host.bot).items() if g != guid and not v['dead'] and not v['name'].startswith('G3T_')
+                        and distance(v['pos'], pos) < 1500})[:8]
+    report['B_victim'], report['B_onlookers'] = victim, onlookers
+    report['B_memory_before'] = {n: report_line(host.bot, f'fightmemory {n}', ('FIGHTMEMORY ', 'REFUSED fightmemory'))[12:] for n in onlookers}
+    report_line(host.bot, f'npchp {victim}_120', 'NPCHP ')
+    report_line(actor.bot, 'sethp 1000', 'SETHP ')
+    before, mark = probes(), {c.tag: len(c.mod_log()) for c in (host, client)}
+    for _ in range(40):
+        report_line(actor.bot, 'arm ' + WEAPON, 'ARM ')
+        hit_npc(actor.bot, guid)
+        time.sleep(1.2)
+        state = npcs(host.bot).get(guid, {})
+        if state.get('dead') or state.get('task') in KO_TASKS:
+            break
+    time.sleep(10)
+    report['B_victim_state'] = npcs(host.bot).get(guid, {}).get('task')
+    report['B_memory_after'] = {n: report_line(host.bot, f'fightmemory {n}', ('FIGHTMEMORY ', 'REFUSED fightmemory'))[12:] for n in onlookers}
+    report['B_around'] = around(pos)
+    report['B_probe'] = delta(before, probes())
+    report['B_log'] = logs(mark)
+
+    # (C) using objects in the town
+    start = actor.bot.send('usables all2500', 20)
+    actor.bot.line('USABLE end', 15, 'usables', start)
+    objects = [dict(re.findall(r'(\w+)=(\S+)', l)) for l in actor.bot.log()[start:].splitlines() if l.startswith('USABLE name=')]
+    report['C_objects'] = [f"{o.get('name')}:{o.get('usefunc')}:{o.get('usetype')}:{o.get('user')}" for o in objects[:12]]
+    before, mark = probes(), {c.tag: len(c.mod_log()) for c in (host, client)}
+    used = []
+    for o in [o for o in objects if o.get('user') == '-'][:3]:
+        used.append(report_line(actor.bot, f"use {o['name']}", ('USE ', 'REFUSED use'))[:120])
+        time.sleep(6)
+        report_line(actor.bot, 'unuse', ('UNUSE ', 'REFUSED unuse'))
+        time.sleep(2)
+    report['C_used'] = used
+    report['C_around'] = around(hero_pos(actor.bot))
+    report['C_probe'] = delta(before, probes())
+    report['C_log'] = logs(mark)
+
+    # (D) intruder at Muntasir with few hit points: knocked down or killed?
+    arrive('Muntasir', 3000)
+    report_line(actor.bot, 'sethp 60', 'SETHP ')
+    before, mark = probes(), {c.tag: len(c.mod_log()) for c in (host, client)}
+    states = []
+    for _ in range(12):
+        time.sleep(4)
+        states.append(report_line(actor.bot, 'herostate', 'HERO ')[:90])
+    report['D_hero'] = states
+    report['D_around'] = around(npcs(host.bot)[next(g for g, v in npcs(host.bot).items() if v['name'] == 'Muntasir')]['pos'], 2500)
+    report['D_probe'] = delta(before, probes())
+    report['D_log'] = logs(mark)
+
+
+def fightmemorydiag(copies, report, negative=False):
+    """P7 measurement, the NPCs' memory of a fight with the player (LastFightAgainstPlayer: 1 Lost, 2 Won, 3 Cancel, 4 Running,
+    5 Friendly; read by dialogs, IsUpset, IsTemporaryFriendlyToPlayer, GetAttitudeToPlayer). The striker (the client;
+    G3_WHO=host: the host, the single-player reference) knocks Folleck out in a duel (duelhero, as Folleck_DefeatHim starts
+    it), the other hero 7 m off; with QA p7probeon on both machines. Records Folleck's and the onlookers' memory on both
+    machines before, during and after, and the probe counts (OnWatchFight); asserts nothing."""
+    name = os.environ.get('G3_TARGET', 'Folleck')
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    striker = host if os.environ.get('G3_WHO') == 'host' else client
+    other = client if striker is host else host
+    for c in (host, client):
+        report_line(c.bot, 'p7probeon', 'P7PROBEON ')
+    for c in (host, client):  # the host first: it simulates them
+        teleport_to(c.bot, name)
+        time.sleep(2)
+    x, y, z = hero_pos(other.bot)
+    move_hero(other.bot, (x + 700, y + 30, z))
+    time.sleep(5)
+    guid = next((g for g, v in npcs(host.bot).items() if v['name'] == name and not v['dead']), None)
+    assert guid, f'{name} is not among the host NPCs'
+    pos = npcs(host.bot)[guid]['pos']
+    near = sorted({v['name'] for g, v in npcs(host.bot).items() if g != guid and not v['dead'] and not v['name'].startswith('G3T_')
+                   and distance(v['pos'], pos) < 1500})[:8]
+    report['near'] = near
+
+    def memory(tag):
+        return {c.tag: {n: re.sub(r'^name=\S+ ', '', report_line(c.bot, f'fightmemory {n}', ('FIGHTMEMORY ', 'REFUSED fightmemory'))[12:])
+                        for n in [name] + near} for c in (host, client)}
+    report['memory_before'] = memory('before')
+    report_line(striker.bot, 'arm ' + WEAPON, 'ARM ')
+    report['duel'] = report_line(striker.bot, 'duelhero ' + name, 'DUELHERO ')
+    time.sleep(3)
+    report['memory_running'] = memory('running')
+    report_line(host.bot, f'npchp {name}_30', 'NPCHP ')
+    state = {}
+    for _ in range(25):
+        hit_npc(striker.bot, guid)
+        time.sleep(0.8)
+        state = npcs(host.bot).get(guid, {})
+        if state.get('dead') or state.get('task') in KO_TASKS:
+            break
+        time.sleep(0.6)
+    report['state'] = state
+    time.sleep(8)
+    report['memory_after'] = memory('after')
+    report['around'] = {n: (lambda c: f"{c.get('task')}>{c.get('target')}:{c.get('reason')}")(crime_of(host.bot, n)) for n in near}
+    out = {}
+    for c in (host, client):
+        start = c.bot.send('p7probe', 20)
+        c.bot.line('P7PROBE end', 15, 'p7probe', start)
+        out[c.tag] = re.findall(r'P7PROBE name=(\S+) calls=(\d+) puppet=(\d+) positive=(\d+)', c.bot.log()[start:])
+    report['probe'] = out
+    report['log'] = {c.tag: [l[13:] for l in c.mod_log().splitlines() if 'p7probe: OnWatchFight' in l][-8:] for c in (host, client)}
+
+
+def useownediag(copies, report, negative=False):
+    """P7 measurement, using other people's things (AssessUseInteractObject: an NPC that sees the player use an object in an
+    indoor owner zone treats it like theft, attack reason 5). After the raid in Ardea the host lists the interact objects in
+    owner zones within 50 m (QA ownedobj); the actor (the client; G3_WHO=host: the host, the single-player reference) uses up
+    to three free ones in turn, the other hero 15 m off; with QA p7probeon on both machines. Records the probe counts, the
+    log lines and who around targets the actor (task, reason); asserts nothing."""
+    who = os.environ.get('G3_WHO', 'client')
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    actor, other = (host, client) if who == 'host' else (client, host)
+    expected = 'hero' if who == 'host' else 'puppet2'
+    for c in (host, client):
+        report_line(c.bot, 'p7probeon', 'P7PROBEON ')
+    start = host.bot.send('ownedobj 5000', 20)
+    host.bot.line('OWNEDOBJ end', 15, 'ownedobj', start)
+    objects = [dict(re.findall(r'(\w+)=(\S+)', l)) for l in host.bot.log()[start:].splitlines() if l.startswith('OWNEDOBJ guid=')]
+    report['objects'] = [f"{o['name']}:{o['usetype']}:{o['usefunc']}:{o['user']}:{o['zone']}:{o['zone_owner']}:{o['security']}:{o['distance_cm']}" for o in objects][:16]
+    free = [o for o in objects if o.get('user') == '-'][:3]
+    assert free, 'no free object in an owner zone near the start'
+    for k, o in enumerate(free):
+        at = tuple(float(v) for v in o['pos'].split('_'))
+        move_hero(host.bot, (at[0] + (0 if who == 'host' else 1500), at[1] + 60, at[2]))
+        time.sleep(2)
+        move_hero(client.bot, (at[0] + (1500 if who == 'host' else 0), at[1] + 60, at[2]))
+        time.sleep(3)
+        marks = {c.tag: len(c.mod_log()) for c in (host, client)}
+        report[f'use{k}'] = report_line(actor.bot, f"use {o['name']}", ('USE ', 'REFUSED use'))[:140]
+        time.sleep(8)
+        rows = npcs(host.bot)
+        near = sorted({v['name'] for v in rows.values() if not v['dead'] and not v['name'].startswith('G3T_') and distance(v['pos'], at) < 1500})
+        report[f'use{k}_around'] = {n: (lambda c: f"{c.get('task')}>{c.get('target')}:{c.get('reason')}")(crime_of(host.bot, n)) for n in near}
+        report[f'use{k}_on_actor'] = [n for n, t in report[f'use{k}_around'].items() if f'>{expected}:' in t]
+        report[f'use{k}_log'] = {c.tag: [l[13:] for l in c.mod_log()[marks[c.tag]:].splitlines() if 'p7probe:' in l][-10:] for c in (host, client)}
+        report_line(actor.bot, 'unuse', ('UNUSE ', 'REFUSED unuse'))
+        time.sleep(3)
+    out = {}
+    for c in (host, client):
+        start = c.bot.send('p7probe', 20)
+        c.bot.line('P7PROBE end', 15, 'p7probe', start)
+        out[c.tag] = re.findall(r'P7PROBE name=(\S+) calls=(\d+) puppet=(\d+) positive=(\d+)', c.bot.log()[start:])
+    report['probe'] = out
+
+
+def intruderkodiag(copies, report, negative=False):
+    """P7 measurement, the intent to kill an intruder (HasAttackReasonToKill: for the attack reasons GateGuard 10 and Intruder
+    11 only when the target is Entity::GetPlayer and stands in the guarded zone). Ishtar: the actor (the client; G3_WHO=host:
+    the host, the single-player reference) walks into Muntasir's guarded place with 60 hit points and stays, the other hero
+    30 m off; with QA p7probeon on both machines. Records the actor's state every 4 s for 60 s (down, dead, hit points), who
+    attacks it and why, and the probe log of HasAttackReasonToKill; asserts nothing."""
+    who = os.environ.get('G3_WHO', 'client')
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    actor, other = (host, client) if who == 'host' else (client, host)
+    for c in (host, client):
+        report_line(c.bot, 'p7probeon', 'P7PROBEON ')
+    for c in (host, client):
+        teleport_to(c.bot, 'Muntasir')
+        if c is other:
+            x, y, z = hero_pos(c.bot)
+            move_hero(c.bot, (x + 3000, y + 30, z))
+        time.sleep(2)
+    report_line(actor.bot, 'sethp 60', 'SETHP ')
+    marks = {c.tag: len(c.mod_log()) for c in (host, client)}
+    states = []
+    for _ in range(15):
+        time.sleep(4)
+        states.append(re.sub(r' state=\S+| ani_state=\S+| ai_mode=\S+| paused=\S+| running=\S+| page=\S+', '', report_line(actor.bot, 'herostate', 'HERO ')))
+    report['hero'] = states
+    at = next(v['pos'] for v in npcs(host.bot).values() if v['name'] == 'Muntasir')
+    rows = npcs(host.bot)
+    near = sorted({v['name'] for v in rows.values() if not v['dead'] and not v['name'].startswith('G3T_') and distance(v['pos'], at) < 2500})
+    report['around'] = {n: (lambda c: f"{c.get('task')}>{c.get('target')}:{c.get('reason')}")(crime_of(host.bot, n)) for n in near}
+    report['log'] = {c.tag: [l[13:] for l in c.mod_log()[marks[c.tag]:].splitlines() if 'HasAttackReasonToKill' in l or 'guards:' in l or 'downed' in l][-14:]
+                     for c in (host, client)}
+    if who == 'client':
+        report['down_log'] = [l[13:] for l in client.mod_log()[marks['client']:].splitlines() if 'down' in l.lower() or 'killed' in l][-8:]
+
+
+def stageIntruderFight(copies, report, negative=False):
+    """P7, the guards' intent to kill an intruder as in single-player for the other player too. HasAttackReasonToKill holds
+    for the attack reasons GateGuard and Intruder only against Entity::GetPlayer in the guarded zone (re/out/p7open-b.c):
+    for the client's puppet it said 0, for the host's hero 1 (intruderkodiag 25.10.; with it the guards fought the host on
+    after a knock-out, the client they let be). Now guards.cpp asks with the puppet as the game's player. Ishtar: the client
+    (G3_WHO=host: the host, the single-player reference) walks into Muntasir's guarded place with 60 hit points and stays,
+    the other hero 30 m off. Within 60 s at least one intent to kill was asked about the puppet and held (GUARDS kill_yes),
+    and the intruder is not dead. Negative control: fightsoff on the host."""
+    who = os.environ.get('G3_WHO', 'client')
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    if negative:
+        assert 'ok=1' in report_line(host.bot, 'fightsoff', 'FIGHTSOFF ')
+    if os.environ.get('G3_FIGHTMEM') == '0':  # comparison: the fight memory's puppet-as-player in the attack states off
+        report['fightmem'] = report_line(host.bot, 'fightmemoff', 'FIGHTMEMOFF ')
+    actor, other = (host, client) if who == 'host' else (client, host)
+    for c in (host, client):  # the host first: it simulates Ishtar
+        teleport_to(c.bot, 'Muntasir')
+        if c is other:
+            x, y, z = hero_pos(c.bot)
+            move_hero(c.bot, (x + 3000, y + 30, z))
+        time.sleep(2)
+    report_line(actor.bot, 'sethp 60', 'SETHP ')
+    states, yes = [], 0
+    for _ in range(15):
+        time.sleep(4)
+        states.append(re.sub(r' state=\S+| ani_state=\S+| ai_mode=\S+| paused=\S+| running=\S+| page=\S+', '', report_line(actor.bot, 'herostate', 'HERO ')))
+        g = dict(re.findall(r'(\w+)=(\d+)', report_line(host.bot, 'guards', 'GUARDS ')))
+        yes = int(g.get('kill_yes', 0))
+        if who == 'client' and yes >= 1 and len(states) >= 6:
+            break
+    report['hero'] = states
+    report['knocked_out'] = sum(1 for a, b in zip(states, states[1:]) if ' down=0' in a and ' down=1' in b) + (' down=1' in states[0])
+    report['guards'] = report_line(host.bot, 'guards', 'GUARDS ')
+    report['log'] = [l[13:] for l in host.mod_log().splitlines() if 'guards:' in l][-6:]
+    assert ' dead=1' not in ''.join(states), f'the intruder died: {states[-3:]}'
+    if who == 'client':
+        assert yes >= 1, f'no intent to kill the intruding puppet: {report["guards"]}'
+
+
+def chestwitnessdiag(copies, report, negative=False):
+    """P7 measurement, opening a chest others can see (re/out/p7open-use-b.c: PS_Interact_Chest before unlocking and
+    PS_Normal_Loop before rolling a chest's loot call SendPerceptionUseInteractObject; an NPC that sees it judges it with
+    AssessUseInteractObject, attack reason 5, and the opening stops). After the raid in Ardea the actor (the client;
+    G3_WHO=host: the host, the single-player reference) opens up to three unrolled chests near the start, nearest first, the
+    other hero 15 m off; with QA p7probeon on both machines. Records the probe counts and log, what the actor does after
+    and who around targets it (task, reason); asserts nothing."""
+    who = os.environ.get('G3_WHO', 'client')
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    actor, other = (host, client) if who == 'host' else (client, host)
+    expected = 'hero' if who == 'host' else 'puppet2'
+    for c in (host, client):
+        report_line(c.bot, 'p7probeon', 'P7PROBEON ')
+    if os.environ.get('G3_CHEST_AT'):  # another town (chestscandiag 25.10.: Faring's chests stand in security level 3)
+        for c in (host, client):
+            teleport_to(c.bot, os.environ['G3_CHEST_AT'])
+            time.sleep(2)
+        time.sleep(4)
+    found = [c for c in chests(host.bot) if c.get('gen_plunder') == '0' and c.get('sets') != '-'][:3]
+    report['chests'] = [f"{c['guid'][:8]} {c['distance_cm']}cm locked={c.get('locked')}" for c in found]
+    assert found, 'no unrolled chest near the start'
+    for k, c in enumerate(found):
+        info = report_line(host.bot, 'useinfo ' + c['guid'], ('USEINFO ', 'REFUSED useinfo'))
+        m = re.search(r' pos=([-\d]+)_([-\d]+)_([-\d]+)', info)
+        if not m:
+            report[f'chest{k}'] = info[:160]
+            continue
+        at = tuple(float(v) for v in m.groups())
+        move_hero(other.bot, (at[0] + 1500, at[1] + 60, at[2]))
+        move_hero(actor.bot, (at[0] + 120, at[1] + 60, at[2]))
+        time.sleep(3)
+        rows = npcs(host.bot)
+        near = sorted({v['name'] for v in rows.values() if not v['dead'] and not v['name'].startswith('G3T_') and distance(v['pos'], at) < 1200})
+        marks = {x.tag: len(x.mod_log()) for x in (host, client)}
+        report[f'chest{k}'] = {'name': re.search(r'name=(\S+)', info)[1], 'near': near,
+                               'use': report_line(actor.bot, 'use ' + c['guid'], ('USE ', 'REFUSED use'))[:140]}
+        time.sleep(8)
+        report[f'chest{k}']['actor'] = report_line(actor.bot, 'herostate', 'HERO ')[:110]
+        report[f'chest{k}']['around'] = {n: (lambda x: f"{x.get('task')}>{x.get('target')}:{x.get('reason')}")(crime_of(host.bot, n)) for n in near}
+        report[f'chest{k}']['on_actor'] = [n for n, t in report[f'chest{k}']['around'].items() if f'>{expected}:' in t]
+        report[f'chest{k}']['log'] = {x.tag: [l[13:] for l in x.mod_log()[marks[x.tag]:].splitlines() if 'p7probe:' in l or 'witness' in l][-10:]
+                                      for x in (host, client)}
+        report_line(actor.bot, 'unuse', ('UNUSE ', 'REFUSED unuse'))
+        time.sleep(3)
+    out = {}
+    for c in (host, client):
+        start = c.bot.send('p7probe', 20)
+        c.bot.line('P7PROBE end', 15, 'p7probe', start)
+        out[c.tag] = re.findall(r'P7PROBE name=(\S+) calls=(\d+) puppet=(\d+) positive=(\d+)', c.bot.log()[start:])
+    report['probe'] = out
+
+
+def chestscandiag(copies, report, negative=False):
+    """P7 measurement, chests that stand in an indoor owner zone (where AssessUseInteractObject's helper sees an owner): the
+    host's hero visits a member of each town (G3_HOMESCAN: name list) and lists the interact objects named *Chest* within
+    80 m that QA ownedobj reports, with zone, owner and security level; asserts nothing."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    for anchor in os.environ.get('G3_HOMESCAN', 'Brenton,Lares,Lars,Konrad,Wenzel,Rhobar,Bernado,Orknarok,Zuben,Tjalf,Hamlar,Tarok,Javier').split(','):
+        try:
+            teleport_to(host.bot, anchor)
+        except AssertionError as error:
+            report[anchor] = str(error)[:100]
+            continue
+        time.sleep(5)
+        start = host.bot.send('ownedobj 8000', 20)
+        host.bot.line('OWNEDOBJ end', 15, 'ownedobj', start)
+        rows = [dict(re.findall(r'(\w+)=(\S+)', l)) for l in host.bot.log()[start:].splitlines() if l.startswith('OWNEDOBJ guid=')]
+        report[anchor] = [f"{r['name']}:{r['guid'][:8]}:{r['zone']}:{r['zone_owner']}:{r['security']}:{r['user']}:{r['pos']}" for r in rows if 'Chest' in r.get('name', '')][:10]
+
+
+def stageWarn(copies, report, negative=False):
+    """P7, a guard's warning about the other player reaches the NPCs around as in single-player. A guard that reacts to the
+    player sends SendPerceptionWarn; the NPCs around judge it with AssessWarn against Entity::GetPlayer (re/out/p7open-b.c),
+    which guards.cpp names as the puppet while the guard's reaction runs (p7opendiag 25.10.: host 2 warnings, 4 positive
+    judgements; client 3 warnings, 4 positive). Reddock: the client draws its weapon next to Brenton, the host's hero 15 m
+    off, with QA p7probeon on the host. Within 20 s at least one warning about the puppet went out and at least one NPC
+    judged it for the puppet, and NPCs there turn to the puppet. Negative control: trespassoff on the host."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    if negative:
+        assert 'ok=1' in report_line(host.bot, 'trespassoff', 'TRESPASSOFF ')
+    report['probe_on'] = report_line(host.bot, 'p7probeon', 'P7PROBEON ')
+    for c in (host, client):  # the host first: it simulates Reddock
+        teleport_to(c.bot, 'Brenton')
+        if c is host:
+            x, y, z = hero_pos(c.bot)
+            move_hero(c.bot, (x + 1500, y + 30, z))
+        time.sleep(2)
+    report_line(client.bot, 'arm ' + WEAPON, 'ARM ')
+    report['act'] = report_line(client.bot, 'act PS_Melee-PS_Melee_Loop', ('ACT ', 'REFUSED act'))
+
+    def counts():
+        start = host.bot.send('p7probe', 20)
+        host.bot.line('P7PROBE end', 15, 'p7probe', start)
+        return {m[1]: (int(m[2]), int(m[3]), int(m[4])) for m in re.finditer(r'P7PROBE name=(\S+) calls=(\d+) puppet=(\d+) positive=(\d+)', host.bot.log()[start:])}
+    log = []
+
+    def warned():
+        c = counts()
+        report['probe'] = c
+        sent = [l for l in host.mod_log().splitlines() if 'p7probe: SendPerceptionWarn' in l and 'target=puppet' in l and 'result=1' in l]
+        judged = [l for l in host.mod_log().splitlines() if 'p7probe: AssessWarn' in l and 'player=puppet' in l and 'result=1' in l]
+        log[:] = (sent + judged)[-6:]
+        return sent and judged and ['yes']
+    try:
+        wait_for(warned, 20, 'a warning about the puppet is sent and judged')
+    finally:
+        report['log'] = [l[13:] for l in log]
+        rows = npcs(host.bot)
+        at = next(v['pos'] for v in rows.values() if v['name'] == 'Brenton')
+        near = sorted({v['name'] for v in rows.values() if not v['dead'] and not v['name'].startswith('G3T_') and distance(v['pos'], at) < 2000})
+        report['around'] = {n: (lambda c: f"{c.get('task')}>{c.get('target')}:{c.get('reason')}")(crime_of(host.bot, n)) for n in near}
+    report_line(client.bot, 'act PS_Normal-PS_Normal_Loop', ('ACT ', 'REFUSED act'))
+    assert any('>puppet2:' in t for t in report['around'].values()), f'nobody turns to the puppet: {report["around"]}'
+
+
+def stageObserveSuspect(copies, report, negative=False):
+    """P7, NPCs watch the other player as a suspect where it does not belong, as in single-player. AssessPlayerZone puts
+    NPCs that see a stranger in their guarded place into ZS_ObserveSuspect (the host's hero in Hammerclan: Tjalf, 25.10.);
+    guards.cpp checks the puppets too and runs the state's loop with the puppet as the game's player. Ishtar: the client
+    walks into Muntasir's place, the host's hero 30 m off. Within 25 s an NPC there observes the puppet (ZS_ObserveSuspect,
+    target puppet2) and nobody observes the host's hero. Negative control: trespassoff on the host."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    if negative:
+        assert 'ok=1' in report_line(host.bot, 'trespassoff', 'TRESPASSOFF ')
+    for c in (host, client):
+        teleport_to(c.bot, 'Muntasir')
+        if c is host:
+            x, y, z = hero_pos(c.bot)
+            move_hero(c.bot, (x + 3000, y + 30, z))
+        time.sleep(2)
+    rows = npcs(host.bot)
+    at = next(v['pos'] for v in rows.values() if v['name'] == 'Muntasir')
+    near = sorted({v['name'] for v in rows.values() if not v['dead'] and not v['name'].startswith('G3T_') and distance(v['pos'], at) < 2500})
+
+    def observed():
+        state = {n: crime_of(host.bot, n) for n in near}
+        report['around'] = {n: f"{c.get('task')}>{c.get('target')}" for n, c in state.items()}
+        return [n for n, c in state.items() if str(c.get('task', '')).startswith('ZS_ObserveSuspect') and c.get('target') == 'puppet2']
+    try:
+        report['observers'] = wait_for(observed, 25, 'an NPC observes the puppet as a suspect')
+    finally:
+        report['guards'] = report_line(host.bot, 'guards', 'GUARDS ')
+    on_host = [n for n, t in report['around'].items() if t.startswith('ZS_ObserveSuspect') and t.endswith('>hero')]
+    assert not on_host, f'{on_host} observe the host for what the client did'
+
+
+def stageFightMemory(copies, report, negative=False):
+    """P7, the fight memory: onlookers watch the other player's duel and the opponent remembers it, as in single-player
+    (fightmem.cpp). Reddock arena: the striker (the client; G3_WHO=host: the host, the single-player reference) duels Joey
+    (duelhero, as the arena quest starts it) and knocks him out, the other hero 7 m off. Single-player (fightmemorydiag
+    25.10.): Copper came to watch (ZS_WatchFight) and remembered the fight (LastFightAgainstPlayer 5, Friendly), Joey
+    remembered losing (1); with the client nobody came and nobody remembered. Now: during the fight an onlooker watches it,
+    afterwards Joey remembers losing and an onlooker remembers the fight on the host, and for the client its game's copies
+    remember the same (an onlooker's memory 5 is what watching leaves; the task is seldom caught between hits). Since the
+    grudge (26.10.): the host keeps the client's fight apart (FIGHTMEMORY kept=2:...), its NPCs keep what they remember of
+    the host's hero. Negative control: fightmemoff on the host."""
+    name = os.environ.get('G3_TARGET', 'Joey')
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    if negative:
+        assert 'ok=1' in report_line(host.bot, 'fightmemoff', 'FIGHTMEMOFF ')
+    striker = host if os.environ.get('G3_WHO') == 'host' else client
+    other = client if striker is host else host
+    for c in (host, client):  # the host first: it simulates them
+        teleport_to(c.bot, name)
+        time.sleep(2)
+    x, y, z = hero_pos(other.bot)
+    move_hero(other.bot, (x + 700, y + 30, z))
+    time.sleep(5)
+    guid = next((g for g, v in npcs(host.bot).items() if v['name'] == name and not v['dead']), None)
+    assert guid, f'{name} is not among the host NPCs'
+    pos = npcs(host.bot)[guid]['pos']
+    near = sorted({v['name'] for g, v in npcs(host.bot).items() if g != guid and not v['dead'] and not v['name'].startswith('G3T_')
+                   and distance(v['pos'], pos) < 1500})[:8]
+    report['near'] = near
+
+    def memory(bot, n, player=None):
+        line = report_line(bot, f'fightmemory {n}', ('FIGHTMEMORY ', 'REFUSED fightmemory'))
+        m = re.search(rf' kept=(?:\S*,)?{player}:(\d+):', line) if player else re.search(r' last=(\d+)', line)
+        return int(m[1]) if m else -1
+    before = {n: memory(host.bot, n) for n in [name] + near}
+    report_line(striker.bot, 'arm ' + WEAPON, 'ARM ')
+    report['duel'] = report_line(striker.bot, 'duelhero ' + name, 'DUELHERO ')
+    time.sleep(2)
+    report_line(host.bot, f'npchp {name}_30', 'NPCHP ')
+    watchers, state = set(), {}
+    for _ in range(25):
+        hit_npc(striker.bot, guid)
+        time.sleep(0.8)
+        for n in near:
+            if str(crime_of(host.bot, n).get('task', '')).startswith('ZS_WatchFight'):
+                watchers.add(n)
+        state = npcs(host.bot).get(guid, {})
+        if state.get('dead') or state.get('task') in KO_TASKS:
+            break
+    report['state'] = state
+    report['watchers'] = sorted(watchers)
+    time.sleep(8)
+    after = {c.tag: {n: memory(c.bot, n) for n in [name] + near} for c in (host, client)}
+    if striker is client:
+        after['kept'] = {n: memory(host.bot, n, 2) for n in [name] + near}
+    report['memory_before'] = before
+    report['memory_after'] = after
+    report['fightmem'] = {c.tag: report_line(c.bot, 'fightmem', 'FIGHTMEM ') for c in (host, client)}
+    report['log'] = {c.tag: [l[13:] for l in c.mod_log().splitlines() if 'fightmem:' in l][-8:] for c in (host, client)}
+    assert state.get('task') in KO_TASKS and not state.get('dead'), f'{name} was not knocked out: {state}'
+    held = after['kept'] if striker is client else after['host']
+    assert held[name] == 1, f'{name} does not remember losing on the host: {held}'
+    assert any(held[n] == 5 for n in near), f'no onlooker remembers the fight on the host: {held}'
+    if striker is client:
+        assert after['host'] == before, f"the host's NPCs took the client's fight for the host's: {before} -> {after['host']}"
+        assert after['client'][name] == 1, f"{name}'s copy does not remember losing on the client: {after['client']}"
+        assert any(after['client'][n] == 5 for n in near), f"no onlooker's copy remembers the fight on the client: {after['client']}"
+
+
+def newsscandiag(copies, report, negative=False):
+    """P7 measurement, news of guards and bosses: which dialog infos say them (info script commands SayGuardNews,
+    SayBossNews; _AI_SayGuardNews says Halt, then KnownMurder or KnownTheft by what the speaker's town knows of the player),
+    who owns them and what they need (condition type, PlayerKnows). Host only; asserts nothing."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    for command in ('SayGuardNews', 'SayBossNews'):
+        start = host.bot.send('infoscan ' + command, 30)
+        host.bot.line('INFOSCAN end', 30, 'infoscan', start)
+        rows = [l for l in host.bot.log()[start:].splitlines() if l.startswith('INFOSCAN ')]
+        report[command] = rows[:40]
+        infos = sorted({m[1] for l in rows for m in [re.search(r'info=(\S+)', l)] if m})[:6]
+        for info in infos:
+            start = host.bot.send('infoscan info_' + info, 30)
+            host.bot.line('INFOSCAN end', 30, 'infoscan', start)
+            report[f'{command}_{info}'] = [l[9:180] for l in host.bot.log()[start:].splitlines() if l.startswith('INFOSCAN info=')][:12]
+
+
+def guardnewsdiag(copies, report, negative=False):
+    """P7 measurement, news of guards (info FILLERX2140, condition type 31, script SayGuardNews: _AI_SayGuardNews says Halt,
+    then KnownMurder or KnownTheft by what the speaker's town knows of the player). Reddock knows a theft of the player (QA
+    crimeknown Reddock-3, shared by the town counters); the actor (the client; G3_WHO=host: the host, the single-player
+    reference) stands 3 m from a guard (G3_GUARD, default RebWarrior_01), the other hero 20 m off. Records for 25 s whether
+    a guard walks up and talks (dialog running on the actor, partner), then which infos the guard offers when the actor
+    talks to it and what the news info does; asserts nothing. G3_ADDRESS=1 should be set for the client."""
+    who = os.environ.get('G3_WHO', 'client')
+    guard = os.environ.get('G3_GUARD', 'RebWarrior_01')
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    actor, other = (host, client) if who == 'host' else (client, host)
+    for c in (host, client):  # the host first: it simulates Reddock
+        teleport_to(c.bot, guard)
+        if c is other:
+            x, y, z = hero_pos(c.bot)
+            move_hero(c.bot, (x + 2000, y + 30, z + 600))
+        time.sleep(2)
+    x, y, z = hero_pos(actor.bot)
+    move_hero(actor.bot, (x + 300, y + 30, z))
+    town = os.environ.get('G3_TOWN', 'Reddock')
+    report['known'] = report_line(host.bot, f'crimeknown {town}-3', ('CRIMEKNOWN ', 'REFUSED crimeknown'))
+    time.sleep(3)
+    report['known_both'] = {c.tag: crime_of(c.bot, guard).get('known') for c in (host, client)}
+    timeline = []
+    for _ in range(25):
+        time.sleep(1)
+        t = talkstate(actor.bot)
+        timeline.append(f"{t.get('running')}:{t.get('partner')}:{t.get('current')}")
+        if t.get('running') == '1':
+            break
+    report['timeline'] = timeline[-8:]
+    report['addressed'] = talkstate(actor.bot)
+    if report['addressed'].get('running') == '1':
+        time.sleep(6)
+        report['addressed_after'] = talkstate(actor.bot)
+        report_line(actor.bot, 'endtalk', ('TALKSTATE ', 'REFUSED endtalk'))
+        time.sleep(2)
+    line, infos = talk_infos(actor, guard)
+    report['talk'] = line[:300]
+    report['infos'] = infos
+    news = next((i for i in ('FILLERX2140', 'FILLERX2144') if i in infos), None)  # guard news, boss news
+    if news:
+        report['news'] = report_line(actor.bot, 'talkinfo ' + news, ('TALKINFO ', 'REFUSED talkinfo'))
+        time.sleep(6)
+        report['news_state'] = talkstate(actor.bot)
+    report['log'] = {c.tag: [l[13:] for l in c.mod_log().splitlines() if 'address:' in l or 'dialog' in l.lower()][-8:] for c in (host, client)}
+    report_line(actor.bot, 'endtalk', ('TALKSTATE ', 'REFUSED endtalk'))
+
+
+def crimenewsdiag(copies, report, negative=False):
+    """P7 measurement, guard news after a counted crime. HasGuardNews (Script_Game 0xbcf00): a guard of the town (NPC type
+    1, SVM block GuardAndBoss) has news while the town's count of a crime exceeds its SuspectComment and KnownPlayerCrime
+    is below that crime (0x1000b8b0, re/out/news2-b.c); guardnewsdiag set KnownPlayerCrime to theft, which rules theft news
+    out. The host adds one crime to G3_TOWN (QA crimeadd <town>-<G3_NEWS_CRIME, 3 theft>-1); the first player (G3_WHO,
+    default host: the single-player reference) talks to guards near G3_GUARD (task with Guard, or G3_GUARDS) until one
+    offers FILLERX2140 (guard news) or FILLERX2144 (boss news) and chooses it; then the other player talks to that guard.
+    Records the offers and the town's counters (crimes, suspect, known) on both machines after each step; asserts nothing."""
+    who = os.environ.get('G3_WHO', 'host')
+    town = os.environ.get('G3_TOWN', 'Reddock')
+    crime = os.environ.get('G3_NEWS_CRIME', '3')
+    anchor = os.environ.get('G3_GUARD', 'Brenton')
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    first, second = (host, client) if who == 'host' else (client, host)
+    for c in (host, client):  # the host first: it simulates the town
+        teleport_to(c.bot, anchor)
+        time.sleep(2)
+
+    def counters(tag):
+        report.setdefault('counters', {})[tag] = {
+            c.tag: {k: crime_of(c.bot, anchor).get(k) for k in ('crimes', 'suspect', 'known')} for c in (host, client)}
+
+    counters('start')
+    report['add'] = report_line(host.bot, f'crimeadd {town}-{crime}-1', ('CRIMEADD ', 'REFUSED crimeadd'))
+    time.sleep(2)
+    report['suspect'] = report_line(host.bot, f'crimesuspect {town}-{crime}-0', ('CRIMESUSPECT ', 'REFUSED crimesuspect'))
+    time.sleep(4)
+    counters('added')
+    pos = hero_pos(host.bot)
+    listed = [g for g in os.environ.get('G3_GUARDS', '').split(',') if g]
+    near = [v['name'] for v in npcs(host.bot).values() if not v['dead'] and 'Guard' in v['task']
+            and sum((a - b) ** 2 for a, b in zip(v['pos'], pos)) < 4000 ** 2]
+    candidates = list(dict.fromkeys(listed + near + [anchor]))[:8]
+    report['candidates'] = candidates
+    report['offers'] = {}
+    guard = None
+    for name in candidates:
+        teleport_to(first.bot, name)
+        time.sleep(2)
+        _, infos = talk_infos(first, name)
+        report['offers'][name] = infos
+        news = next((i for i in ('FILLERX2140', 'FILLERX2144') if i in infos), None)
+        if news:
+            guard = name
+            report['news'] = report_line(first.bot, 'talkinfo ' + news, ('TALKINFO ', 'REFUSED talkinfo'))
+            time.sleep(8)
+            report['news_state'] = talkstate(first.bot)
+        report_line(first.bot, 'endtalk', ('TALKSTATE ', 'REFUSED endtalk'))
+        time.sleep(1)
+        if guard:
+            break
+    report['guard'] = guard
+    time.sleep(4)
+    counters('after_first')
+    if guard:
+        teleport_to(second.bot, guard)
+        time.sleep(2)
+        _, report['second_offers'] = talk_infos(second, guard)
+        report_line(second.bot, 'endtalk', ('TALKSTATE ', 'REFUSED endtalk'))
+        time.sleep(3)
+        counters('after_second')
+
+
+def guardcommentdiag(copies, report, negative=False):
+    """P7 measurement, comments on sight (AssessActivePerception: the player within 7 m, not HasCrimeRefuse, HasCommentInfo
+    -> StartComment; the guards' news FILLERX2140 is such a comment: HasGuardNews 0xbcf00 while the town's murder count is
+    above SuspectComment, and saying it sets SuspectComment to the count). The town (G3_TOWN, Reddock) gets a murder (QA
+    crimeadd, crimesuspect 0). (1) The client walks up to the town's people (G3_GUARDS, else those near G3_GUARD) while
+    the host's hero is 25 m off: does anyone comment (SuspectComment, p7probe HasGuardNews)? (2) The host's hero walks up
+    the same way (single-player reference). Records counters, probe lines and talk states; asserts nothing."""
+    town = os.environ.get('G3_TOWN', 'Reddock')
+    anchor = os.environ.get('G3_GUARD', 'Brenton')
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    for c in (host, client):
+        report_line(c.bot, 'p7probeon', 'P7PROBEON ')
+    for c in (host, client):  # the host first: it simulates the town
+        teleport_to(c.bot, anchor)
+        time.sleep(2)
+    pos = hero_pos(host.bot)
+    listed = [g for g in os.environ.get('G3_GUARDS', '').split(',') if g]
+    near = [v['name'] for v in npcs(host.bot).values() if not v['dead'] and not v['name'].startswith('G3T_')
+            and sum((a - b) ** 2 for a, b in zip(v['pos'], pos)) < 3000 ** 2]
+    people = list(dict.fromkeys(listed + near))[:8]
+    report['people'] = people
+
+    def counters():
+        return {c.tag: crime_of(c.bot, anchor).get('suspect') for c in (host, client)}
+
+    def walk(walker, tag):
+        marks = {c.tag: len(c.mod_log()) for c in (host, client)}
+        report_line(host.bot, f'crimeadd {town}-4-1', ('CRIMEADD ', 'REFUSED crimeadd'))
+        time.sleep(1)
+        report_line(host.bot, f'crimesuspect {town}-4-0', ('CRIMESUSPECT ', 'REFUSED crimesuspect'))
+        time.sleep(2)
+        steps = [counters()]
+        talks = []
+        for name in people:
+            report_line(walker.bot, 'endtalk', ('TALKSTATE ', 'REFUSED endtalk'))  # an addressing NPC held the walker
+            teleport_to(walker.bot, name)
+            time.sleep(4)
+            steps.append(counters())
+            t = talkstate(walker.bot)
+            talks.append(f"{name}:{t.get('running')}:{t.get('partner')}:{t.get('current')}")
+        report[tag] = {'suspect': steps, 'talks': talks,
+                       'probe': {c.tag: [l[13:] for l in c.mod_log()[marks[c.tag]:].splitlines()
+                                         if 'HasGuardNews' in l and ('result=1' in l or 'puppet' in l)][:12]
+                                 for c in (host, client)},
+                       'asked': {c.tag: sum(1 for l in c.mod_log()[marks[c.tag]:].splitlines() if 'HasGuardNews' in l) for c in (host, client)}}
+
+    x, y, z = hero_pos(host.bot)
+    move_hero(host.bot, (x + 2500, y + 30, z))  # 80 m off, the town went over to the client (26.10.)
+    time.sleep(3)
+    walk(client, 'client_walk')
+    x, y, z = hero_pos(client.bot)
+    move_hero(client.bot, (x + 2500, y + 30, z))
+    time.sleep(3)
+    walk(host, 'host_walk')
+
+
+def commentdiag(copies, report, negative=False):
+    """P7 measurement, a guard's comment on sight (AssessActivePerception for the game's player within 7 m: HasCommentInfo,
+    StartComment; the guards' murder news FILLERX2140 is one, and saying it sets the town's SuspectComment to its murder
+    count). The town (G3_TOWN, Reddock) gets a murder (QA crimeadd, crimesuspect 0) before each run-up to the guard
+    (G3_COMMENT_NPC, Reddock_Rebel_01, which had news for the host in guardcommentdiag): (1) the host's hero runs up
+    (single-player reference); (2) the host stands 12 m off (it keeps simulating the guard) and the client runs up.
+    Records SuspectComment, the walker's talk state and p7probe HasGuardNews lines for the guard; asserts nothing."""
+    town = os.environ.get('G3_TOWN', 'Reddock')
+    guard = os.environ.get('G3_COMMENT_NPC', 'Reddock_Rebel_01')
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    for c in (host, client):
+        report_line(c.bot, 'p7probeon', 'P7PROBEON ')
+    for c in (host, client):  # the host first: it simulates the town
+        teleport_to(c.bot, guard)
+        time.sleep(2)
+    for c in (host, client):
+        x, y, z = hero_pos(c.bot)
+        move_hero(c.bot, (x + 2500 + 500 * (c is client), y + 30, z))
+    time.sleep(3)
+
+    def run(walker, tag):
+        report_line(host.bot, f'crimeadd {town}-4-1', ('CRIMEADD ', 'REFUSED crimeadd'))
+        time.sleep(1)
+        report[tag + '_suspect0'] = report_line(host.bot, f'crimesuspect {town}-4-0', ('CRIMESUSPECT ', 'REFUSED crimesuspect'))
+        time.sleep(2)
+        marks = {c.tag: len(c.mod_log()) for c in (host, client)}
+        report[tag + '_mirrored'] = {c.tag: next((v['mirrored'] for v in npcs(c.bot).values() if v['name'] == guard), None)
+                                     for c in (host, client)}
+        run_up(walker, host, guard)
+        samples = []
+        for _ in range(10):
+            time.sleep(1)
+            t = talkstate(walker.bot)
+            samples.append(f"{crime_of(host.bot, guard).get('suspect')}|{crime_of(client.bot, guard).get('suspect')}|"
+                           f"{t.get('running')}:{t.get('partner')}:{t.get('current')}")
+        report[tag] = samples
+        report[tag + '_probe'] = {c.tag: [l[13:] for l in c.mod_log()[marks[c.tag]:].splitlines()
+                                          if 'HasGuardNews' in l and f'self={guard} ' in l][:6] for c in (host, client)}
+        report_line(walker.bot, 'endtalk', ('TALKSTATE ', 'REFUSED endtalk'))
+        x, y, z = hero_pos(walker.bot)
+        move_hero(walker.bot, (x + 2500, y + 30, z))
+        time.sleep(3)
+
+    run(host, 'host_run')
+    teleport_to(host.bot, guard)
+    x, y, z = hero_pos(host.bot)
+    move_hero(host.bot, (x + 1200, y + 30, z))
+    time.sleep(3)
+    run(client, 'client_run')
+
+
+def stageGuardNews(copies, report, negative=False):
+    """P7, a guard's news for the client (_AI_SayGuardNews, info FILLERX2140: HasGuardNews 0xbcf00 while the town's murder
+    count is above its SuspectComment; saying it sets SuspectComment to the count). It is an important info: the game's
+    look around makes the guard address its player (AssessActivePerception, AssessTalk; commentdiag 26.10.: RebNovice_04
+    told the host's hero at once as it ran up), and for the client a guard walks up the same way (address.cpp; the
+    harness turns that off unless a stage asks, which is why commentdiag heard nothing for the client). Reddock gets a
+    murder (QA crimeadd, crimesuspect 0); the host stands 12 m off the guard (G3_COMMENT_NPC, Reddock_Rebel_01), the client
+    runs up: within 12 s the news runs in a dialog on the client and SuspectComment reaches the count on both machines.
+    Negative control: addressoff on the client."""
+    town = os.environ.get('G3_TOWN', 'Reddock')
+    guard = os.environ.get('G3_COMMENT_NPC', 'Reddock_Rebel_01')
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    # The harness turns addressing off in the menu; here it is what the stage checks (negative: stays off).
+    report['address'] = report_line(client.bot, 'addressoff' if negative else 'addresson', ('ADDRESSOFF ', 'ADDRESSON '))
+    for c in (host, client):  # the host first: it simulates the town
+        teleport_to(c.bot, guard)
+        time.sleep(2)
+    x, y, z = hero_pos(client.bot)
+    move_hero(client.bot, (x + 3000, y + 30, z))
+    x, y, z = hero_pos(host.bot)
+    move_hero(host.bot, (x + 1200, y + 30, z))
+    time.sleep(3)
+    report['add'] = report_line(host.bot, f'crimeadd {town}-4-1', ('CRIMEADD ', 'REFUSED crimeadd'))
+    time.sleep(1)
+    report['suspect0'] = report_line(host.bot, f'crimesuspect {town}-4-0', ('CRIMESUSPECT ', 'REFUSED crimesuspect'))
+    time.sleep(2)
+    count = int(re.search(r' count=(\d+)', report['suspect0'])[1])
+    report['run_up'] = run_up(client, host, guard)
+    samples, news = [], False
+    for _ in range(12):
+        time.sleep(1)
+        t = talkstate(client.bot)
+        samples.append(f"{crime_of(host.bot, guard).get('suspect')}|{crime_of(client.bot, guard).get('suspect')}|"
+                       f"{t.get('running')}:{t.get('partner')}:{t.get('current')}")
+        news = news or t.get('current') == 'FILLERX2140'
+    time.sleep(3)
+    report['samples'] = samples
+    report['address_after'] = report_line(client.bot, 'address', 'ADDRESS ')
+    suspect = {c.tag: int(str(crime_of(c.bot, guard).get('suspect', '0')).split(',')[4]) for c in (host, client)}
+    report['suspect'] = suspect
+    report_line(client.bot, 'endtalk', ('TALKSTATE ', 'REFUSED endtalk'))
+    assert news, f'no guard news for the client: {samples[-4:]}'
+    assert suspect == {'host': count, 'client': count}, f'the town did not note the news ({count} murders): {suspect}'
+
+
+def attitudeleakdiag(copies, report, negative=False):
+    """P7 measurement, an NPC's own memory of the host's hero and the client (GetAttitudeToPlayer: the NPC's crime memory of
+    the player, LastPlayerCrime, and the town's; ai.cpp answers GetAttitude about a puppet as about the host's hero). The
+    host's hero commits a theft before NPC G3_LEAK_NPC (default Hamlar; QA witness <npc>_4: AssessTarget with reason
+    Theft, the last step of AssessTakeItem), jumps 60 m off and the NPC gives up (QA cancelattack). Then the client runs up
+    to the NPC alone. Records the NPC's attitude (hero, puppet, to_player, focus) and crime memory on both machines, and
+    for 12 s whom it targets; asserts nothing."""
+    npc = os.environ.get('G3_LEAK_NPC', 'Hamlar')
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    for c in (host, client):
+        teleport_to(c.bot, npc)
+        time.sleep(2)
+
+    def state(tag):
+        report.setdefault('state', {})[tag] = {c.tag: {
+            'attitude': report_line(c.bot, 'attitude ' + npc, ('ATTITUDE ', 'REFUSED attitude'))[9:],
+            'crime': {k: crime_of(c.bot, npc).get(k) for k in ('last_crime', 'reason', 'target', 'task', 'crimes', 'known')}}
+            for c in (host, client)}
+
+    x, y, z = hero_pos(client.bot)
+    move_hero(client.bot, (x + 4000, y + 30, z))
+    time.sleep(2)
+    state('start')
+    report['theft'] = report_line(host.bot, f'witness {npc}_4', ('WITNESSSAW ', 'REFUSED witness'))
+    time.sleep(1)
+    x, y, z = hero_pos(host.bot)
+    move_hero(host.bot, (x + 6000, y + 30, z))
+    report['cancel'] = report_line(host.bot, f'cancelattack {npc}', ('CANCELATTACK ', 'REFUSED cancelattack'))
+    time.sleep(3)
+    state('after_theft')
+    run_up(client, host, npc)
+    samples = []
+    for _ in range(12):
+        time.sleep(1)
+        cr = crime_of(host.bot, npc)
+        samples.append(f"{cr.get('task')}:{cr.get('target')}:{cr.get('reason')}")
+    report['client_near'] = samples
+    state('client_near')
+
+
+def stageAttitudeShared(copies, report, negative=False):
+    """P7, a town's anger at a theft as each player's game judges its own hero (GetAttitudeToPlayer, GetFocusNameAttitude:
+    the focus name's colour). With reputation shared, what the town knows (KnownPlayerCrime) is the same on both machines
+    (enclaves.cpp), so a town member's attitude to the client's hero in the client's own game follows the host's theft as
+    the host's does (attitudeleakdiag 26.10.: Norris in Reddock 2 -> 3 on both, to_player and focus alike; Hamlar, whose
+    memory of the theft is his own and not the town's, stayed friendly to both). The host's hero steals before G3_LEAK_NPC
+    (Norris; QA witness <npc>_4, the last step of AssessTakeItem): on the client, to_player and focus of that NPC for the
+    client's hero equal the host's for its hero and are above where they started. Negative control: enclavesyncoff on both."""
+    npc = os.environ.get('G3_LEAK_NPC', 'Norris')
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    if negative:
+        for c in (host, client):
+            assert 'ok=1' in report_line(c.bot, 'enclavesyncoff', 'ENCLAVESYNCOFF ')
+    for c in (host, client):  # the host first: it simulates the town
+        teleport_to(c.bot, npc)
+        time.sleep(2)
+    x, y, z = hero_pos(client.bot)
+    move_hero(client.bot, (x + 1500, y + 30, z))
+    time.sleep(2)
+
+    def view():
+        out = {}
+        for c in (host, client):
+            line = report_line(c.bot, 'attitude ' + npc, ('ATTITUDE ', 'REFUSED attitude'))
+            out[c.tag] = {k: int(v) for k, v in re.findall(r' (to_player|focus)=(-?\d+)', line)}
+        return out
+
+    before = view()
+    report['before'] = before
+    report['theft'] = report_line(host.bot, f'witness {npc}_4', ('WITNESSSAW ', 'REFUSED witness'))
+    x, y, z = hero_pos(host.bot)
+    move_hero(host.bot, (x + 6000, y + 30, z))
+    report['cancel'] = report_line(host.bot, f'cancelattack {npc}', ('CANCELATTACK ', 'REFUSED cancelattack'))
+    time.sleep(5)
+    after = view()
+    report['after'] = after
+    report['known'] = {c.tag: crime_of(c.bot, npc).get('known') for c in (host, client)}
+    assert after['host']['to_player'] > before['host']['to_player'], f'the theft did not anger {npc} at the host: {before} -> {after}'
+    assert after['client'] == after['host'], f"{npc} sees the client's hero otherwise than the host's: {after}"
+
+
 def stageForeignHome(copies, report, negative=False):
     """P7, walking into someone's home while its owner is out: the owner comes after the intruder as in single-player
     (AssessPlayerEnterZone sends the NPC whose sleeping point lies in the entered zone to the player: ZS_GotoPlayerZone).
@@ -2347,6 +4008,85 @@ def stageBoulder(copies, report, negative=False):
     finally:
         report['after'] = {c.tag: report_line(c.bot, f'event {event}', ('EVENT ', 'REFUSED event')) for c in (host, client)}
         report['client_task'] = report_line(client.bot, 'herostate', 'HERO ')[:200]
+
+
+def stageBoulderHold(copies, report, negative=False):
+    """P1, the orc boulder's stances (boulderseqdiag 26.10.: the host alone and the client go the same way, PS_Interact ->
+    TiltOrcBoulder (AniState 12) -> HoldOrcBoulder -> LiftOrcBoulder (13) -> LiftOrcBoulder_Loop (14) -> PS_Interact_End;
+    the states run on the user's own machine). The client's hero with strength 300 uses the Faring boulder; within 25 s it
+    must hold (12) and lift (14) it, and its puppet on the host must show the same stances (AniState 12 and 14, motions
+    TiltOrcBoulder, HoldOrcBoulder, LiftOrcBoulder). Negative control: stanceoff on the host (the puppet keeps its own
+    AniState)."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    if negative:
+        assert 'ok=1' in report_line(host.bot, 'stanceoff', 'STANCEOFF ')
+    boulder = 'G3_Object_Interact_Animated_OrcBoulder_Faring'
+    teleport_to(host.bot, boulder)
+    x, y, z = hero_pos(host.bot)
+    start = host.bot.send('usables all1500', 20)
+    host.bot.line('USABLE end', 15, 'usables', start)
+    holder = re.search(r' user=(\S+)', ''.join(l for l in host.bot.log()[start:].splitlines() if 'OrcBoulder' in l))
+    if holder and holder[1] not in ('-', 'G3T_Player2', 'PC_Hero'):
+        report['user_moved'] = report_line(host.bot, f'farmove {x + 2500:.0f}_{y + 50:.0f}_{z:.0f}_{holder[1]}', ('FARMOVE ', 'REFUSED farmove'))
+    move_hero(host.bot, (x + 800, y + 30, z))
+    teleport_to(client.bot, boulder)
+    time.sleep(4)
+    report['strength'] = report_line(client.bot, 'setattr STR_300', ('SETATTR ', 'REFUSED setattr'))
+    report['use'] = report_line(client.bot, f'use {boulder}', ('USE ', 'REFUSED use'))
+    client_states, puppet_states, motions = set(), set(), set()
+    for _ in range(50):
+        hero = herostate(client.bot)
+        client_states.add((re.search(r' state=(\S+)', hero)[1], int(re.search(r' ani_state=(\d+)', hero)[1])))
+        puppet = report_line(host.bot, 'puppetstate', ('PUPPETSTATE ', 'REFUSED puppetstate'))
+        puppet_states.add(int(re.search(r'ani_state=(\d+)', puppet)[1]))
+        motion = re.search(r'motion=Hero_(\w+?)_None_None_P0_(\w+?)_', puppet)
+        if motion:
+            motions.update(m for m in motion.groups() if 'OrcBoulder' in m)
+        if (('PS_Interact_End', 2) in client_states or ('PS_Normal_Loop', 2) in client_states) and any(a == 14 for _, a in client_states):
+            break
+        time.sleep(0.5)
+    report['client_states'] = sorted(client_states)
+    report['puppet_ani_states'] = sorted(puppet_states)
+    report['puppet_motions'] = sorted(motions)
+    client_ani = {a for _, a in client_states}
+    assert {12, 14} <= client_ani, f"the client did not hold and lift the boulder: {report['client_states']} (test setup)"
+    assert {12, 14} <= puppet_states, f"the host's puppet did not show holding and lifting: {report['puppet_ani_states']}"
+    assert {'TiltOrcBoulder', 'HoldOrcBoulder', 'LiftOrcBoulder'} <= motions, f"motions on the host: {report['puppet_motions']}"
+
+
+def boulderseqdiag(copies, report, negative=False):
+    """P1 measurement, the orc boulder's states (Tilt, Hold, Lift: AniState 12, 13, 14; PS_Interact_TiltOrcBoulder ->
+    HoldOrcBoulder -> LiftOrcBoulder): G3_WHO (default client; host = single-player control) uses the Faring boulder with
+    strength G3_STR (default 300). For 25 s every 0.5 s the user's HERO line and, for the client, its puppet on the host
+    (PUPPETSTATE). Asserts nothing."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    user = host if os.environ.get('G3_WHO') == 'host' else client
+    other = client if user is host else host
+    boulder = 'G3_Object_Interact_Animated_OrcBoulder_Faring'
+    teleport_to(host.bot, boulder)
+    x, y, z = hero_pos(host.bot)
+    start = host.bot.send('usables all1500', 20)
+    host.bot.line('USABLE end', 15, 'usables', start)
+    holder = re.search(r' user=(\S+)', ''.join(l for l in host.bot.log()[start:].splitlines() if 'OrcBoulder' in l))
+    if holder and holder[1] not in ('-', 'G3T_Player2', 'PC_Hero'):
+        report['user_moved'] = report_line(host.bot, f'farmove {x + 2500:.0f}_{y + 50:.0f}_{z:.0f}_{holder[1]}', ('FARMOVE ', 'REFUSED farmove'))
+    if user is client:
+        move_hero(host.bot, (x + 800, y + 30, z))
+        teleport_to(client.bot, boulder)
+    time.sleep(4)
+    report['strength'] = report_line(user.bot, 'setattr STR_' + os.environ.get('G3_STR', '300'), ('SETATTR ', 'REFUSED setattr'))
+    report['use'] = report_line(user.bot, f'use {boulder}', ('USE ', 'REFUSED use'))
+    samples = []
+    for _ in range(50):
+        row = {'user': re.sub(r'hp=\S+ max=\S+ dead=\S+ down=\S+ ', '', herostate(user.bot))[5:120]}
+        if user is client:
+            row['puppet'] = report_line(host.bot, 'puppetstate', ('PUPPETSTATE ', 'REFUSED puppetstate'))[12:140]
+        samples.append(row)
+        time.sleep(0.5)
+    report['samples'] = samples
+    report['status_note'] = 'diagnostic'
 
 
 def boulderdiag(copies, report, negative=False):
@@ -3707,6 +5447,531 @@ def stageQuickLoot(copies, report, negative=False):
             # One take is one transaction (12 on 22.10. while "Fist:-1" went out every poll).
             assert step['sync']['tx_sent'] <= 3, f"{step['sync']['tx_sent']} transactions for one quick loot"
     report['host_sync'] = containersync(host.bot)
+
+
+def summon_short(line):
+    """SUMMON line as name owner/puppet_owner task at."""
+    f = dict(re.findall(r'(\w+)=(\S+)', line))
+    return f"{f.get('name')} owner={f.get('owner')}/{f.get('puppet_owner')} task={f.get('task')} at={f.get('at')}"
+
+
+def areaspelldiag(copies, report, negative=False):
+    """P6 (rest of the magic, 26.10.): what the area spells do when the other player casts them. For each spell of G3_SPELLS
+    (default mist, light, time bubble, fire rain) the host casts it at a villager it simulates (as in single-player), then
+    the client at another one: for 12 s both machines' Smn_ objects (owner, task, position), the tasks of the host's NPCs
+    within 12 m of the target (and of the client's mirrors of them), and the target's hit points. Diagnostic."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    time.sleep(3)
+    for copy, helper in ((client, host), (host, client)):
+        if ' down=1 ' in herostate(copy.bot):
+            help_up(helper, copy, report, copy.tag+'_raid')
+            wait_for(lambda: ' down=0 ' in herostate(copy.bot) and ['up'], 30, copy.tag+' helped up after the raid')
+    keep = ('Diego', 'Gorn', 'Milten', 'Lester')
+    spells = (os.environ.get('G3_SPELLS') or 'It_Spell_Mist,It_Spell_Light,It_Spell_TimeBubble,It_Spell_Firerain').split(',')
+    order = ((client, host),) if os.environ.get('G3_CASTER') == 'client' else ((host, client), (client, host))
+    used = set()
+    for spell in spells:
+        for caster, watcher in order:
+            tag = f"{spell.replace('It_Spell_', '')}_{caster.tag}"
+            living = {g: v for g, v in npcs(host.bot).items() if not v['dead'] and not v['mirrored'] and 'Orc' not in v['name']
+                      and v['name'] not in keep and v['name'] != 'PC_Hero' and g not in used}
+            if not living:
+                report[tag+'_skipped'] = 'no villager left near the host'
+                continue
+            # The villager with the most others within 10 m: the mist and the bubble act on everyone round the target.
+            target = max(living, key=lambda g: sum(1 for v in living.values() if distance(v['pos'], living[g]['pos']) < 1000))
+            used.add(target)
+            goal = living[target]['pos']
+            report[tag+'_target'] = living[target]['name']
+            move_hero(caster.bot, (goal[0] + 400, goal[1] + 50, goal[2]))
+            move_hero(watcher.bot, (goal[0] + 400, goal[1] + 50, goal[2] + 500))
+            time.sleep(3)
+            near = {g for g, v in npcs(host.bot).items() if distance(v['pos'], goal) < 1200}
+            tasks = lambda bot: {f"{v['name']}:{g[:4]}": v['task'] for g, v in npcs(bot).items() if g in near}
+            report[tag+'_before'] = tasks(host.bot)
+            hp0 = npcs(host.bot)[target]['hp']
+            report_line(caster.bot, 'mana', 'MANA ')
+            report[tag+'_ready'] = report_line(caster.bot, 'ready '+spell, 'READY ')
+            report_line(caster.bot, 'aimat '+target, 'TARGET ')
+            report[tag+'_cast'] = report_line(caster.bot, 'castat '+target, 'CASTAT ')[7:300]
+            samples = []
+            for i in range(12):
+                time.sleep(1)
+                h, c = tasks(host.bot), tasks(client.bot)
+                samples.append({'t': i + 1, 'caster': [summon_short(l) for l in summons(caster.bot)],
+                                'watcher': [summon_short(l) for l in summons(watcher.bot)],
+                                'host_npcs': {k: v for k, v in h.items() if v != report[tag+'_before'].get(k)},
+                                'client_mirrors': {k: v for k, v in c.items() if v != report[tag+'_before'].get(k)}})
+            report[tag+'_samples'] = samples
+            report[tag+'_hp'] = (hp0, npcs(host.bot).get(target, {}).get('hp'))
+            # Let it end before the next one (a mist lasts about 20 s).
+            until = time.monotonic() + 40
+            while time.monotonic() < until and any('Smn_' in l for l in summons(caster.bot) + summons(watcher.bot)):
+                time.sleep(2)
+            report[tag+'_left'] = {'caster': [summon_short(l) for l in summons(caster.bot)], 'watcher': [summon_short(l) for l in summons(watcher.bot)]}
+    report['summonstate'] = {c.tag: summon_state(c.bot)[0] for c in (host, client)}
+    report['status_note'] = 'diagnostic only'
+
+
+def stageAreaSpells(copies, report, negative=False):
+    """P6 (rest of the magic, 26.10.): the other player's mist, light and time bubble act as in single-player.
+    areaspelldiag 26.10.: the watcher's copy of a summoned spell object (Smn_Mist, Smn_Light, Smn_Timebubble) runs the same
+    states as the caster's, owned by the caster's puppet; the copy of a client's mist ticks on the host, which simulates
+    the NPCs, so they turn ZS_Misted there exactly as for the host's own mist. Checked: the host's mist mists its villagers
+    (the single-player reference); the client's mist mists the host's villagers too, and its copy goes when the client's
+    mist ends; the client's light has a copy on the host owned by its puppet that stays with the light; the client's
+    time bubble has a copy at its place on the host with the time zone (property set 112) that slows what is inside.
+    Negative control: summonmirroroff on both (no copies: nothing happens on the host)."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    time.sleep(3)
+    for copy, helper in ((client, host), (host, client)):
+        if ' down=1 ' in herostate(copy.bot):
+            help_up(helper, copy, report, copy.tag+'_raid')
+            wait_for(lambda: ' down=0 ' in herostate(copy.bot) and ['up'], 30, copy.tag+' helped up after the raid')
+    if negative:
+        report['negative'] = [report_line(c.bot, 'summonmirroroff', 'SUMMONMIRROROFF') for c in (host, client)]
+    keep = ('Diego', 'Gorn', 'Milten', 'Lester')
+    used, problems = set(), []
+    field = lambda l, k: (re.search(rf'\b{k}=(\S+)', l) or [None, None])[1]
+    at = lambda l: tuple(float(v) for v in field(l, 'at').split('_'))
+
+    def cast(caster, watcher, spell, tag):
+        living = {g: v for g, v in npcs(host.bot).items() if not v['dead'] and not v['mirrored'] and 'Orc' not in v['name']
+                  and v['name'] not in keep and v['name'] != 'PC_Hero' and g not in used}
+        assert living, f'{tag}: no villager left near the host'
+        target = max(living, key=lambda g: sum(1 for v in living.values() if distance(v['pos'], living[g]['pos']) < 1000))
+        used.add(target)
+        goal = living[target]['pos']
+        report[tag+'_target'] = living[target]['name']
+        move_hero(caster.bot, (goal[0] + 400, goal[1] + 50, goal[2]))
+        move_hero(watcher.bot, (goal[0] + 400, goal[1] + 50, goal[2] + 500))
+        time.sleep(3)
+        near = {g for g, v in npcs(host.bot).items() if distance(v['pos'], goal) < 1000 and not v['dead']}
+        report_line(caster.bot, 'mana', 'MANA ')
+        report_line(caster.bot, 'ready '+spell, 'READY ')
+        report_line(caster.bot, 'aimat '+target, 'TARGET ')
+        report[tag+'_cast'] = report_line(caster.bot, 'castat '+target, 'CASTAT ')[7:200]
+        return near
+
+    kinds = lambda bot, name: [l for l in summons(bot) if f'name={name} ' in l]
+    # 1. Mist, the host's (reference) and the client's: the villagers round it turn ZS_Misted on the host.
+    for caster, watcher in ((host, client), (client, host)):
+        tag = 'mist_' + caster.tag
+        near = cast(caster, watcher, 'It_Spell_Mist', tag)
+        misted, copy_seen, own_gone, copy_gone = set(), [], None, None
+        for i in range(30):
+            time.sleep(1)
+            misted |= {npcs(host.bot)[g]['name'] for g in near if npcs(host.bot).get(g, {}).get('task') == 'ZS_Misted'}
+            own, copy = kinds(caster.bot, 'Smn_Mist'), kinds(watcher.bot, 'Smn_Mist')
+            copy_seen += copy[:1]
+            if own_gone is None and not own and i > 0:
+                own_gone = i
+            if copy_gone is None and not copy and copy_seen:
+                copy_gone = i
+            if own_gone is not None and copy_gone is not None:
+                break
+        report[tag+'_misted'] = sorted(misted)
+        report[tag+'_copy'] = [summon_short(l) for l in copy_seen[:2]]
+        report[tag+'_ends'] = {'own_gone_s': own_gone, 'copy_gone_s': copy_gone}
+        if not misted:
+            problems.append(f'{tag}: no villager of the host was misted')
+        if caster is client:
+            if not copy_seen or field(copy_seen[0], 'puppet_owner') != '2':
+                problems.append(f'{tag}: the host has no copy of the mist owned by the client\'s puppet')
+            elif copy_gone is None or own_gone is None or abs(copy_gone - own_gone) > 3:
+                problems.append(f'{tag}: the copy did not end with the mist ({report[tag+"_ends"]})')
+    # 2. The client's light: a copy on the host owned by its puppet, where the light is.
+    cast(client, host, 'It_Spell_Light', 'light')
+    gaps = []
+    for _ in range(5):
+        time.sleep(1)
+        own, copy = kinds(client.bot, 'Smn_Light'), kinds(host.bot, 'Smn_Light')
+        own = [l for l in own if field(l, 'puppet_owner') == '0']
+        copy = [l for l in copy if field(l, 'puppet_owner') == '2']
+        gaps.append(round(distance(at(own[0]), at(copy[0]))) if own and copy else None)
+    report['light_gaps_cm'] = gaps
+    if None in gaps or max(gaps) > 300:
+        problems.append(f'light: the host\'s copy is missing or away from the client\'s light ({gaps})')
+    # 3. The client's time bubble: a copy at its place on the host, with the time zone.
+    cast(client, host, 'It_Spell_TimeBubble', 'bubble')
+    time.sleep(2)
+    own = [l for l in kinds(client.bot, 'Smn_Timebubble') if field(l, 'puppet_owner') == '0']
+    copy = [l for l in kinds(host.bot, 'Smn_Timebubble') if field(l, 'puppet_owner') == '2']
+    report['bubble'] = {'own': own[:1], 'copy': copy[:1]}
+    if not own:
+        problems.append('bubble: the client has no time bubble')
+    elif not copy or distance(at(own[0]), at(copy[0])) > 200 or '112,' not in (field(copy[0], 'sets') or ''):
+        problems.append('bubble: the host has no copy with a time zone where the client\'s bubble is')
+    report['summonstate'] = {c.tag: summon_state(c.bot)[0] for c in (host, client)}
+    report['problems'] = problems
+    assert not problems, '; '.join(problems)
+
+
+def held_lines(bot):
+    start = bot.send('remotes', 20)
+    bot.line('REMOTES end', 10, 'remotes', start)
+    return [l for l in bot.log()[start:].splitlines() if l.startswith('HELD ')]
+
+
+def flamesworddiag(copies, report, negative=False):
+    """P6 (PS_Magic_FlameSword): the client conjures the flame sword the player's way (ready the spell, then the game's
+    state PS_Magic_FlameSword through QA act), then, after a pause, by castat; after each, for 6 s: what the client says
+    it holds and what its puppet holds on the host (QA remotes, HELD). Diagnostic."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    time.sleep(3)
+    move_hero(client.bot, hero_pos(host.bot))
+    time.sleep(2)
+    spell = os.environ.get('G3_SPELL', 'It_Spell_Flamesword')
+    for way in ('act', 'castat'):
+        report_line(client.bot, 'mana', 'MANA ')
+        report[way+'_ready'] = report_line(client.bot, 'ready '+spell, 'READY ')
+        if way == 'act':
+            report[way] = report_line(client.bot, 'act PS_Magic-PS_Magic_FlameSword', ('ACT ', 'REFUSED act'))[:200]
+        else:
+            target = calm_target(host)
+            report[way] = report_line(client.bot, 'castat '+target, 'CASTAT ')[7:220]
+        samples = []
+        for _ in range(6):
+            time.sleep(1)
+            samples.append(held_lines(host.bot)[:2])
+        report[way+'_held_on_host'] = samples
+        report[way+'_client_inventory'] = [l[4:120] for l in report_line(client.bot, 'inventory', 'INV end') and
+                                          client.bot.log().splitlines()[-80:] if l.startswith('INV name=') and 'lame' in l]
+        report_line(client.bot, 'ready It_Spell_Light', 'READY ')
+        time.sleep(4)
+    report['status_note'] = 'diagnostic only'
+
+
+def stageFlameSword(copies, report, negative=False):
+    """P6 (PS_Magic_FlameSword): the client conjures the flame sword the player's way (ready the spell, then the game's state
+    PS_Magic_FlameSword through QA act); the sword (It_1H_MagicFlameSword_01) is in its hand, and its puppet on the host holds
+    the same sword within 6 s (flamesworddiag 26.10.). Negative control: puppetholdoff on the host (the puppet's hands are not
+    set from what the player holds)."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    time.sleep(3)
+    if negative:
+        report['negative'] = report_line(host.bot, 'puppetholdoff', 'PUPPETHOLDOFF')
+    move_hero(client.bot, hero_pos(host.bot))
+    time.sleep(2)
+    report_line(client.bot, 'mana', 'MANA ')
+    report['ready'] = report_line(client.bot, 'ready It_Spell_Flamesword', 'READY ')
+    report['act'] = report_line(client.bot, 'act PS_Magic-PS_Magic_FlameSword', ('ACT ', 'REFUSED act'))[:200]
+    sword = 'It_1H_MagicFlameSword_01'
+    held = []
+    for _ in range(6):
+        time.sleep(1)
+        held = held_lines(host.bot)
+        if any(f'remote={sword} puppet={sword}' in l for l in held):
+            break
+    report['held_on_host'] = held
+    assert any(f'remote={sword} ' in l for l in held), f'the client does not hold the flame sword: {held}'
+    assert any(f'puppet={sword}' in l for l in held), f"the client's puppet on the host does not hold the flame sword: {held}"
+
+
+def stageMeleeSwing(copies, report, negative=False):
+    """Basis (OnHit, OnTouchDamage, DoLogicalDamage): the client strikes a villager the host simulates with real sword blows
+    (QA swing: the game's PS_Melee_Attack, as the attack key), not the QA hit, so the game's own melee path runs on the client
+    against its mirror and the combat filter sends the result to the host as the player's claim. Checked: the client's claims
+    count up and the villager loses hit points on the host. Reported: which hit scripts the script table called on the client
+    (QA scriptwatch; 26.10.: OnHit and OnTouchDamage, DoLogicalDamage and AssessHit are called directly, not through the
+    table) and AddHitPoints' callers (QA hitstacks). Negative control: combatoff on the client (no filter: the blows stay on
+    the client's mirror)."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    time.sleep(3)
+    for copy, helper in ((client, host), (host, client)):
+        if ' down=1 ' in herostate(copy.bot):
+            help_up(helper, copy, report, copy.tag+'_raid')
+            wait_for(lambda: ' down=0 ' in herostate(copy.bot) and ['up'], 30, copy.tag+' helped up after the raid')
+    if negative:
+        report['negative'] = report_line(client.bot, 'combatoff', 'COMBATOFF')
+    target = calm_target(host)
+    name = report['target'] = npcs(host.bot)[target]['name']
+    hp0 = npcs(host.bot)[target]['hp']
+    goal = npcs(host.bot)[target]['pos']
+    report['arm'] = report_line(client.bot, 'arm ' + WEAPON, 'ARM ')
+    # Which of the game's hit scripts run on the client (QA scriptwatch counts their calls through the script table).
+    watch = ('OnHit', 'OnTouchDamage', 'DoLogicalDamage', 'AssessHit')
+    report['watch'] = [report_line(client.bot, 'scriptwatch ' + n, 'SCRIPTWATCH ') for n in watch]
+    before = report['before'] = hp_counters(client.bot)
+    swings = []
+    for i in range(20):
+        now = npcs(host.bot).get(target, {}).get('pos', goal)
+        move_hero(client.bot, (now[0] + 110, now[1] + 30, now[2]))
+        report_line(client.bot, 'aimat ' + target, 'TARGET ')
+        line = report_line(client.bot, 'swing', 'SWING ')
+        if i < 3:
+            swings.append(line[6:160])
+        time.sleep(1.4)
+        state = npcs(host.bot).get(target, {})
+        if state.get('hp', hp0) < hp0 or state.get('dead'):
+            break
+    report['swings'] = swings
+    report['tries'] = i + 1
+    after = report['after'] = hp_counters(client.bot)
+    report['host_view'] = npcs(host.bot).get(target, {})
+    report['client_view'] = npcs(client.bot).get(target, {})
+    start = client.bot.send('scriptwatch', 20)
+    client.bot.line('SCRIPTWATCH end', 10, 'scriptwatch', start)
+    report['scripts'] = [l[12:200] for l in client.bot.log()[start:].splitlines() if l.startswith('SCRIPTWATCH name=')]
+    start = client.bot.send('hitstacks', 20)
+    client.bot.line('HITSTACKS end', 10, 'hitstacks', start)
+    report['paths'] = [l[9:400] for l in client.bot.log()[start:].splitlines() if l.startswith('HITSTACK ') and f'victim={name} ' in l][:3]
+    assert after['claims_sent'] > before['claims_sent'], f"no blow went to the host as the client's claim: {before} -> {after}"
+    hp1 = report['host_view'].get('hp', hp0)
+    assert hp1 < hp0 or report['host_view'].get('dead'), f"{name} lost no hit points on the host ({hp0} -> {hp1})"
+
+
+def stageCounterHit(copies, report, negative=False):
+    """Basis (OnHit of a mirrored NPC): the client strikes a villager the host simulates once (as stageMeleeSwing), then
+    stands still for 30 s while the villager fights back (provoked once more half-way if it gave up). The host judges the villager's blows on the client's puppet and
+    sends them (combat rule 4); the client's mirror of the villager swings too, and OnHit and OnTouchDamage run there (QA
+    scriptwatch), but they must not hurt the client's hero a second time. Checked: the client's hero takes the host's blows
+    (player_hits_taken as many as the host's player_hits_sent, give or take one in flight) and loses hit points, and it
+    stumbles at most once per blow (TRACE motions; counterhitdiag 26.10.: 8 blows, 8 stumbles, 200 -> 96). Negative
+    control: combatoff on the host (its blows stay on the puppet)."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    time.sleep(3)
+    for copy, helper in ((client, host), (host, client)):
+        if ' down=1 ' in herostate(copy.bot):
+            help_up(helper, copy, report, copy.tag+'_raid')
+            wait_for(lambda: ' down=0 ' in herostate(copy.bot) and ['up'], 30, copy.tag+' helped up after the raid')
+    if negative:
+        report['negative'] = report_line(host.bot, 'combatoff', 'COMBATOFF')
+    target = calm_target(host)
+    report['target'] = npcs(host.bot)[target]['name']
+    for n in ('OnHit', 'OnTouchDamage'):
+        report_line(client.bot, 'scriptwatch ' + n, 'SCRIPTWATCH ')
+    report['arm'] = report_line(client.bot, 'arm ' + WEAPON, 'ARM ')
+    hp_line = lambda c: dict(re.findall(r' (\w+)=(-?\d+)', report_line(c.bot, 'hp', 'HP ')))
+    before = {c.tag: hp_line(c) for c in (host, client)}
+    mark = len(client.mod_log())
+    for i in range(10):
+        now = npcs(host.bot).get(target, {}).get('pos')
+        move_hero(client.bot, (now[0] + 110, now[1] + 30, now[2]))
+        report_line(client.bot, 'aimat ' + target, 'TARGET ')
+        report_line(client.bot, 'swing', 'SWING ')
+        time.sleep(1.4)
+        if npcs(host.bot).get(target, {}).get('task') == 'ZS_Attack':
+            break
+    report['provoked'] = npcs(host.bot).get(target, {}).get('task')
+    report_line(client.bot, 'act PS_Normal-PS_Normal_Loop', ('ACT ', 'REFUSED act'))  # weapon away: it only takes the blows
+    # 30 s of blows; a villager that gives up after a blow or two is provoked once more half-way.
+    for half in range(2):
+        time.sleep(15)
+        if half == 0 and npcs(host.bot).get(target, {}).get('task') != 'ZS_Attack':
+            report_line(client.bot, 'arm ' + WEAPON, 'ARM ')
+            report_line(client.bot, 'aimat ' + target, 'TARGET ')
+            report_line(client.bot, 'swing', 'SWING ')
+            time.sleep(1.4)
+            report_line(client.bot, 'act PS_Normal-PS_Normal_Loop', ('ACT ', 'REFUSED act'))
+            report['provoked_again'] = npcs(host.bot).get(target, {}).get('task')
+    after = {c.tag: hp_line(c) for c in (host, client)}
+    keys = ('hero', 'dropped', 'player_hits_taken', 'player_hits_sent', 'claims_sent')
+    report['counters'] = {t: {k: (before[t].get(k), after[t].get(k)) for k in keys} for t in ('host', 'client')}
+    motions = re.findall(r'TRACE hero .*?motion=(\S+)', client.mod_log()[mark:])
+    reacts = [m for m in motions if any(w in m for w in ('Stumble', 'Hit_', '_Parade', 'Hurt')) and '_Attack_' not in m]
+    starts, last = [], None
+    for m in motions:
+        hit = any(w in m for w in ('Stumble', 'Hit_', '_Parade', 'Hurt')) and '_Attack_' not in m  # not its own blows
+        if hit and last is False:
+            starts.append(m[:70])
+        last = hit
+    report['reaction_samples'] = len(reacts)
+    report['reaction_starts'] = starts[:12]
+    start = client.bot.send('scriptwatch', 20)
+    client.bot.line('SCRIPTWATCH end', 10, 'scriptwatch', start)
+    report['scripts'] = [l[12:200] for l in client.bot.log()[start:].splitlines() if l.startswith('SCRIPTWATCH name=')]
+    report['host_task'] = npcs(host.bot).get(target, {}).get('task')
+    c, h = report['counters']['client'], report['counters']['host']
+    taken = int(c['player_hits_taken'][1]) - int(c['player_hits_taken'][0])
+    sent = int(h['player_hits_sent'][1]) - int(h['player_hits_sent'][0])
+    assert taken >= 2, f"the client took {taken} blows of the host ({report['counters']})"
+    assert abs(taken - sent) <= 1, f'the host sent {sent} blows, the client took {taken}'
+    assert int(c['hero'][1]) < int(c['hero'][0]), f"the client's hero lost no hit points: {c['hero']}"
+    assert len(starts) <= taken + 1, f'{len(starts)} stumbles for {taken} blows: the mirror hurt the hero as well'
+
+
+
+def counterhitdiag(copies, report, negative=False):
+    """Basis (OnHit of a mirrored NPC): the client strikes a villager the host simulates once (as stageMeleeSwing), then
+    stands still for 20 s while the villager fights back. The host judges the villager's blows on the client's puppet and
+    sends them (rule 4); the client's mirror of the villager swings too, and its OnHit runs there (QA scriptwatch). Reported:
+    the client's hit counters (dropped: the mirror's own blows, rule 1; player_hits_taken: the host's), the host's
+    player_hits_sent, the client hero's hit points, and how often the client's hero showed a stumble or hit motion (TRACE).
+    Diagnostic."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    time.sleep(3)
+    for copy, helper in ((client, host), (host, client)):
+        if ' down=1 ' in herostate(copy.bot):
+            help_up(helper, copy, report, copy.tag+'_raid')
+            wait_for(lambda: ' down=0 ' in herostate(copy.bot) and ['up'], 30, copy.tag+' helped up after the raid')
+    target = calm_target(host)
+    report['target'] = npcs(host.bot)[target]['name']
+    for n in ('OnHit', 'OnTouchDamage'):
+        report_line(client.bot, 'scriptwatch ' + n, 'SCRIPTWATCH ')
+    report['arm'] = report_line(client.bot, 'arm ' + WEAPON, 'ARM ')
+    hp_line = lambda c: dict(re.findall(r' (\w+)=(-?\d+)', report_line(c.bot, 'hp', 'HP ')))
+    for i in range(10):
+        now = npcs(host.bot).get(target, {}).get('pos')
+        move_hero(client.bot, (now[0] + 110, now[1] + 30, now[2]))
+        report_line(client.bot, 'aimat ' + target, 'TARGET ')
+        report_line(client.bot, 'swing', 'SWING ')
+        time.sleep(1.4)
+        if npcs(host.bot).get(target, {}).get('task') == 'ZS_Attack':
+            break
+    report['provoked'] = npcs(host.bot).get(target, {}).get('task')
+    report_line(client.bot, 'act PS_Normal-PS_Normal_Loop', ('ACT ', 'REFUSED act'))  # weapon away: it only takes the blows
+    before = {c.tag: hp_line(c) for c in (host, client)}
+    mark = len(client.mod_log())
+    time.sleep(20)
+    after = {c.tag: hp_line(c) for c in (host, client)}
+    keys = ('hero', 'dropped', 'player_hits_taken', 'player_hits_sent', 'claims_sent')
+    report['counters'] = {t: {k: (before[t].get(k), after[t].get(k)) for k in keys} for t in ('host', 'client')}
+    motions = re.findall(r'TRACE hero .*?motion=(\S+)', client.mod_log()[mark:])
+    reacts = [m for m in motions if any(w in m for w in ('Stumble', 'Hit_', '_Parade', 'Hurt'))]
+    starts, last = [], None
+    for m in motions:
+        hit = any(w in m for w in ('Stumble', 'Hit_', '_Parade', 'Hurt'))
+        if hit and last is False:
+            starts.append(m[:70])
+        last = hit
+    report['reaction_samples'] = len(reacts)
+    report['reaction_starts'] = starts[:12]
+    start = client.bot.send('scriptwatch', 20)
+    client.bot.line('SCRIPTWATCH end', 10, 'scriptwatch', start)
+    report['scripts'] = [l[12:200] for l in client.bot.log()[start:].splitlines() if l.startswith('SCRIPTWATCH name=')]
+    report['host_task'] = npcs(host.bot).get(target, {}).get('task')
+    report['status_note'] = 'diagnostic only'
+
+
+def animalsleepdiag(copies, report, negative=False):
+    """Basis (OnAnimalSleep): where do animals sleep, and does the client wake one? Both go to G3_SPOT (default Kent: deer,
+    scavengers, rippers); the host sets the clock to G3_HOUR (default 23); every 5 s for 40 s the animals near the host with
+    their tasks. Then the client walks up to the nearest sleeping one the host simulates while the host stands 25 m off; the
+    animal's task on the host over 20 s. Diagnostic."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    spot = os.environ.get('G3_SPOT', 'Kent')
+    for c in (host, client):
+        report[c.tag + '_jump'] = teleport_to(c.bot, spot)[:100]
+    report['clock'] = report_line(host.bot, f"clockset {os.environ.get('G3_HOUR', '23')}_00", 'CLOCK ')
+    kinds = ('Scavenger', 'Deer', 'Ripper', 'Okara_Ripper', 'Wolf', 'Boar', 'Molerat', 'Rabbit', 'Bison', 'Lurker', 'Snapper')
+    seen = []
+    sleeper = None
+    hours = [h for h in os.environ.get('G3_HOURS', '23,2,5,13').split(',')]
+    for k in range(8):
+        if k % 2 == 0 and hours:
+            # Another hour, and every animal near picks its routine's task for it anew (QA npcroutine: FullStop, ContinueRoutine).
+            report_line(host.bot, f'clockset {int(hours.pop(0)):02d}_00', 'CLOCK ')
+            for n in sorted({v['name'] for v in npcs(host.bot).values() if v['name'].startswith(kinds) and not v['dead']}):
+                report.setdefault('reroutes', []).append(report_line(host.bot, 'npcroutine ' + n, ('NPCROUTINE ', 'REFUSED npcroutine'))[:90])
+        time.sleep(5)
+        animals = {g: v for g, v in npcs(host.bot).items() if v['name'].startswith(kinds) and not v['dead']}
+        seen.append(sorted({f"{v['name']}:{v['task']}/" + (re.search(r' state=(\S+)', find_npc(host.bot, v['name'])) or [None, '-'])[1]
+                            for v in animals.values()}))
+        asleep = [g for g, v in animals.items() if not v['mirrored'] and any(f"{v['name']}:" in e and 'Sleep' in e for e in seen[-1])]
+        if asleep:
+            sleeper = asleep[0]
+            break
+    report['seen'] = seen
+    if not sleeper:
+        report['status_note'] = 'diagnostic only: no sleeping animal'
+        return
+    v = npcs(host.bot)[sleeper]
+    report['sleeper'] = (v['name'], v['task'], v['pos'])
+    move_hero(host.bot, (v['pos'][0] + 2500, v['pos'][1] + 100, v['pos'][2]))
+    time.sleep(3)
+    samples = []
+    for d in (1500, 900, 500, 300, 200):
+        move_hero(client.bot, (v['pos'][0] + d, v['pos'][1] + 50, v['pos'][2]))
+        time.sleep(4)
+        now = npcs(host.bot).get(sleeper, {})
+        samples.append((d, now.get('task'), now.get('mirrored')))
+    report['client_near'] = samples
+    report['status_note'] = 'diagnostic only'
+
+
+def sectorrefreshdiag(copies, report, negative=False):
+    """Basis (OnEnclaveSectorRefresh): after Ardea is freed the old friends leave (Diego to Braga, Gorn to GothaPrison, Milten
+    to the monastery: re/out/basis-rest-20261026-b.c). From the post-raid save (Ardea freed): where Diego, Gorn, Milten and
+    Lester are on both machines (QA findnpc: position, task, mirrored); then G3_WHO (default client) goes 400 m off and comes
+    back after 15 s, then the other one does; the friends on both after each. Diagnostic."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    friends = ('Diego', 'Gorn', 'Milten', 'Lester')
+    look = lambda c: {n: re.sub(r'FIND name=\S+ ', '', find_npc(c.bot, n))[:150] for n in friends}
+    report['start'] = {c.tag: look(c) for c in (host, client)}
+    first = host if os.environ.get('G3_WHO') == 'host' else client
+    for tag, goer in (('first', first), ('second', client if first is host else host)):
+        x, y, z = hero_pos(goer.bot)
+        move_hero(goer.bot, (x + 40000, y + 200, z))
+        time.sleep(15)
+        report[tag + '_away'] = {c.tag: look(c) for c in (host, client)}
+        move_hero(goer.bot, (x, y, z))
+        time.sleep(12)
+        report[tag + '_back'] = {c.tag: look(c) for c in (host, client)}
+        report[tag + '_who'] = goer.tag
+    report['status_note'] = 'diagnostic only'
+
+
+def zoneattitudediag(copies, report, negative=False):
+    """P7 (GetZoneAttitudeToPlayer and the rest of GetAttitude's chain): an NPC's attitude to the one standing in its
+    guarded place. ai.cpp asks GetAttitude about a puppet as about the local hero, so a zone the puppet stands in might
+    count as where the host's hero stands. At G3_PLACE (default Muntasir, Ishtar): (A) the client in the place, the host 30 m
+    off; (B) the other way round. Each time the host's QA attitude (to its hero and to puppet 2) for G3_JUDGES (default
+    Muntasir and the NPCs within 15 m of him), three samples. Diagnostic."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    place = os.environ.get('G3_PLACE', 'Muntasir')
+    for phase, inside, outside in (('client_in', client, host), ('host_in', host, client)):
+        for c in (host, client):
+            teleport_to(c.bot, place)
+        x, y, z = hero_pos(outside.bot)
+        move_hero(outside.bot, (x + 3000, y + 30, z))
+        time.sleep(6)
+        at = hero_pos(inside.bot)
+        judges = os.environ.get('G3_JUDGES')
+        names = judges.split(',') if judges else sorted({v['name'] for v in npcs(host.bot).values()
+                                                       if distance(v['pos'], at) < 1500 and not v['dead']})[:8]
+        samples = []
+        for _ in range(3):
+            samples.append({n: re.sub(r'ATTITUDE name=\S+ ', '', report_line(host.bot, 'attitude ' + n, ('ATTITUDE ', 'REFUSED attitude')))[:60]
+                            for n in names})
+            time.sleep(2)
+        report[phase] = samples
+        report[phase + '_zone'] = {c.tag: hero_zone(c.bot) for c in (host, client)}
+    report['status_note'] = 'diagnostic only'
+
+
+def zonescandiag(copies, report, negative=False):
+    """P7 (GetZoneAttitudeToPlayer): where does an NPC take the one in its zone for a threat? For each spot of G3_SPOTS
+    (default Muntasir, Topork, Varek, Brenton, Hamlar) the host stands at the spot NPC, the client 30 m off, then the
+    other way round; each time QA zoneatt for the spot NPC and the two nearest others on the host (zone and security of
+    hero and puppet, GetZoneAttitudeToPlayer and GetAttitudeToPlayer for the hero, for the puppet plainly and as the
+    game's player, GetAttitude to the puppet). Diagnostic."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    spots = os.environ.get('G3_SPOTS', 'Muntasir,Topork,Varek,Brenton,Hamlar').split(',')
+    for spot in spots:
+        for phase, inside, outside in (('host_in', host, client), ('client_in', client, host)):
+            tag = f'{spot}_{phase}'
+            for c in (host, client):
+                report[tag + '_' + c.tag] = teleport_to(c.bot, spot)[:60]
+            x, y, z = hero_pos(outside.bot)
+            move_hero(outside.bot, (x + 3000, y + 30, z))
+            time.sleep(5)
+            at = hero_pos(inside.bot)
+            near = sorted(((distance(v['pos'], at), v['name']) for v in npcs(host.bot).values() if not v['dead']), key=lambda t: t[0])
+            names = [spot] + [n for d, n in near if n != spot][:2]
+            report[tag] = [re.sub(r'ZONEATT name=', '', report_line(host.bot, 'zoneatt ' + n, ('ZONEATT ', 'REFUSED zoneatt')))[:260] for n in names]
+    report['status_note'] = 'diagnostic only'
 
 
 def spellfuncdiag(copies, report, negative=False):
@@ -5296,6 +7561,143 @@ def stageE3(copies, report, negative=False):
     assert 'the host took back Lester' in client.mod_log(), 'the client was not told'
 
 
+def stagePartyJoin(copies, report, negative=False):
+    """P9, joining the player's party (Infos.pak: SKALVERAM336 "CmdPartyJoin", the info every party-enabled NPC offers,
+    condition 14; FILLER960 "PartyDismiss", condition 15). G3_PARTY (default Diego) is made party-enabled as a dialog's
+    SetPartyEnabled true does (QA partyenable on the host, passed on). The player (G3_WHO=host: the host alone, the
+    single-player control; default the client) talks to him, chooses the join: he follows the player (the client takes him
+    over, the host mirrors him), walks after it; then the dismiss: he leaves the party (the client gives him back). Counted on
+    the player's machine: JoinPlayerParty, CanJoinPlayerParty, EndGoto (scriptwatch). Negative control: guidesyncoff on the
+    client (it does not take its new follower over; the host's game keeps him)."""
+    host, client = join_both(copies)
+    player = host if os.environ.get('G3_WHO') == 'host' else client
+    npc = os.environ.get('G3_PARTY', 'Diego')
+    if negative:
+        report_line(client.bot, 'guidesyncoff', 'GUIDESYNCOFF ')
+    clear_raid(host, report)
+    teleport_to(host.bot, npc)
+    if player is client:
+        teleport_to(client.bot, npc)
+        time.sleep(8)
+        wait_for(lambda: (npc_named(client.bot, npc)[1] or {}).get('mirrored') and ['yes'], 20, f'{npc} mirrored on the client')
+    else:
+        x, y, z = hero_pos(host.bot)
+        move_hero(client.bot, (x + 3000, y + 50, z))
+        time.sleep(4)
+    mob = os.environ.get('G3_JOIN') == 'mob'  # the mob instead (KALVERAMX228 "CmdMobJoin", condition 28; KALVERAMX232 dismisses)
+    join_info, dismiss_info = ('KALVERAMX228', 'KALVERAMX232') if mob else ('SKALVERAM336', 'FILLER960')
+    report['watch'] = [report_line(player.bot, 'scriptwatch ' + n, 'SCRIPTWATCH ')[12:80]
+                       for n in ('JoinPlayerMob' if mob else 'JoinPlayerParty', 'CanJoinPlayerParty', 'EndGoto')]
+    report['enable'] = report_line(host.bot, 'partyenable ' + npc + ('_mob' if mob else ''), ('PARTYENABLE ', 'REFUSED partyenable'))
+    time.sleep(3)
+
+    def choose(info, key):
+        for _ in range(4):
+            teleport_to(player.bot, npc)
+            time.sleep(2)
+            line, infos = talk_infos(player, npc)
+            report.setdefault(key + '_offered', []).append(line[:200])
+            if info in infos:
+                report[key] = report_line(player.bot, 'talkinfo ' + info, ('TALKINFO ', 'REFUSED talkinfo'))
+                wait_for(lambda: talkstate(player.bot).get('running') == '0', 60, f'the dialog ({info}) ends')
+                time.sleep(3)
+                return True
+            report_line(player.bot, 'endtalk', ('TALKSTATE', 'REFUSED endtalk'))
+            time.sleep(3)
+        return False
+
+    assert choose(join_info, 'join'), f"{npc} never offered the join: {report.get('join_offered')}"
+    report['joined'] = {c.tag: find_npc(c.bot, npc)[:300] for c in (host, client)}
+    pos_of = lambda line: tuple(float(v) for v in re.search(r'pos=(\S+)', line)[1].split('_'))
+    start = hero_pos(player.bot)
+    npc_start = pos_of(find_npc(player.bot, npc))
+    move_hero(player.bot, (start[0] + 1200, start[1], start[2]))
+    if player is host:
+        # The single-player control: he joins and follows at once (ZS_FollowPlayer). After the host's teleport he stood in
+        # talk and ambient tasks for 60 s (twice, 26.10.), so the walk is not part of the control.
+        report['follow_task'] = re.search(r' task=(\S+)', report['joined']['host'])[1]
+        start = player.bot.send('scriptwatch', 20)
+        player.bot.line('SCRIPTWATCH end', 10, 'scriptwatch', start)
+        report['scripts'] = [l[12:] for l in player.bot.log()[start:].splitlines() if l.startswith('SCRIPTWATCH name=')]
+        assert 'Follow' in report['follow_task'], f"{npc} does not follow: {report['follow_task']}"
+        return
+    # He walks after the player (the follow state stops some metres short).
+    walk = 300
+    report['following'] = wait_for(lambda: (lambda l: ' task=ZS_FollowPlayer' in l and distance(pos_of(l), hero_pos(player.bot)) < 1200 and
+                                            distance(pos_of(l), npc_start) >= walk and [l])(find_npc(player.bot, npc)), 60, f'{npc} follows')[0][:200]
+    report['follow_task'] = re.search(r' task=(\S+)', report['following'])[1]
+    report['seen'] = {c.tag: find_npc(c.bot, npc)[:300] for c in (host, client)}
+    report['dismissed'] = choose(dismiss_info, 'dismiss')
+    time.sleep(4)
+    report['after'] = {c.tag: find_npc(c.bot, npc)[:300] for c in (host, client)}
+    report['after_task'] = (npc_named(player.bot, npc)[1] or {}).get('task')
+    start = player.bot.send('scriptwatch', 20)
+    player.bot.line('SCRIPTWATCH end', 10, 'scriptwatch', start)
+    report['scripts'] = [l[12:] for l in player.bot.log()[start:].splitlines() if l.startswith('SCRIPTWATCH name=')]
+    assert 'Follow' in report['follow_task'], f"{npc} does not follow: {report['follow_task']}"
+    joined = 'JoinPlayerMob' if mob else 'JoinPlayerParty'
+    assert any(l.startswith(f'name={joined} calls=1 ') for l in report['scripts']), f"{joined} did not run once on the player's machine: {report['scripts']}"
+    if player is client:
+        assert 'owner=2' in report['seen']['host'].split(), f"the host does not show the client's {npc}: {report['seen']['host']}"
+
+
+def stageCompanionWait(copies, report, negative=False):
+    """P9, a companion told to wait (Infos.pak: KALVERAMX231, the party member's info "wait here": SaySVM CmdWait,
+    SayHoldingPosition). The player (G3_WHO=host: the host alone, the single-player control; default
+    the client, which takes Lester over when he joins) recruits Lester (NEWM1055, as in E3), walks 12 m (he follows), tells him
+    to wait, walks 15 m on: he waits there (ZS_WaitForPlayer on the machine that simulates him) and stays put on both
+    machines. Counted on the player's machine: the P9 scripts (scriptwatch) and ZS_WaitForPlayer
+    (aicount). Negative control: infocmdoff on the client (as in E3)."""
+    host, client = join_both(copies)
+    player = host if os.environ.get('G3_WHO') == 'host' else client
+    other = client if player is host else host
+    if negative:
+        report_line(client.bot, 'infocmdoff', 'INFOCMDOFF ')
+    clear_raid(host, report)
+    teleport_to(host.bot, 'Lester')
+    if player is client:
+        teleport_to(client.bot, 'Lester')
+        time.sleep(8)
+        wait_for(lambda: npc_named(client.bot, 'Lester')[1].get('mirrored') and ['yes'], 20, 'Lester mirrored on the client')
+    else:
+        x, y, z = hero_pos(host.bot)
+        move_hero(client.bot, (x + 3000, y + 50, z))
+        time.sleep(4)
+    report['watch'] = [report_line(player.bot, 'scriptwatch ' + n, 'SCRIPTWATCH ')[12:80]
+                       for n in ('JoinPlayerParty', 'CanJoinPlayerParty', 'CanHealSelf', 'SelectRoutineDestination', 'EndGoto')]
+    report_line(player.bot, 'aicount ZS_WaitForPlayer', ('AICOUNT end',))
+    report['event'] = report_line(player.bot, 'setevent GetLester', 'EVENT ')
+
+    def say(info, key):
+        talk_to(player, 'Lester', report, key + '_talk')
+        report[key] = report_line(player.bot, 'talkinfo ' + info, ('TALKINFO ', 'REFUSED talkinfo'))
+        wait_for(lambda: talkstate(player.bot).get('running') == '0', 90, f'the dialog ({info}) ends')
+        time.sleep(3)
+
+    say('NEWM1055', 'recruit')
+    pos_of = lambda line: tuple(float(v) for v in re.search(r'pos=(\S+)', line)[1].split('_'))
+    start = hero_pos(player.bot)
+    move_hero(player.bot, (start[0] + 1200, start[1], start[2]))
+    report['following'] = wait_for(lambda: (lambda l: distance(pos_of(l), hero_pos(player.bot)) < 1200 and [l])(
+        find_npc(player.bot, 'Lester')), 60, 'Lester follows')[0][:200]
+    say('KALVERAMX231', 'wait')
+    lester_at = pos_of(find_npc(player.bot, 'Lester'))
+    here = hero_pos(player.bot)
+    move_hero(player.bot, (here[0] + 1500, here[1], here[2]))
+    time.sleep(12)
+    report['waiting'] = {c.tag: find_npc(c.bot, 'Lester')[:220] for c in (host, client)}
+    report['waiting_task'] = (npc_named(player.bot, 'Lester')[1] or {}).get('task')
+    report['moved'] = {c.tag: round(distance(pos_of(find_npc(c.bot, 'Lester')), lester_at)) for c in (host, client)}
+    start = player.bot.send('scriptwatch', 20)
+    player.bot.line('SCRIPTWATCH end', 10, 'scriptwatch', start)
+    report['scripts'] = [l[12:] for l in player.bot.log()[start:].splitlines() if l.startswith('SCRIPTWATCH name=')]
+    start = player.bot.send('aicount', 20)
+    player.bot.line('AICOUNT end', 10, 'aicount', start)
+    report['states'] = [l[8:] for l in player.bot.log()[start:].splitlines() if l.startswith('AICOUNT name=')]
+    assert 'ZS_WaitForPlayer' in (report['waiting_task'] or ''), f"Lester does not wait: {report['waiting_task']}"
+    assert all(d < 300 for d in report['moved'].values()), f"Lester walked off while told to wait: {report['moved']}"
+
+
 def stageE4(copies, report, negative=False):
     """Stage E4, NPC against NPC where two regions meet: in the client's region (its NPCs mirrored on the host) one of
     the host's NPCs (Lester, moved there) attacks a client-owned NPC. Lester's hits go to the client, which applies
@@ -6102,6 +8504,158 @@ def knock_out(attacker_bot, hit_command, victim_bot, report, key):
     return wait_for(lambda: (lambda s: ' down=1 ' in s and [s])(herostate(victim_bot)), 10, 'the hero is knocked out')[0]
 
 
+def stageShieldBlock(copies, report, negative=False):
+    """P4, the hit judgement (AssessHit) for the player as in single-player: a hero who parries with a shield and the shield
+    talent (Perk_Shield_2) pays a blocked blow with stamina, half of it with the talent (Script_Game SG+2c69c..2c70b, the
+    branch only the player gets), an unblocked one with hit points. G3_STRIKER (default Hamlar) strikes G3_BLOWS (default 4)
+    blows each: (1) on the parrying host hero (hurthero, single-player on the host: shows that blocks happen); (2) on the
+    parrying client hero, judged on the client alone (hurthero on the client: the client's own single-player judgement, the NPC
+    scaled to the client's level as the game scales it to its player); (3) on the client's puppet from the host (hitpuppetby,
+    the co-op path; the client holds its parade every frame, as with the key held down, and its puppet parries on the host
+    at the blow, as the snapshots show it: hitpuppetby <guid>_parade). (3) must reach the client every time, block at least once and cost what (2) cost. (1) is shown, not required
+    (whether the host's own hero faced him varies). G3_SHIELD (default It_Shield_Wood_01), G3_SHIELDPERKS (default
+    Perk_Shield_1,Perk_Shield_2; empty: none). Negative control: puppetparadeoff on the host (the host judges the parrying
+    puppet's block itself, as before 25.10.: the blows never reach the client, its block costs nothing)."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    striker = os.environ.get('G3_STRIKER', 'Hamlar')
+    shield = os.environ.get('G3_SHIELD', 'It_Shield_Wood_01')
+    perks = [p for p in os.environ.get('G3_SHIELDPERKS', 'Perk_Shield_1,Perk_Shield_2').split(',') if p]
+    blows = int(os.environ.get('G3_BLOWS', '4'))
+    for c in (host, client):
+        report_line(c.bot, 'arm It_1H_Sword_Rust_01', 'ARM ')
+        for perk in perks:
+            report.setdefault(c.tag + '_perks', []).append(report_line(c.bot, 'learnperk ' + perk, ('LEARNPERK ', 'REFUSED learnperk'))[:90])
+    teleport_to(host.bot, striker)
+    time.sleep(4)
+    guid = next(g for g, v in npcs(host.bot).items() if v['name'] == striker)
+    value = lambda line, key: int(re.search(rf' {key}=(-?\d+)', line)[1])
+
+    def blow(victim, hitter, command):
+        """One blow on the parrying victim; its cost as the game judged it on the victim's machine (stamina comes back
+        within seconds, so it is read at the judgement): (result, stamina, hit points), or None when it never arrived."""
+        report_line(victim.bot, 'sethp 1000', 'SETHP ')
+        report_line(host.bot, 'npcstill ' + guid, ('NPCSTILL ', 'REFUSED npcstill'))
+        time.sleep(1)
+        report_line(victim.bot, 'face ' + guid, 'FACE ')
+        time.sleep(1)
+        guard = report_line(victim.bot, 'guard ' + shield, ('GUARD ', 'REFUSED guard'))
+        assert f'left_hand={shield}' in guard, guard
+        probe = report_line(victim.bot, 'hitprobe ' + guid, ('HITPROBE ', 'REFUSED hitprobe'))
+        waits = []
+        if command == 'hitpuppetby ':  # until the host sees the puppet parry him, as the client's held parade shows it there
+            for _ in range(10):
+                waits.append(report_line(host.bot, 'puppetparade ' + guid, ('PUPPETPARADE ', 'REFUSED puppetparade'))[13:60])
+                if 'parade=1 fov=1' in waits[-1]:
+                    break
+                time.sleep(0.4)
+        since = len(victim.mod_log())
+        hit = report_line(hitter.bot, command + guid + ('_parade' if command == 'hitpuppetby ' else ''), ('HURTHERO ', 'HITPUPPETBY ', 'REFUSED'))
+        time.sleep(2.5)
+        row = {'probe': probe[9:200], 'hit': hit[:330], 'waits': waits}
+        if hit.startswith('HURTHERO '):
+            row['cost'] = (re.search(r'result=(\S+)', hit)[1], value(hit, 'sp_after') - value(hit, 'sp_before'), value(hit, 'after') - value(hit, 'before'))
+        else:
+            judged = [l for l in victim.mod_log()[since:].splitlines() if 'forwarded blow judged here' in l]
+            m = judged and re.search(r'result=(\S+) pending=\d+ hp (-?\d+) -> (-?\d+) sp (-?\d+) -> (-?\d+)', judged[-1])
+            row['cost'] = (m[1], int(m[5]) - int(m[4]), int(m[3]) - int(m[2])) if m else None
+            # Whether the host's game saw the puppet parry this blow (the case the host used to take for itself).
+            row['host_parried'] = ' puppet_parade=1 puppet_fov=1 ' in hit
+        return row
+
+    report['host_face'] = report_line(host.bot, 'face ' + guid, 'FACE ')[:80]
+    report['host'] = [blow(host, host, 'hurthero ') for _ in range(blows)]
+    # The host steps aside, the client takes its place in front of him.
+    x, y, z = hero_pos(host.bot)
+    teleport_to(client.bot, striker)
+    move_hero(host.bot, (x + 600, y, z))
+    time.sleep(4)
+    report['client_alone'] = [blow(client, client, 'hurthero ') for _ in range(blows)]
+    for _ in range(4):  # the client's own block cost, the reference: more blows while none was blocked (its turn varies)
+        if any(b['cost'][0] == '0x14' for b in report['client_alone']):
+            break
+        report['client_alone'].append(blow(client, client, 'hurthero '))
+    if negative:
+        assert 'ok=1' in report_line(host.bot, 'puppetparadeoff', 'PUPPETPARADEOFF ')
+    report['client'] = [blow(client, host, 'hitpuppetby ') for _ in range(blows)]
+    report['parade'] = report_line(host.bot, 'parade', 'PARADE ')
+    report['cost'] = {key: [b['cost'] for b in report[key]] for key in ('host', 'client_alone', 'client')}
+    blocks = lambda key: {c[1:] for c in report['cost'][key] if c and c[0] == '0x14'}
+    hits = lambda key: {c[1:] for c in report['cost'][key] if c and c[0] != '0x14'}
+    assert blocks('client_alone'), f"no block in the client's single-player control: {report['cost']} (test setup)"
+    assert all(report['cost']['client']), f"a blow never reached the client: {report['cost']['client']}"
+    assert any(b['host_parried'] for b in report['client']), f"the host never saw the puppet parry: {[b['hit'][-120:] for b in report['client']]} (test setup)"
+    assert blocks('client'), f"the client never blocked through the co-op path: {report['cost']['client']}"
+    assert blocks('client') <= blocks('client_alone') and hits('client') <= hits('client_alone') | {(0, 0)}, \
+        f"co-op {report['cost']['client']}, the client alone {report['cost']['client_alone']}"
+
+
+def stageNpcBlock(copies, report, negative=False):
+    """P4, the hit judgement the other way round: an NPC of the host parries a player's blow. Single-player control: G3_BLOCKER
+    (default Hamlar) parries the host hero (npcguard: facing it, parade held) and the host strikes (hitnpc): the game blocks
+    (ZS_ParadeStumble, stamina, no hit points). Then he parries the client's puppet and the client strikes its mirror of him,
+    G3_BLOWS (default 6) times: on the host every blow the game there judges parried (parrying, able to parry it, facing the
+    puppet) must be blocked as in the control (the owner's block: stamina, no hit points), every other one hurt him; at least
+    two must be parried. Negative control: npcblockoff on both (judged on the mirror, as before 25.10.)."""
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    blocker = os.environ.get('G3_BLOCKER', 'Hamlar')
+    blows = int(os.environ.get('G3_BLOWS', '6'))
+    for c in (host, client):
+        report_line(c.bot, 'arm It_1H_Sword_Rust_01', 'ARM ')
+    teleport_to(host.bot, blocker)
+    time.sleep(4)
+    guid = next(g for g, v in npcs(host.bot).items() if v['name'] == blocker)
+    state = lambda bot: report_line(bot, 'npcstate ' + guid, ('NPCSTATE ', 'REFUSED npcstate'))
+    value = lambda line, key: int(re.search(rf' {key}=(-?\d+)', line)[1])
+
+    def blow(striker, facing):
+        report_line(host.bot, 'npcstill ' + guid, ('NPCSTILL ', 'REFUSED npcstill'))
+        time.sleep(1)
+        report_line(striker.bot, 'face ' + guid, 'FACE ')
+        time.sleep(1)
+        guard = report_line(host.bot, f'npcguard {guid}_{facing}', ('NPCGUARD ', 'REFUSED npcguard'))
+        time.sleep(0.5)
+        since = len(host.mod_log())
+        hit = report_line(striker.bot, 'hitnpc ' + guid, ('HITNPC ', 'REFUSED hitnpc'))
+        time.sleep(0.6)
+        after = state(host.bot)
+        blocked = [l[-90:] for l in host.mod_log()[since:].splitlines() if 'blocked a player' in l]
+        row_log = [l[-110:] for l in host.mod_log()[since:].splitlines() if 'combat:' in l][-4:]
+        time.sleep(3)
+        row = {'guard': guard[8:160], 'hit': re.sub(r'guid=\S+ |source=\S+ owner=\S+ ', '', hit)[:260], 'host_after': after[9:160],
+               'host_blocked': blocked, 'host_log': row_log,
+               # Whether the game on the host said the NPC parries this blow (parrying, able to, facing it): then it must block.
+               'parrying': any('parade_mode=1 can_parade=1 fov=1' in l for l in row_log)}
+        if striker is host:
+            row['cost'] = (re.search(r'result=(\S+)', hit)[1], value(hit, 'sp_after') - value(hit, 'sp_before'), value(hit, 'after') - value(hit, 'before'))
+        else:
+            m = blocked and re.search(r'stamina (-?\d+) -> (-?\d+) hit points (-?\d+) -> (-?\d+)', blocked[-1])
+            row['cost'] = ('0x14', int(m[2]) - int(m[1]), int(m[4]) - int(m[3])) if m else ('hit', 0, value(after, 'hp') - value(guard, 'hp'))
+        return row
+
+    report['host'] = [blow(host, 'hero') for _ in range(blows)]
+    x, y, z = hero_pos(host.bot)
+    teleport_to(client.bot, blocker)
+    move_hero(host.bot, (x + 600, y, z))
+    time.sleep(4)
+    if negative:
+        for c in (host, client):
+            assert 'ok=1' in report_line(c.bot, 'npcblockoff', 'NPCBLOCKOFF ')
+    report['client'] = [blow(client, 'puppet2') for _ in range(blows)]
+    report['parade'] = {c.tag: report_line(c.bot, 'parade', 'PARADE ') for c in (host, client)}
+    report['cost'] = {key: [b['cost'] for b in report[key]] for key in ('host', 'client')}
+    assert any(c[0] == '0x14' and c[1] < 0 and c[2] == 0 for c in report['cost']['host']), f"the control blocked nothing: {report['cost']} (test setup)"
+    assert all(' claim_sent=1 ' in b['hit'] for b in report['client']), f"a blow never went to the host: {[b['hit'][:150] for b in report['client']]}"
+    parried = [b for b in report['client'] if b['parrying']]
+    assert len(parried) >= 2, f"the host's game saw him parry only {len(parried)} blows (test setup): {[b['host_log'] for b in report['client']]}"
+    for b in parried:
+        assert b['cost'][0] == '0x14' and b['cost'][1] < 0 and b['cost'][2] == 0, f"a parried blow hurt him on the host: {report['cost']['client']}"
+    for b in report['client']:
+        if not b['parrying']:
+            assert b['cost'][0] == 'hit', f"a blow he did not parry was blocked: {report['cost']['client']}"
+
+
 def stageRansack(copies, report, negative=False):
     """Stage Ransack, a guard of the host robs a knocked-out partner as in single-player (owner 24.10.; C
     re/findings/defeat-arena-c.md, p3-load-autoload-ransack-contract-c-20261023.md). G3_ROBBER (default Hamlar) attacks the
@@ -6735,6 +9289,8 @@ def theftdiag(copies, report, negative=False, check=False):
                                 for w in witnesses} for c in (host, client)})
     report['samples'] = samples
     report['after'] = {c.tag: {w: crime_of(c.bot, w) for w in witnesses} for c in (host, client)}
+    report['attitude_after'] = {c.tag: {w: report_line(c.bot, 'attitude ' + w, ('ATTITUDE ', 'REFUSED attitude'))[9:]
+                                        for w in witnesses} for c in (host, client)}
     report['took'] = {c.tag: report_line(c.bot, 'itemtook', 'ITEMTOOK ') for c in (host, client)}
     report['item_after'] = {c.tag: report_line(c.bot, 'iteminfo '+item['guid'], ('ITEMINFO ', 'REFUSED iteminfo')) for c in (host, client)}
     first = witnesses[0] if witnesses else None
@@ -9871,7 +12427,8 @@ def stageControl(copies, report, negative=False):
     follows when the caster walks off 8 m, and the other machine shows it mirrored next to the caster's. Client casts,
     then host. G3_SPELL picks the spell (default It_Spell_WordOfControl); with G3_SPAWN (an animal template such as
     Wolf, for It_Spell_TameAnimal) the host spawns the target next to it first; with G3_ANIMAL (Scavenger) both go to
-    a world animal of that kind north of Ardea (a spawned one exists only on the host). Negative control: spellmirroroff (the
+    a world animal of that kind north of Ardea (a spawned one exists only on the host), or at the NPC G3_ANIMAL_AT (Kent; G3_ANIMAL
+    may list several kinds, Deer,Okara_Ripper). Negative control: spellmirroroff (the
     client does not take it over; the host keeps simulating it, and it does not follow there)."""
     spell = os.environ.get('G3_SPELL', 'It_Spell_WordOfControl')
     host, client = join_both(copies)
@@ -9886,7 +12443,9 @@ def stageControl(copies, report, negative=False):
         for c in (host, client):
             report_line(c.bot, 'spellmirroroff', 'SPELLMIRROROFF')
     problems, used = [], set()
-    for caster, watcher, caster_id in ((client, host, 2), (host, client, 1)):
+    # G3_CASTER=client: only the client casts (Kent has one deer; the rippers are too strong to tame, as in single-player).
+    casters = ((client, host, 2),) if os.environ.get('G3_CASTER') == 'client' else ((client, host, 2), (host, client, 1))
+    for caster, watcher, caster_id in casters:
         tag = caster.tag
         keep = ('Diego', 'Gorn', 'Milten', 'Lester')
         calm = [g for g, v in npcs(host.bot).items() if not v['dead'] and not v['mirrored'] and 'Orc' not in v['name']
@@ -9895,13 +12454,17 @@ def stageControl(copies, report, negative=False):
         target = next((g for g in calm if npcs(host.bot)[g]['name'].startswith('Slave')), calm[0])
         if os.environ.get('G3_ANIMAL'):
             # A world animal both machines have (scavengers graze north of Ardea, about 90500,-6100; seen in old runs).
+            # G3_ANIMAL_AT: an NPC to meet at instead (Kent: deer and rippers the host simulates, stageCallAnimals).
             for c in (host, client):
-                move_hero(c.bot, (90500.0, 5300.0, -6600.0))
+                if os.environ.get('G3_ANIMAL_AT'):
+                    teleport_to(c.bot, os.environ['G3_ANIMAL_AT'])
+                else:
+                    move_hero(c.bot, (90500.0, 5300.0, -6600.0))
             herd = []
             until = time.monotonic() + 20  # the area's animals come in once it is loaded
             while not herd and time.monotonic() < until:
                 time.sleep(2)
-                herd = [g for g, v in npcs(host.bot).items() if v['name'].startswith(os.environ['G3_ANIMAL']) and not v['dead']
+                herd = [g for g, v in npcs(host.bot).items() if v['name'].startswith(tuple(os.environ['G3_ANIMAL'].split(','))) and not v['dead']
                         and not v['mirrored'] and g not in used]
             report[tag+'_near_host'] = sorted({v['name'] for v in npcs(host.bot).values()})
             assert herd, f"no {os.environ['G3_ANIMAL']} near the host"
@@ -10912,6 +13475,51 @@ def stageArenaStart(copies, report, negative=False):
     assert not any(report['murders'].values()), f'the fight counted as a murder: {report["murders"]}'
 
 
+def stageArenaLeave(copies, report, negative=False):
+    """Basis (OnLeaveArea) and P4 arena: who leaves the arena during the fight loses it (gCQuest_PS::OnLeave, quest status
+    Lost 6; re/findings/world-scripts-c.md), as in single-player. The client takes Copper's arena fight as stageArenaStart
+    does; once Copper attacks it in the arena, the client runs 25 m out (QA runto: the area's trigger fires on movement).
+    Checked: the quest is lost on the client and on the host. Negative control: storyoff on the host (it never hears)."""
+    quest_id, name = os.environ.get('G3_QUEST', 'Copper_Arena'), os.environ.get('G3_TARGET', 'Copper')
+    chain = os.environ.get('G3_CHAIN', 'BPANKRATZ31259,BPANKRATZ31260|BPANKRATZ31261')
+    arena = os.environ.get('G3_ARENA', 'Reddock_Arena')
+    host, client = join_both(copies)
+    clear_raid(host, report)
+    if negative:
+        report['negative'] = report_line(host.bot, 'storyoff', 'STORY')
+    for copy in (host, client):
+        report_line(copy.bot, 'unarm', 'UNARM')
+    report['host_at'] = teleport_to(host.bot, name)
+    x, y, z = hero_pos(host.bot)
+    move_hero(host.bot, (x + 1200, y, z))
+    time.sleep(4)
+    for talk in chain.split('|'):
+        take_quest(client, name, talk.split(','), report)
+        time.sleep(2)
+    report['quest_started'] = {c.tag: quest_status(c.bot, quest_id) for c in (host, client)}
+    assert report['quest_started']['client'] == RUNNING, f'{quest_id} does not run on the client: {report.get("talks")}'
+    state = lambda bot: dict(re.findall(r'(\w+)=(\S+)', find_npc(bot, name)))
+    report['to_arena'] = wait_for(lambda: (lambda s: s.get('task', '').startswith('ZS_Arena') and [s])(state(client.bot)), 30,
+                                  f'{name} goes into the arena on the client')[0]
+    report_line(client.bot, 'sethp 1000', 'SETHP ')
+    report['in_arena'] = teleport_to(client.bot, arena)
+    ax, ay, az = hero_pos(client.bot)
+    for dx in (150, -150, 0):
+        move_hero(client.bot, (ax + dx, ay + 20, az))
+        time.sleep(1)
+    report['attacks'] = wait_for(lambda: (lambda s: s.get('target_hero') == '1' and [s])(state(client.bot)), 40,
+                                 f'{name} attacks the client in the arena')[0]
+    report['running'] = {c.tag: quest_status(c.bot, quest_id) for c in (host, client)}
+    report['leave'] = report_line(client.bot, f'runto {ax + 2500:.0f}_{ay:.0f}_{az:.0f}', ('RUNTO ', 'REFUSED runto'))
+    try:
+        wait_for(lambda: quest_status(client.bot, quest_id) == 6 and ['lost'], 30, f'{quest_id} is lost for the client')
+        wait_for(lambda: quest_status(host.bot, quest_id) == 6 and ['lost'], 20, f'{quest_id} is lost for the host too')
+    finally:
+        report['after'] = {c.tag: quest_status(c.bot, quest_id) for c in (host, client)}
+        report['client_pos'] = tuple(round(v) for v in hero_pos(client.bot))
+        report['opponent'] = {c.tag: {k: state(c.bot).get(k) for k in ('task', 'target_hero', 'mirrored')} for c in (host, client)}
+
+
 def arenastartdiag(copies, report, negative=False):
     """P4 measurement (Kapitel-Checkliste: Arena, 35 quests): the fight start of an arena quest as the game runs it. The quest's
     Activator info (Joey: 31256) ends with SendToArena for the opponent (Game gCInfo_PS::OnEndInfo, quest types 5 and 12), its
@@ -11203,6 +13811,9 @@ def stageUseStation(copies, report, negative=False):
         move_hero(host.bot, (goal[0] + 400, goal[1], goal[2]))
     time.sleep(2)
     report['inv_before'] = {c.tag: inventory_of(c.bot) for c in (host, client)}
+    counting = os.environ.get('G3_AICOUNT')  # AI states/functions to count on the client while it uses the station
+    if counting:
+        report_line(client.bot, 'aicount ' + counting, ('AICOUNT end',))
     report['use'] = report_line(client.bot, 'use ' + station, ('USE ', 'REFUSED use'))
     states, host_seen = [], []
     for _ in range(16):
@@ -11222,6 +13833,10 @@ def stageUseStation(copies, report, negative=False):
     time.sleep(3)
     report['host_free'] = use_field(use_info(host.bot, station), 'user')
     report['inv_after'] = {c.tag: inventory_of(c.bot) for c in (host, client)}
+    if counting:
+        start = client.bot.send('aicount', 20)
+        client.bot.line('AICOUNT end', 10, 'aicount', start)
+        report['aicount'] = [l for l in client.bot.log()[start:].splitlines() if l.startswith('AICOUNT name=')]
     diff = lambda tag: {k: report['inv_after'][tag].get(k, 0) - report['inv_before'][tag].get(k, 0)
                         for k in set(report['inv_after'][tag]) | set(report['inv_before'][tag])
                         if report['inv_after'][tag].get(k, 0) != report['inv_before'][tag].get(k, 0)}
@@ -11522,7 +14137,7 @@ def parity(copies, report, negative=False):
     report['client_connect_attempts'] = client.mod_log().count('net: connecting to')
 
 
-SUITES = {'homescandiag': homescandiag, 'boulderdiag': boulderdiag, 'stageBoulder': stageBoulder, 'importanttalkdiag': importanttalkdiag, 'stageAddressed': stageAddressed, 'stageSneak': stageSneak, 'stageForeignHome': stageForeignHome, 'stageDialogCommands': stageDialogCommands, 'stageUseStation': stageUseStation, 'stageNpcGestures': stageNpcGestures, 'stageDialogOptions': stageDialogOptions, 'stageBusyNpc': stageBusyNpc, 'dialogviewdiag': dialogviewdiag, 'spellnamediag': spellnamediag, 'stageEscortFar': stageEscortFar, 'stageArenaStart': stageArenaStart, 'stageTownFree': stageTownFree, 'sneakhomediag': sneakhomediag, 'summonmurderdiag': summonmurderdiag, 'arenastartdiag': arenastartdiag, 'stageKillQuest': stageKillQuest, 'moverscan': moverscan, 'stageArenaQuest': stageArenaQuest, 'stageBringItems': stageBringItems, 'stageReportQuest': stageReportQuest, 'questinfodiag': questinfodiag, 'stageRespawn': stageRespawn, 'respawndiag': respawndiag, 'stageWait': stageWait, 'stageGuideSave': stageGuideSave, 'stageGuide': stageGuide, 'stageEscort': stageEscort, 'stageTreasure': stageTreasure, 'treasurediag': treasurediag, 'soultraveldiag': soultraveldiag, 'followdiag': followdiag, 'stageHailCopy': stageHailCopy, 'stageDefeatQuest': stageDefeatQuest, 'stageLiberate': stageLiberate, 'stageArtifactFound': stageArtifactFound, 'stageEnterPlace': stageEnterPlace, 'stageShapeFight': stageShapeFight, 'objectscan': objectscan, 'stageEdgeClaim': stageEdgeClaim, 'stageSharedUse': stageSharedUse, 'stagePickPocket': stagePickPocket, 'stageMurder': stageMurder, 'murderwitnessdiag': murderwitnessdiag, 'stageMurderWitness': stageMurderWitness, 'trespassdiag': trespassdiag, 'stageTrespass': stageTrespass, 'stageCompanionMurder': stageCompanionMurder, 'questdumpdiag': questdumpdiag, 'stageHostUnreachable': stageHostUnreachable, 'menutextdiag': menutextdiag, 'stageSubtitles': stageSubtitles, 'stageWitness': stageWitness, 'stageTogether': stageTogether, 'stageRansack': stageRansack, 'stageMapMarks': stageMapMarks, 'stageTradeQuality': stageTradeQuality, 'stageTradeKeys': stageTradeKeys, 'fakebreaddiag': fakebreaddiag, 'stageCorpseProp': stageCorpseProp, 'fakebreadlivediag': fakebreadlivediag, 'stagePlayerTrade': stagePlayerTrade, 'stageTradePrice': stageTradePrice, 'skilldiag': skilldiag, 'stageW10': stageW10, 'stageW8': stageW8, 'stageW9': stageW9, 'stageTradeGoods': stageTradeGoods, 'postraidsave': postraidsave, 'puppettalkdiag': puppettalkdiag, 'stageGlide': stageGlide, 'stageWear': stageWear, 'stageW1': stageW1, 'stageW2': stageW2, 'stageW3': stageW3, 'stageW4': stageW4, 'stageW5': stageW5, 'stageW6': stageW6, 'stageW7': stageW7, 'stageX1': stageX1, 'stageF1': stageF1, 'brentondiag': brentondiag, 'xpinfodiag': xpinfodiag, 'stageA4': stageA4, 'stageA3': stageA3, 'stageQ2': stageQ2, 'stageK1': stageK1, 'stageS1': stageS1, 'stageS2': stageS2, 'stageS3': stageS3, 'stageCallAnimals': stageCallAnimals, 'callanimals2diag': callanimals2diag, 'animalscandiag': animalscandiag, 'callanimalsdiag': callanimalsdiag, 'stageOpenLocks': stageOpenLocks, 'stageSelfSpell': stageSelfSpell, 'selfspelldiag': selfspelldiag, 'stageNetOutage': stageNetOutage, 'stageR2': stageR2, 'stageM2': stageM2, 'stageRaid': stageRaid, 'stageM1': stageM1, 'stageR1': stageR1, 'theftdiag': theftdiag, 'stageCreature': stageCreature, 'stageCreatureLife': stageCreatureLife, 'stageControl': stageControl, 'stageNpcSpell': stageNpcSpell, 'stagePoison': stagePoison, 'theftscan': theftscan, 'doorlatediag': doorlatediag, 'doordiag': doordiag, 'worldscan': worldscan, 'usediag': usediag, 'friendlydiag': friendlydiag, 'parity': parity, 'scriptfinddiag': scriptfinddiag, 'tracediag': tracediag, 'deaddiag': deaddiag, 'stageL': stageL, 'stageP3a': stageP3a, 'invariantself': invariantself, 'puppetposediag': puppetposediag, 'syncdiag': syncdiag, 'ownerdiag': ownerdiag, 'potiondiag': potiondiag, 'transformdiag': transformdiag, 'rangeddiag': rangeddiag, 'rangedbot': rangedbot, 'stageP1': stageP1, 'stageP2': stageP2, 'stageP2hit': stageP2hit, 'stageP2fire': stageP2fire, 'stageHealOther': stageHealOther, 'raiddiag': raiddiag, 'arrowtouchdiag': arrowtouchdiag, 'scriptdumpdiag': scriptdumpdiag, 'stageT': stageT, 'stageV5': stageV5, 'stageV4': stageV4, 'posediag': posediag, 'stageV3': stageV3, 'stageV1': stageV1, 'stageV2': stageV2, 'viewdiag': viewdiag, 'stageE5': stageE5, 'stageQ': stageQ, 'questdiag': questdiag, 'stageE4': stageE4, 'infodescdiag': infodescdiag, 'stageE3': stageE3, 'stageE2': stageE2, 'stageE1': stageE1, 'aggrodiag': aggrodiag, 'stageH3b': stageH3b, 'infoscandiag': infoscandiag, 'gotodiag2': gotodiag2, 'walkdiag': walkdiag, 'gotodiag': gotodiag, 'navdiag': navdiag, 'soak': soak, 'stageH2': stageH2, 'stageH1': stageH1, 'infodiag': infodiag, 'stageG2': stageG2, 'stageG': stageG, 'stageD3b': stageD3b, 'stageD3a': stageD3a, 'stageD2': stageD2, 'stageD1': stageD1, 'stageC': stageC, 'stageB': stageB, 'stageA2': stageA2, 'stageA': stageA, 'herodeathdiag': herodeathdiag, 'herodiag': herodiag, 'givexpdiag': givexpdiag, 'stage3c': stage3c, 'farwritediag': farwritediag, 'stage1': stage1, 'stage2': stage2, 'animdiag': animdiag, 'stage3a': stage3a, 'scriptdiag': scriptdiag,
+SUITES = {'stageAttitudeShared': stageAttitudeShared, 'attitudeleakdiag': attitudeleakdiag, 'stageGuardNews': stageGuardNews, 'commentdiag': commentdiag, 'aggressordiag': aggressordiag, 'stageUpset': stageUpset, 'guardcommentdiag': guardcommentdiag, 'upsetdiag': upsetdiag, 'stageDefeatSeen': stageDefeatSeen, 'crimenewsdiag': crimenewsdiag, 'defeatwitnessdiag': defeatwitnessdiag, 'stageCompanionWait': stageCompanionWait, 'stagePartyJoin': stagePartyJoin, 'zonescandiag': zonescandiag, 'zoneattitudediag': zoneattitudediag, 'sectorrefreshdiag': sectorrefreshdiag, 'animalsleepdiag': animalsleepdiag, 'stageArenaLeave': stageArenaLeave, 'stageCounterHit': stageCounterHit, 'counterhitdiag': counterhitdiag, 'guardnewsdiag': guardnewsdiag, 'newsscandiag': newsscandiag, 'boulderseqdiag': boulderseqdiag, 'stageBoulderHold': stageBoulderHold, 'stageMeleeSwing': stageMeleeSwing, 'stageNpcBlock': stageNpcBlock, 'stageShieldBlock': stageShieldBlock, 'stageFlameSword': stageFlameSword, 'flamesworddiag': flamesworddiag, 'stageAreaSpells': stageAreaSpells, 'areaspelldiag': areaspelldiag, 'stageFightMemory': stageFightMemory, 'stageWarn': stageWarn, 'stageObserveSuspect': stageObserveSuspect, 'stageEnterRange': stageEnterRange, 'swimdiag': swimdiag, 'stageQuickUse': stageQuickUse, 'stageSleepBed': stageSleepBed, 'chestscandiag': chestscandiag, 'chestwitnessdiag': chestwitnessdiag, 'stageIntruderFight': stageIntruderFight, 'intruderkodiag': intruderkodiag, 'useownediag': useownediag, 'fightmemorydiag': fightmemorydiag, 'p7opendiag': p7opendiag, 'stageEnding': stageEnding, 'storyepilogdiag': storyepilogdiag, 'stageStoryNordmar': stageStoryNordmar, 'stageStoryInnos': stageStoryInnos, 'homescandiag': homescandiag, 'boulderdiag': boulderdiag, 'stageBoulder': stageBoulder, 'importanttalkdiag': importanttalkdiag, 'stageAddressed': stageAddressed, 'stageSneak': stageSneak, 'stageForeignHome': stageForeignHome, 'stageDialogCommands': stageDialogCommands, 'stageUseStation': stageUseStation, 'stageNpcGestures': stageNpcGestures, 'stageDialogOptions': stageDialogOptions, 'stageBusyNpc': stageBusyNpc, 'dialogviewdiag': dialogviewdiag, 'spellnamediag': spellnamediag, 'stageEscortFar': stageEscortFar, 'stageArenaStart': stageArenaStart, 'stageTownFree': stageTownFree, 'sneakhomediag': sneakhomediag, 'summonmurderdiag': summonmurderdiag, 'arenastartdiag': arenastartdiag, 'stageKillQuest': stageKillQuest, 'moverscan': moverscan, 'stageArenaQuest': stageArenaQuest, 'stageBringItems': stageBringItems, 'stageReportQuest': stageReportQuest, 'questinfodiag': questinfodiag, 'stageRespawn': stageRespawn, 'respawndiag': respawndiag, 'stageWait': stageWait, 'stageGuideSave': stageGuideSave, 'stageGuide': stageGuide, 'stageEscort': stageEscort, 'stageTreasure': stageTreasure, 'treasurediag': treasurediag, 'soultraveldiag': soultraveldiag, 'followdiag': followdiag, 'stageHailCopy': stageHailCopy, 'stageDefeatQuest': stageDefeatQuest, 'stageLiberate': stageLiberate, 'stageArtifactFound': stageArtifactFound, 'stageEnterPlace': stageEnterPlace, 'stageShapeFight': stageShapeFight, 'objectscan': objectscan, 'stageEdgeClaim': stageEdgeClaim, 'stageSharedUse': stageSharedUse, 'stagePickPocket': stagePickPocket, 'stageMurder': stageMurder, 'murderwitnessdiag': murderwitnessdiag, 'stageMurderWitness': stageMurderWitness, 'trespassdiag': trespassdiag, 'stageTrespass': stageTrespass, 'stageCompanionMurder': stageCompanionMurder, 'questdumpdiag': questdumpdiag, 'stageHostUnreachable': stageHostUnreachable, 'menutextdiag': menutextdiag, 'stageSubtitles': stageSubtitles, 'stageWitness': stageWitness, 'stageTogether': stageTogether, 'stageRansack': stageRansack, 'stageMapMarks': stageMapMarks, 'stageTradeQuality': stageTradeQuality, 'stageTradeKeys': stageTradeKeys, 'fakebreaddiag': fakebreaddiag, 'stageCorpseProp': stageCorpseProp, 'fakebreadlivediag': fakebreadlivediag, 'stagePlayerTrade': stagePlayerTrade, 'stageTradePrice': stageTradePrice, 'skilldiag': skilldiag, 'stageW10': stageW10, 'stageW8': stageW8, 'stageW9': stageW9, 'stageTradeGoods': stageTradeGoods, 'postraidsave': postraidsave, 'puppettalkdiag': puppettalkdiag, 'stageGlide': stageGlide, 'stageWear': stageWear, 'stageW1': stageW1, 'stageW2': stageW2, 'stageW3': stageW3, 'stageW4': stageW4, 'stageW5': stageW5, 'stageW6': stageW6, 'stageW7': stageW7, 'stageX1': stageX1, 'stageF1': stageF1, 'brentondiag': brentondiag, 'xpinfodiag': xpinfodiag, 'stageA4': stageA4, 'stageA3': stageA3, 'stageQ2': stageQ2, 'stageK1': stageK1, 'stageS1': stageS1, 'stageS2': stageS2, 'stageS3': stageS3, 'stageCallAnimals': stageCallAnimals, 'callanimals2diag': callanimals2diag, 'animalscandiag': animalscandiag, 'callanimalsdiag': callanimalsdiag, 'stageOpenLocks': stageOpenLocks, 'stageSelfSpell': stageSelfSpell, 'selfspelldiag': selfspelldiag, 'stageNetOutage': stageNetOutage, 'stageR2': stageR2, 'stageM2': stageM2, 'stageRaid': stageRaid, 'stageM1': stageM1, 'stageR1': stageR1, 'theftdiag': theftdiag, 'stageCreature': stageCreature, 'stageCreatureLife': stageCreatureLife, 'stageControl': stageControl, 'stageNpcSpell': stageNpcSpell, 'stagePoison': stagePoison, 'theftscan': theftscan, 'doorlatediag': doorlatediag, 'doordiag': doordiag, 'worldscan': worldscan, 'usediag': usediag, 'friendlydiag': friendlydiag, 'parity': parity, 'scriptfinddiag': scriptfinddiag, 'tracediag': tracediag, 'deaddiag': deaddiag, 'stageL': stageL, 'stageP3a': stageP3a, 'invariantself': invariantself, 'puppetposediag': puppetposediag, 'syncdiag': syncdiag, 'ownerdiag': ownerdiag, 'potiondiag': potiondiag, 'transformdiag': transformdiag, 'rangeddiag': rangeddiag, 'rangedbot': rangedbot, 'stageP1': stageP1, 'stageP2': stageP2, 'stageP2hit': stageP2hit, 'stageP2fire': stageP2fire, 'stageHealOther': stageHealOther, 'raiddiag': raiddiag, 'arrowtouchdiag': arrowtouchdiag, 'scriptdumpdiag': scriptdumpdiag, 'stageT': stageT, 'stageV5': stageV5, 'stageV4': stageV4, 'posediag': posediag, 'stageV3': stageV3, 'stageV1': stageV1, 'stageV2': stageV2, 'viewdiag': viewdiag, 'stageE5': stageE5, 'stageQ': stageQ, 'questdiag': questdiag, 'stageE4': stageE4, 'infodescdiag': infodescdiag, 'stageE3': stageE3, 'stageE2': stageE2, 'stageE1': stageE1, 'aggrodiag': aggrodiag, 'stageH3b': stageH3b, 'infoscandiag': infoscandiag, 'gotodiag2': gotodiag2, 'walkdiag': walkdiag, 'gotodiag': gotodiag, 'navdiag': navdiag, 'soak': soak, 'stageH2': stageH2, 'stageH1': stageH1, 'infodiag': infodiag, 'stageG2': stageG2, 'stageG': stageG, 'stageD3b': stageD3b, 'stageD3a': stageD3a, 'stageD2': stageD2, 'stageD1': stageD1, 'stageC': stageC, 'stageB': stageB, 'stageA2': stageA2, 'stageA': stageA, 'herodeathdiag': herodeathdiag, 'herodiag': herodiag, 'givexpdiag': givexpdiag, 'stage3c': stage3c, 'farwritediag': farwritediag, 'stage1': stage1, 'stage2': stage2, 'animdiag': animdiag, 'stage3a': stage3a, 'scriptdiag': scriptdiag,
           'stage3b': stage3b, 'combatdiag': combatdiag, 'stackdiag': stackdiag, 'stage4': stage4, 'stage4b': stage4b, 'talkdiag': talkdiag, 'namesdiag': namesdiag, 'talkdiag2': talkdiag2, 'stage4c': stage4c, 'itemdiag': itemdiag, 'stage5': stage5, 'lootdiag': lootdiag, 'stage5b': stage5b, 'stage5c': stage5c, 'chestdiag': chestdiag, 'stageChest': stageChest, 'quicklootdiag': quicklootdiag, 'radiusdiag': radiusdiag, 'pausediag': pausediag, 'savediag': savediag, 'stageQuickLoot': stageQuickLoot, 'tradediag': tradediag, 'stageTrade': stageTrade, 'spellfuncdiag': spellfuncdiag, 'stageDialogAudio': stageDialogAudio, 'listendiag': listendiag, 'stageU1': stageU1, 'stageBigTrade': stageBigTrade, 'stageReloadLoot': stageReloadLoot}
 
 

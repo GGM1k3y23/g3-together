@@ -10,6 +10,8 @@
 #include "hitprobe.h"
 #include "story.h"
 #include "address.h"
+#include "p7probe.h"
+#include "fightmem.h"
 #include "partner.h"
 #include "talk.h"
 #include "items.h"
@@ -40,6 +42,7 @@
 #include "clock.h"
 #include "guide.h"
 #include "arena.h"
+#include "ending.h"
 #include "infocmd.h"
 #include "remote.h"
 #include "trace.h"
@@ -260,7 +263,27 @@ void ReceiveItem()
 // Codex review 22.10. (R1, R8, R9): a third chain, the other two are at MSVC's limit of nested blocks (C1061).
 bool RunReviewAction(const char* action)
 {
-    if (!std::strcmp(action, "herocut")) {
+    if (!std::strcmp(action, "chapter")) {  // here: RunAction's chain is at the compiler's nesting limit (C1061)
+        g3t::explore::Chapter(&Log);
+    } else if (!std::strcmp(action, "cancelattack")) {
+        g3t::explore::CancelAttack(argument, &Log);
+    } else if (!std::strcmp(action, "sector")) {
+        g3t::explore::Sector(argument, &Log);
+    } else if (!std::strcmp(action, "quickuse")) {
+        g3t::explore::QuickUse(argument, &Log);
+    } else if (!std::strcmp(action, "zoneatt")) {
+        g3t::explore::ZoneAttitude(argument, &Log);
+    } else if (!std::strcmp(action, "scriptwatch")) {
+        g3t::explore::ScriptWatch(argument, &Log);
+    } else if (!std::strcmp(action, "movemode")) {
+        g3t::explore::MoveMode(&Log);
+    } else if (!std::strcmp(action, "chaptersyncoff")) {
+        g3t::story::ChapterOff(&Log);
+    } else if (!std::strcmp(action, "ending")) {
+        g3t::ending::Report(&Log);
+    } else if (!std::strcmp(action, "endingsyncoff")) {
+        g3t::ending::Off(&Log);
+    } else if (!std::strcmp(action, "herocut")) {
         g3t::hero::CutCommand(argument, &Log);
     } else if (!std::strcmp(action, "recordcheckoff")) {
         g3t::hero::CheckOff(&Log);
@@ -335,6 +358,28 @@ bool RunReviewAction(const char* action)
         g3t::explore::RunTo(argument, &Log);
     } else if (!std::strcmp(action, "setattr")) {
         g3t::explore::SetAttribute(argument, &Log);
+    } else if (!std::strcmp(action, "p7probeon")) {  // open P7 points (25.10. evening)
+        g3t::p7probe::On(&Log);
+    } else if (!std::strcmp(action, "p7probe")) {
+        g3t::p7probe::Report(&Log);
+    } else if (!std::strcmp(action, "ownedobj")) {
+        g3t::social::OwnedObjects(argument, &Log);
+    } else if (!std::strcmp(action, "fightmemory")) {
+        g3t::p7probe::FightMemory(argument, &Log);
+    } else if (!std::strcmp(action, "crimeknown")) {
+        g3t::enclaves::SetKnown(argument, &Log);
+    } else if (!std::strcmp(action, "crimesuspect")) {
+        g3t::enclaves::SetSuspect(argument, &Log);
+    } else if (!std::strcmp(action, "fightmem")) {  // fight memory (26.10.)
+        g3t::fightmem::Report(&Log);
+    } else if (!std::strcmp(action, "grudgeoff")) {
+        g3t::fightmem::ApartOff(&Log);
+    } else if (!std::strcmp(action, "fightmemoff")) {
+        g3t::fightmem::Off(&Log);
+    } else if (!std::strcmp(action, "zonefixoff")) {
+        g3t::guards::ZoneFixOff(&Log);
+    } else if (!std::strcmp(action, "fightsoff")) {
+        g3t::guards::FightsOff(&Log);
     } else if (!std::strcmp(action, "sneakcheckon")) {
         g3t::guards::SneakCheckOn(&Log);
     } else if (!std::strcmp(action, "address")) {
@@ -489,6 +534,42 @@ bool RunPlayerAction(const char* action)
         g3t::trade::FillOff(&Log);
     } else if (!std::strcmp(action, "playergoods")) {
         g3t::trade::GoodsReport(argument, &Log);
+    } else {
+        return false;
+    }
+    return true;
+}
+
+// P4 hit judgement (25.10.): a fourth chain, RunLaterAction reached C1061 too.
+bool RunHitAction(const char* action)
+{
+    if (!std::strcmp(action, "hitprobe")) {
+        g3t::combat::HitProbe(argument, &Log);
+    } else if (!std::strcmp(action, "puppetparadeoff")) {
+        g3t::combat::PuppetParadeOff(&Log);
+    } else if (!std::strcmp(action, "npcblockoff")) {
+        g3t::combat::NpcBlockOff(&Log);
+    } else if (!std::strcmp(action, "parade")) {
+        g3t::combat::ParadeReport(&Log);
+    } else if (!std::strcmp(action, "npcguard")) {
+        g3t::combat::NpcGuard(argument, &Log);
+    } else if (!std::strcmp(action, "npcstill")) {
+        g3t::combat::NpcStill(argument, &Log);
+    } else if (!std::strcmp(action, "puppetparade")) {
+        g3t::combat::PuppetParade(argument, &Log);
+    } else if (!std::strcmp(action, "stanceoff")) {
+        g3t::body::stanceSync = false;
+        Log("STANCEOFF ok=1 (bodies keep their own AniState)");
+    } else if (!std::strcmp(action, "aicount")) {
+        g3t::ai::Count(argument, &Log);
+    } else if (!std::strcmp(action, "partyenable")) {
+        g3t::infocmd::PartyEnableQa(argument, &Log);
+    } else if (!std::strcmp(action, "puppetstate")) {
+        g3t::combat::PuppetState(&Log);
+    } else if (!std::strcmp(action, "npcstate")) {
+        g3t::combat::NpcState(argument, &Log);
+    } else if (!std::strcmp(action, "guard")) {
+        g3t::combat::Guard(argument, &Log);
     } else {
         return false;
     }
@@ -749,7 +830,7 @@ void RunAction(const char* action)
 {
     gCSession& session = gCSession::GetInstance();
     char line[256] = {};
-    if (RunLaterAction(action) || RunReviewAction(action) || RunPlayerAction(action)) return;
+    if (RunHitAction(action) || RunLaterAction(action) || RunReviewAction(action) || RunPlayerAction(action)) return;
     if (!std::strcmp(action, "state")) {
         State(session);
     } else if (!std::strcmp(action, "menu")) {

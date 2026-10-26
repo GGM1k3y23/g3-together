@@ -553,10 +553,11 @@ void Summons(LogFn log)
         const _GUID& g = reinterpret_cast<_GUID const&>(proxy.GetEntityID().GetCore());
         const bCVector at = e.GetPosition();
         const Entity owner = e.Interaction.GetOwner();
-        sprintf_s(line, "SUMMON name=%s guid=%08lX-%04X-%04X at=%.0f_%.0f_%.0f owner=%s puppet_owner=%d flying=%d sets=%s", e.GetName().GetText(),
+        sprintf_s(line, "SUMMON name=%s guid=%08lX-%04X-%04X at=%.0f_%.0f_%.0f owner=%s puppet_owner=%d flying=%d task=%s sets=%s", e.GetName().GetText(),
                   g.Data1, g.Data2, g.Data3, at.GetX(), at.GetY(), at.GetZ(), owner.GetInstance() ? owner.GetName().GetText() : "-",
                   owner.GetInstance() ? remote::PuppetOwner(owner.GetInstance()) : 0,
-                  instance->GetPropertySet(eEPropertySetType_Projectile) && e.Projectile.IsFlying() ? 1 : 0, sets);
+                  instance->GetPropertySet(eEPropertySetType_Projectile) && e.Projectile.IsFlying() ? 1 : 0,
+                  instance->GetPropertySet(eEPropertySetType_ScriptRoutine) ? e.Routine.GetCurrentTask().GetText() : "-", sets);
         log(line);
     }
     sprintf_s(line, "SUMMONS end count=%d", count);

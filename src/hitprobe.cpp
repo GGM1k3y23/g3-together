@@ -75,7 +75,7 @@ std::string StackPath()
     auto const* stack = reinterpret_cast<uintptr_t const*>(const_cast<uintptr_t*>(&marker));
     NT_TIB const* tib = reinterpret_cast<NT_TIB const*>(NtCurrentTeb());
     auto const* top = static_cast<uintptr_t const*>(tib->StackBase);
-    for (int i = 0; i < 1024 && stack + i < top && found < 10; ++i) {
+    for (int i = 0; i < 2048 && stack + i < top && found < 20; ++i) {
         const uintptr_t value = stack[i];
         for (Module const& m : modules) {
             if (!m.codeStart || value <= m.codeStart + 7 || value >= m.codeEnd) continue;
@@ -130,7 +130,7 @@ void Tick()
 
 void Report(LogFn log)
 {
-    char line[900];
+    char line[1400];
     sprintf_s(line, "HITSTACKS installed=%d calls=%u paths=%d", installed, calls, pathCount);
     log(line);
     for (int i = 0; i < pathCount; ++i) {
