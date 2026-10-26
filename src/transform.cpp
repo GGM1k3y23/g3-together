@@ -29,7 +29,7 @@ void Line(char const* prefix, LogFn log)
     Entity player = Entity::GetPlayer();
     if (hero) body::CurrentMotion(hero, motion, sizeof(motion));
     Entity self(hero);
-    sprintf_s(line, "%s hero=%s player=%s same=%d original=%s original_shown=%d transformed=%d remain=%.0f hero_hp=%d player_hp=%d motion=%s", prefix,
+    Format(line, "%s hero=%s player=%s same=%d original=%s original_shown=%d transformed=%d remain=%.0f hero_hp=%d player_hp=%d motion=%s", prefix,
               hero ? self.GetName().GetText() : "-", player.GetInstance() ? player.GetName().GetText() : "-",
               hero && player.GetInstance() == hero ? 1 : 0, original.GetInstance() ? original.GetName().GetText() : "-",
               original.GetInstance() && original.GetInstance()->IsEnabled() ? 1 : 0,
@@ -48,7 +48,7 @@ void Start(char const* creatureTemplate, LogFn log)
     const Template shape(creatureTemplate);
     if (!hero || !shape.IsValid()) {
         char line[160];
-        sprintf_s(line, "TRANSFORM refused template=%s valid=%d", creatureTemplate, shape.IsValid() ? 1 : 0);
+        Format(line, "TRANSFORM refused template=%s valid=%d", creatureTemplate, shape.IsValid() ? 1 : 0);
         log(line);
         return;
     }
@@ -84,7 +84,7 @@ void Walk(int direction, LogFn log)
     Entity body(self);
     // A movement goal does nothing on the body the player steers; the game's AI goto (as walkto for the hero) does.
     const GEBool started = body.StartGoto(goal, gEWalkMode_Run);
-    sprintf_s(line, "WALKBY body=%s started=%d from=%.0f,%.0f,%.0f goal=%.0f,%.0f,%.0f", body.GetName().GetText(), started ? 1 : 0, at.GetX(),
+    Format(line, "WALKBY body=%s started=%d from=%.0f,%.0f,%.0f goal=%.0f,%.0f,%.0f", body.GetName().GetText(), started ? 1 : 0, at.GetX(),
               at.GetY(), at.GetZ(), goal.GetX(), goal.GetY(), goal.GetZ());
     log(line);
 }

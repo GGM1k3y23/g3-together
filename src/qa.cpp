@@ -3,6 +3,7 @@
 // Menus are driven through the game's GUI API plus Enter posted to the game's own window, so the
 // game handles each key in its normal message pump. No OS input, no address patterns.
 #include "qa.h"
+#include "log.h"
 
 #include "ai.h"
 #include "body.h"
@@ -80,7 +81,7 @@ bool newGamePending = false;
 
 bool Path(char (&path)[MAX_PATH], const char* file)
 {
-    return *root && sprintf_s(path, "%s\\%s", root, file) >= 0;
+    return *root && Format(path, "%s\\%s", root, file) == static_cast<int>(std::strlen(root) + 1 + std::strlen(file));  // no cut path
 }
 
 void Log(const char* text)
@@ -129,7 +130,7 @@ void InstanceLocks(const wchar_t* release)
         wchar_t name[260] = {};
         if (!MutexName(handle, name)) continue;
         const bool close = release && std::wcsstr(name, release);
-        sprintf_s(line, "LOCK mutex handle=%#Ix name=%ls%s", value, name, close ? " -> released" : "");
+        Format(line, "LOCK mutex handle=%#Ix name=%ls%s", value, name, close ? " -> released" : "");
         Log(line);
         if (close) CloseHandle(handle);
     }
@@ -143,18 +144,18 @@ void State(gCSession& session)
     eCDynamicEntity* hero = session.GetHero();
     const bCString name = world ? world->GetFileBaseName() : bCString("none");
     const bCString folder = gCWorld::GetSaveGameFolder();
-    sprintf_s(line, "STATE running=%d paused=%d save_allowed=%d world=%s hero=%s save_folder=%s", session.IsGameRunning(),
+    Format(line, "STATE running=%d paused=%d save_allowed=%d world=%s hero=%s save_folder=%s", session.IsGameRunning(),
               session.IsPaused(), session.IsSaveAllowed(), name.GetText(), hero ? hero->GetName().GetText() : "none",
               folder.GetText());
     Log(line);
     if (hero) {
         const bCVector& p = hero->GetWorldPosition();
-        sprintf_s(line, "POS x=%.1f y=%.1f z=%.1f", p.GetX(), p.GetY(), p.GetZ());
+        Format(line, "POS x=%.1f y=%.1f z=%.1f", p.GetX(), p.GetY(), p.GetZ());
         Log(line);
     }
     CFFGFCWnd* focus = CFFGFCWnd::FromHandle(CFFGUIModule::GetInstance().GetFocusWnd());
     if (focus) {
-        sprintf_s(line, "FOCUS id=%u text=%.512s", focus->GetDlgCtrlID(), focus->GetWindowTextA().GetAnsiText().GetText());
+        Format(line, "FOCUS id=%u text=%.512s", focus->GetDlgCtrlID(), focus->GetWindowTextA().GetAnsiText().GetText());
         Log(line);
     }
 }
@@ -176,14 +177,14 @@ void InspectMenu()
                 char text[512] = {};
                 const bCUnicodeString caption = window->GetWindowTextA();
                 WideCharToMultiByte(CP_UTF8, 0, caption.GetText(), -1, text, sizeof(text), nullptr, nullptr);
-                sprintf_s(info, "MENU id=%u visible=%d enabled=%d sample=%d,%d depth=%d text=%s", window->GetDlgCtrlID(),
+                Format(info, "MENU id=%u visible=%d enabled=%d sample=%d,%d depth=%d text=%s", window->GetDlgCtrlID(),
                           window->IsWindowVisible(), window->IsWindowEnabled(), x, y, depth, text);
                 Log(info);
                 for (unsigned id = 1; id < 22000; ++id) {
                     if (id == 256) id = 20000;
                     CFFGFCWnd* child = window->GetDlgItem(id);
                     if (!child || !child->IsWindowVisible()) continue;
-                    sprintf_s(info, "MENU child id=%u enabled=%d text=%.512s", id, child->IsWindowEnabled(),
+                    Format(info, "MENU child id=%u enabled=%d text=%.512s", id, child->IsWindowEnabled(),
                               child->GetWindowTextA().GetAnsiText().GetText());
                     Log(info);
                 }
@@ -213,7 +214,7 @@ bool Focus(unsigned id, const char* caption, const char* prompt = nullptr)
                 if (!question || !std::strstr(question->GetWindowTextA().GetAnsiText().GetText(), prompt)) continue;
             }
             button->SetFocus();
-            sprintf_s(line, "MENU_FOCUS id=%u focused=%d text=%s", id, button->HasFocus(), caption);
+            Format(line, "MENU_FOCUS id=%u focused=%d text=%s", id, button->HasFocus(), caption);
             Log(line);
             return button->HasFocus();
         }
@@ -235,12 +236,12 @@ void Quest(gCSession& session, const char* action)
     if (!quests || !*argument || !session.IsGameRunning()) { Log("REFUSED quest: no running game or quest id"); return; }
     const bCString id(argument);
     gCQuest_PS* quest = quests->GetQuest(id);
-    if (!quest) { sprintf_s(line, "QUEST id=%s missing=1", argument); Log(line); return; }
+    if (!quest) { Format(line, "QUEST id=%s missing=1", argument); Log(line); return; }
     int changed = -1;
     if (!std::strcmp(action, "runquest")) changed = quests->RunQuest(id);
     else if (!std::strcmp(action, "succeedquest")) changed = quests->SucceedQuest(id);
     const gEQuestStatus status = static_cast<gEQuestStatus const&>(quest->AccessStatus());
-    sprintf_s(line, "QUEST id=%s status=%d changed=%d", argument, static_cast<int>(status), changed);
+    Format(line, "QUEST id=%s status=%d changed=%d", argument, static_cast<int>(status), changed);
     Log(line);
 }
 
@@ -256,7 +257,7 @@ void ReceiveItem()
     const GEInt stack = Entity(hero).Inventory.CreateItems(item, 0, 1);
     bCPropertyID const& id = item;
     const GEBool told = quests->OnReceiveItem(nullptr, hero, id, 1);
-    sprintf_s(line, "RECEIVEITEM item=%s stack=%d told=%d", argument, stack, told ? 1 : 0);
+    Format(line, "RECEIVEITEM item=%s stack=%d told=%d", argument, stack, told ? 1 : 0);
     Log(line);
 }
 
@@ -265,6 +266,17 @@ bool RunReviewAction(const char* action)
 {
     if (!std::strcmp(action, "chapter")) {  // here: RunAction's chain is at the compiler's nesting limit (C1061)
         g3t::explore::Chapter(&Log);
+    } else if (!std::strcmp(action, "politicaloff")) {
+        g3t::enclaves::PoliticalOff(&Log);
+    } else if (!std::strcmp(action, "swimstrokeoff")) {
+        g3t::body::swimStrokes = false;
+        Log("SWIMSTROKEOFF ok=1 (a swimming puppet only glides)");
+    } else if (!std::strcmp(action, "swimstrokes")) {
+        char line[80];
+        Format(line, "SWIMSTROKES on=%d played=%u", g3t::body::swimStrokes ? 1 : 0, g3t::body::swimStrokesPlayed);
+        Log(line);
+    } else if (!std::strcmp(action, "agressoroff")) {
+        g3t::combat::AgressorOff(&Log);
     } else if (!std::strcmp(action, "cancelattack")) {
         g3t::explore::CancelAttack(argument, &Log);
     } else if (!std::strcmp(action, "sector")) {
@@ -273,8 +285,32 @@ bool RunReviewAction(const char* action)
         g3t::explore::QuickUse(argument, &Log);
     } else if (!std::strcmp(action, "zoneatt")) {
         g3t::explore::ZoneAttitude(argument, &Log);
+    } else if (!std::strcmp(action, "attchain")) {  // P7 attitudes (26.10. pair 1)
+        g3t::explore::AttitudeChain(argument, &Log);
+    } else if (!std::strcmp(action, "setchapter")) {
+        g3t::explore::SetChapter(argument, &Log);
+    } else if (!std::strcmp(action, "polmem")) {  // P4 dialog conditions (26.10. pair 2)
+        g3t::explore::PolMem(argument, &Log);
+    } else if (!std::strcmp(action, "enclavefame")) {
+        g3t::explore::EnclaveFame(argument, &Log);
+    } else if (!std::strcmp(action, "enclavestatus")) {
+        g3t::explore::EnclaveStatus(argument, &Log);
+    } else if (!std::strcmp(action, "chaptercopyoff")) {
+        g3t::guards::ChapterCopyOff(&Log);
+    } else if (!std::strcmp(action, "mirrorperceiveoff")) {
+        g3t::witness::MirrorPerceiveOff(&Log);
     } else if (!std::strcmp(action, "scriptwatch")) {
         g3t::explore::ScriptWatch(argument, &Log);
+    } else if (!std::strcmp(action, "nativewatch")) {
+        g3t::explore::NativeWatch(argument, &Log);
+    } else if (!std::strcmp(action, "sleepers")) {
+        g3t::explore::Sleepers(argument, &Log);
+    } else if (!std::strcmp(action, "waitfree")) {
+        g3t::explore::WaitFree(argument, &Log);
+    } else if (!std::strcmp(action, "animalsleep")) {
+        g3t::explore::AnimalSleep(argument, &Log);
+    } else if (!std::strcmp(action, "swimgoal")) {
+        g3t::explore::SwimGoal(argument, &Log);
     } else if (!std::strcmp(action, "movemode")) {
         g3t::explore::MoveMode(&Log);
     } else if (!std::strcmp(action, "chaptersyncoff")) {
@@ -283,6 +319,10 @@ bool RunReviewAction(const char* action)
         g3t::ending::Report(&Log);
     } else if (!std::strcmp(action, "endingsyncoff")) {
         g3t::ending::Off(&Log);
+    } else if (!std::strcmp(action, "endinghold")) {
+        g3t::ending::Hold(argument, &Log);
+    } else if (!std::strcmp(action, "endinglimit")) {
+        g3t::ending::Limit(&Log);
     } else if (!std::strcmp(action, "herocut")) {
         g3t::hero::CutCommand(argument, &Log);
     } else if (!std::strcmp(action, "recordcheckoff")) {
@@ -291,6 +331,8 @@ bool RunReviewAction(const char* action)
         g3t::hero::WriteFault(&Log);
     } else if (!std::strcmp(action, "storyzerosoff")) {
         g3t::story::ZerosOff(&Log);
+    } else if (!std::strcmp(action, "storyreloadoff")) {
+        g3t::story::ReloadOff(&Log);
     } else if (!std::strcmp(action, "hitnpcburst")) {
         g3t::combat::HitNpcBurst(argument, &Log);
     } else if (!std::strcmp(action, "killonceoff")) {
@@ -362,6 +404,8 @@ bool RunReviewAction(const char* action)
         g3t::p7probe::On(&Log);
     } else if (!std::strcmp(action, "p7probe")) {
         g3t::p7probe::Report(&Log);
+    } else if (!std::strcmp(action, "bothered")) {  // P7 attitudes (26.10. pair 1)
+        g3t::social::Bothered(argument, &Log);
     } else if (!std::strcmp(action, "ownedobj")) {
         g3t::social::OwnedObjects(argument, &Log);
     } else if (!std::strcmp(action, "fightmemory")) {
@@ -374,6 +418,12 @@ bool RunReviewAction(const char* action)
         g3t::fightmem::Report(&Log);
     } else if (!std::strcmp(action, "grudgeoff")) {
         g3t::fightmem::ApartOff(&Log);
+    } else if (!std::strcmp(action, "grudgeloadoff")) {
+        g3t::fightmem::KeepOff(&Log);
+    } else if (!std::strcmp(action, "formatprobe")) {  // lines cut to their buffer (review 26.10.)
+        g3t::FormatProbe(argument, &Log);
+    } else if (!std::strcmp(action, "formatstrict")) {
+        g3t::FormatStrict(&Log);
     } else if (!std::strcmp(action, "fightmemoff")) {
         g3t::fightmem::Off(&Log);
     } else if (!std::strcmp(action, "zonefixoff")) {
@@ -382,6 +432,12 @@ bool RunReviewAction(const char* action)
         g3t::guards::FightsOff(&Log);
     } else if (!std::strcmp(action, "sneakcheckon")) {
         g3t::guards::SneakCheckOn(&Log);
+    } else if (!std::strcmp(action, "enterzoneon")) {
+        g3t::guards::EnterZoneOn(&Log);
+    } else if (!std::strcmp(action, "animalwakeoff")) {
+        g3t::guards::AnimalWakeOff(&Log);
+    } else if (!std::strcmp(action, "freedestoff")) {
+        g3t::guards::FreeDestOff(&Log);
     } else if (!std::strcmp(action, "address")) {
         g3t::address::Report(&Log);
     } else if (!std::strcmp(action, "addressoff")) {
@@ -566,10 +622,12 @@ bool RunHitAction(const char* action)
         g3t::infocmd::PartyEnableQa(argument, &Log);
     } else if (!std::strcmp(action, "puppetstate")) {
         g3t::combat::PuppetState(&Log);
-    } else if (!std::strcmp(action, "npcstate")) {
-        g3t::combat::NpcState(argument, &Log);
+    } else if (!std::strcmp(action, "npcparade")) {
+        g3t::combat::NpcParade(argument, &Log);
     } else if (!std::strcmp(action, "guard")) {
         g3t::combat::Guard(argument, &Log);
+    } else if (!std::strcmp(action, "storycompanionoff")) {  // here: RunLaterAction is at C1061 again (review 26.10.)
+        g3t::infocmd::StoryCompanionOff(&Log);
     } else {
         return false;
     }
@@ -594,6 +652,14 @@ bool RunLaterAction(const char* action)
         g3t::respawn::Off(&Log);
     } else if (!std::strcmp(action, "movers")) {
         g3t::doors::Movers(&Log);
+    } else if (!std::strcmp(action, "revolution")) {
+        g3t::social::Revolution(argument, &Log);
+    } else if (!std::strcmp(action, "storymoveoff")) {
+        g3t::infocmd::StoryMoveOff(&Log);
+    } else if (!std::strcmp(action, "storymoves")) {
+        g3t::infocmd::StoryMoves(&Log);
+    } else if (!std::strcmp(action, "startrevolution")) {
+        g3t::social::StartRevolution(argument, &Log);
     } else if (!std::strcmp(action, "learnperk")) {
         g3t::pickpocket::LearnPerk(argument, &Log);
     } else if (!std::strcmp(action, "gesturesoff")) {
@@ -855,10 +921,10 @@ void RunAction(const char* action)
         CFFGFCWnd* focus = CFFGFCWnd::FromHandle(CFFGUIModule::GetInstance().GetFocusWnd());
         const unsigned id = focus ? focus->GetDlgCtrlID() : 0;
         if (id != 20571 && id != 20711 && id != 20573 && id != 20574 && id != 20720) {
-            sprintf_s(line, "REFUSED pressenter: focus id=%u is not an allowed menu button", id); Log(line); return;
+            Format(line, "REFUSED pressenter: focus id=%u is not an allowed menu button", id); Log(line); return;
         }
         PostKey(VK_RETURN, 0x1C);
-        sprintf_s(line, "PRESSENTER focus id=%u queued=1 (game window message queue, no OS input)", id);
+        Format(line, "PRESSENTER focus id=%u queued=1 (game window message queue, no OS input)", id);
         Log(line);
     } else if (!std::strcmp(action, "openmenu")) {
         if (!session.IsGameRunning()) { Log("REFUSED openmenu: no game running"); return; }
@@ -989,7 +1055,7 @@ void RunAction(const char* action)
     } else if (!std::strcmp(action, "motionowner")) {
         g3t::body::motionOwner = std::atoi(argument);
         char text[64];
-        sprintf_s(text, "MOTIONOWNER %d", g3t::body::motionOwner);
+        Format(text, "MOTIONOWNER %d", g3t::body::motionOwner);
         Log(text);
     } else if (!std::strcmp(action, "nearnpcs")) {
         g3t::explore::NearNpcs(&Log);
@@ -1153,6 +1219,7 @@ void Tick()
 {
     if (!Enabled()) return;
     g3t::ranged::Tick();
+    g3t::explore::SwimTick();
     const DWORD now = GetTickCount();
     if (now - lastPoll < 250 || commandDepth || *pendingAction) return;
     lastPoll = now;
@@ -1181,7 +1248,7 @@ void Tick()
         if (!(std::isalnum(static_cast<unsigned char>(*c)) || *c == '_' || *c == '-')) { Log("REFUSED argument: only [A-Za-z0-9_-]"); return; }
     }
     char line[160] = {};
-    sprintf_s(line, "COMMAND sequence=%u action=%s%s%s thread=%lu", sequence, action, *arg ? " " : "", arg, GetCurrentThreadId());
+    Format(line, "COMMAND sequence=%u action=%s%s%s thread=%lu", sequence, action, *arg ? " " : "", arg, GetCurrentThreadId());
     Log(line);
     strcpy_s(pendingAction, action);
     strcpy_s(pendingArg, arg);

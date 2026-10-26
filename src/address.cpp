@@ -221,7 +221,7 @@ void OnWorldChange()
 void Report(LogFn log)
 {
     char line[300];
-    sprintf_s(line, "ADDRESS on=%d waiting=%d requested=%u addressed=%u expired=%u accepted=%u refused=%u started=%u gave_up=%u approaches=%zu",
+    Format(line, "ADDRESS on=%d waiting=%d requested=%u addressed=%u expired=%u accepted=%u refused=%u started=%u gave_up=%u approaches=%zu",
               on ? 1 : 0, waiting ? 1 : 0, requested, addressed, expired, accepted, refused, started, gaveUp, approaches.size());
     log(line);
 }

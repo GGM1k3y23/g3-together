@@ -10,6 +10,10 @@
 #include <cstring>
 #include <string>
 
+namespace g3t::i18n {
+char const* GameTextLanguage() { return eCLocAdmin::GetInstance().GetCurrentLanguage().GetText(); }
+}
+
 namespace g3t::hud {
 namespace {
 unsigned count = 0;
@@ -30,7 +34,7 @@ void Message(Kind kind, wchar_t const* text)
 void Report(LogFn log)
 {
     char line[400];
-    sprintf_s(line, "HUD count=%u last=%s", count, last[0].c_str());
+    Format(line, "HUD count=%u last=%s", count, last[0].c_str());
     log(line);
 }
 
@@ -105,11 +109,11 @@ void Probe(char const* way, LogFn log)
     } else if (!std::strcmp(way, "subtitle") && manager) {
         manager->ShowSubtitle(bCUnicodeString(L"G3 Together test: subtitle line (GUI manager)"));
     } else {
-        sprintf_s(line, "REFUSED menutext %s: hud, gamemsg or subtitle (gui=%d)", way, manager ? 1 : 0);
+        Format(line, "REFUSED menutext %s: hud, gamemsg or subtitle (gui=%d)", way, manager ? 1 : 0);
         log(line);
         return;
     }
-    sprintf_s(line, "MENUTEXT way=%s gui=%d running=%d", way, manager ? 1 : 0, gCSession::GetInstance().IsGameRunning() ? 1 : 0);
+    Format(line, "MENUTEXT way=%s gui=%d running=%d", way, manager ? 1 : 0, gCSession::GetInstance().IsGameRunning() ? 1 : 0);
     log(line);
 }
 }

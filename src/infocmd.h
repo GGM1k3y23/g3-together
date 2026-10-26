@@ -19,6 +19,9 @@ using LogFn = void (*)(char const*);
 void Report(LogFn log);   // QA: INFOCMD line
 void Off(LogFn log);      // QA negative control: pass nothing on
 void DialogXpOff(LogFn log);  // QA negative control: experience from dialogs stays with the speaker
+void StoryMoveOff(LogFn log);  // QA negative control: the host does not pass on OnEnclaveSectorRefresh's moves
+void StoryMoves(LogFn log);    // QA: STORYMOVES line (hooked, calls, sent)
+void StoryCompanionOff(LogFn log);  // QA negative control: a story move takes this machine's own companion too (before 26.10.)
 void GivebackPlaceOff(LogFn log);  // QA negative control: a companion given back does not tell the host where it stands
 void PartyEnableQa(char const* argument, LogFn log);  // QA P9: as SetPartyEnabled (Name_mob: SetMobEnabled) true
 void JoinQa(char const* argument, LogFn log);  // QA: Name_1 / Name_0, like JoinPlayer true/false on a client

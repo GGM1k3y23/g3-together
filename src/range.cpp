@@ -90,7 +90,7 @@ void Report(LogFn log)
 {
     char line[200];
     const int other = net::IsHost() ? 2 : 1;
-    sprintf_s(line, "RANGE enabled=%d far=%d distance_m=%.0f warnings=%u all_clears=%u", enabled ? 1 : 0, isFar[other] ? 1 : 0,
+    Format(line, "RANGE enabled=%d far=%d distance_m=%.0f warnings=%u all_clears=%u", enabled ? 1 : 0, isFar[other] ? 1 : 0,
               distance[other] / 100.0f, warnings, allClears);
     log(line);
 }

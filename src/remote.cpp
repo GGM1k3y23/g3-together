@@ -47,11 +47,11 @@ void LogMotions(char const* who, Entity& entity, LogFn log)
     eCEntity* engine = entity.GetInstance();
     eCVisualAnimation_PS* animation = engine ? static_cast<eCVisualAnimation_PS*>(engine->GetPropertySet(eEPropertySetType_Animation)) : nullptr;
     char line[900];
-    int length = sprintf_s(line, "MOTIONS who=%s", who);
+    int length = Format(line, "MOTIONS who=%s", who);
     for (int type = 0; animation && type < 6 && length > 0; ++type) {
         char name[128] = {};
         const bool ok = body::MotionName(animation, type, name, sizeof(name));
-        length += sprintf_s(line + length, sizeof(line) - length, " %d=%s", type, *name ? name : "-");
+        length += Format(line + length, sizeof(line) - length, " %d=%s", type, *name ? name : "-");
         if (!ok) break;
     }
     log(line);
@@ -333,7 +333,7 @@ void UpdatePuppet(int id, net::Remote const& remote, eCEntity const& hero)
     // (look = Diego, puppettalkdiag 23.10.); as PC_Hero a lookup by name could find it instead of the hero. Set right after
     // the spawn, the game named it after its template again, so it is checked on every update.
     char own[32];
-    sprintf_s(own, "G3T_Player%d", id);
+    Format(own, "G3T_Player%d", id);
     if (std::strcmp(puppet.entity.GetInstance()->GetName().GetText(), own) != 0) puppet.entity.GetInstance()->SetName(bCString(own));
     // Trading between players (owner 23.10.): addressed, a puppet offers the game's own trade option ("Zeig mir deine
     // Ware!"), which opens the trade window with it (trade.cpp, offer.cpp). Checked like the name.
@@ -490,7 +490,7 @@ void Tick()
 void Report(LogFn log)
 {
     char line[400];
-    sprintf_s(line, "NET local_id=%u connected=%d world=%08x perception_filter=%d blocked=%u wrapped=%u skipped=%u unknown=%u", net::LocalId(),
+    Format(line, "NET local_id=%u connected=%d world=%08x perception_filter=%d blocked=%u wrapped=%u skipped=%u unknown=%u", net::LocalId(),
               net::Connected(), CurrentWorld(), ai::PerceptionFiltered(), ai::BlockedCount(), ai::WrappedCount(), ai::SkippedCount(),
               ai::UnknownCount());
     log(line);
@@ -505,12 +505,12 @@ void Report(LogFn log)
             const bCVector& p = entity->GetWorldPosition();
             puppetPos[0] = p.GetX(); puppetPos[1] = p.GetY(); puppetPos[2] = p.GetZ();
         }
-        sprintf_s(line, "REMOTE id=%d name=%s world=%08x same_world=%d age_ms=%u pos=%.1f,%.1f,%.1f puppet=%d puppet_pos=%.1f,%.1f,%.1f",
+        Format(line, "REMOTE id=%d name=%s world=%08x same_world=%d age_ms=%u pos=%.1f,%.1f,%.1f puppet=%d puppet_pos=%.1f,%.1f,%.1f",
                   id, r.latest.name, r.latest.world, r.latest.world == CurrentWorld(), r.latestTicks ? now - r.latestTicks : 0,
                   r.latest.position[0], r.latest.position[1], r.latest.position[2], entity != nullptr,
                   puppetPos[0], puppetPos[1], puppetPos[2]);
         log(line);
-        sprintf_s(line, "ANIM id=%d remote=%s requested=%s", id, *r.latest.animation ? r.latest.animation : "-",
+        Format(line, "ANIM id=%d remote=%s requested=%s", id, *r.latest.animation ? r.latest.animation : "-",
                   *puppets[id].body.playing ? puppets[id].body.playing : "-");
         log(line);
         {
@@ -523,7 +523,7 @@ void Report(LogFn log)
                     if (eCWrapper_emfx2Actor* actor = animation->GetActor())
                         running = actor->IsMotionRunning(static_cast<eCWrapper_emfx2Actor::eEMotionType>(0)) ? 1 : 0;
             }
-            sprintf_s(line, "PUPPETPOSE id=%d remote=%s shows=%s run0=%d shape=%s body=%s", id, *r.latest.animation ? r.latest.animation : "-",
+            Format(line, "PUPPETPOSE id=%d remote=%s shows=%s run0=%d shape=%s body=%s", id, *r.latest.animation ? r.latest.animation : "-",
                       *shows ? shows : "-", running, *r.latest.shape ? r.latest.shape : "-",
                       // body: the template it is made from (its entity is named G3T_Player<id> since 23.10.)
                       puppets[id].spawned && puppets[id].entity.GetInstance() ? puppets[id].shape.c_str() : "-");
@@ -532,12 +532,12 @@ void Report(LogFn log)
         {
             Entity body(entity);
             const Entity held = entity ? body.Inventory.GetItemFromSlot(gESlot_RightHand) : Entity();
-            sprintf_s(line, "HELD id=%d remote=%s puppet=%s", id, *r.latest.heldRight ? r.latest.heldRight : "-",
+            Format(line, "HELD id=%d remote=%s puppet=%s", id, *r.latest.heldRight ? r.latest.heldRight : "-",
                       held.GetInstance() ? held.GetName().GetText() : "-");
             log(line);
             const Entity armor = entity ? body.Inventory.GetItemFromSlot(gESlot_Body) : Entity();
             const Entity helmet = entity ? body.Inventory.GetItemFromSlot(gESlot_Helmet) : Entity();
-            sprintf_s(line, "WEAR id=%d remote_armor=%s remote_helmet=%s puppet_armor=%s puppet_helmet=%s look=%s template=%s changes=%u"
+            Format(line, "WEAR id=%d remote_armor=%s remote_helmet=%s puppet_armor=%s puppet_helmet=%s look=%s template=%s changes=%u"
                             " equipped=%u linked=%u failed=%u", id,
                       *r.latest.armor ? r.latest.armor : "-", *r.latest.helmet ? r.latest.helmet : "-",
                       armor.GetInstance() ? armor.GetName().GetText() : "-", helmet.GetInstance() ? helmet.GetName().GetText() : "-",
@@ -547,14 +547,14 @@ void Report(LogFn log)
         }
         if (entity) {
             char who[16];
-            sprintf_s(who, "puppet%d", id);
+            Format(who, "puppet%d", id);
             LogMotions(who, puppets[id].entity, log);
         }
     }
     eCDynamicEntity* hero = gCSession::GetInstance().GetHero();
     if (hero) {
         // A puppet may use the hero's own template (PC_Hero). The game must still find the real player.
-        sprintf_s(line, "PLAYER_CHECK getplayer_is_hero=%d by_name_is_hero=%d",
+        Format(line, "PLAYER_CHECK getplayer_is_hero=%d by_name_is_hero=%d",
                   Entity::GetPlayer().GetInstance() == hero, Entity::GetEntity(bCString("PC_Hero")).GetInstance() == hero);
         log(line);
         Entity self(hero);
@@ -571,7 +571,7 @@ void WalkTo(int index, LogFn log)
     const float angle = index * 0.785398f;
     const bCVector target(anchor.GetX() + 1500.0f * std::cos(angle), anchor.GetY(), anchor.GetZ() + 1500.0f * std::sin(angle));
     const GEBool ok = Entity(hero).StartGoto(target, gEWalkMode_Run);
-    sprintf_s(line, "WALKTO index=%d started=%d target=%.1f,%.1f,%.1f", index, ok, target.GetX(), target.GetY(), target.GetZ());
+    Format(line, "WALKTO index=%d started=%d target=%.1f,%.1f,%.1f", index, ok, target.GetX(), target.GetY(), target.GetZ());
     log(line);
 }
 
@@ -587,7 +587,7 @@ void Step(int index, LogFn log)
     const float rotation[4] = {q.GetX(), q.GetY(), q.GetZ(), q.GetW()};
     Entity(hero).MoveTo(body::Pose(*hero, position, rotation));
     const bCVector& p = hero->GetWorldPosition();
-    sprintf_s(line, "STEP index=%d target=%.1f,%.1f,%.1f pos=%.1f,%.1f,%.1f", index, position[0], position[1], position[2],
+    Format(line, "STEP index=%d target=%.1f,%.1f,%.1f pos=%.1f,%.1f,%.1f", index, position[0], position[1], position[2],
               p.GetX(), p.GetY(), p.GetZ());
     log(line);
 }
@@ -637,32 +637,32 @@ void WearHero(char const* argument, LogFn log)
         const GEBool ok = stack >= 0 ? self.Inventory.EquipStack(stack) : GEFalse;
         if (!ok) {
             // Why not: what the game says is missing.
-            int length = sprintf_s(line, "REFUSED wear: %s template=%d stack=%d not equipped", argument, known, stack);
+            int length = Format(line, "REFUSED wear: %s template=%d stack=%d not equipped", argument, known, stack);
             auto* inventory = static_cast<gCInventory_PS*>(hero->GetPropertySet(eEPropertySetType_Inventory));
             if (inventory && stack >= 0) {
                 bTObjArray<gCInventory_PS::SMissingAttrib> attribs;
                 bTValArray<gCInventory_PS::SMissingSkill> skills;
                 const GEBool can = inventory->CanEquip(stack, attribs, skills);
-                length += sprintf_s(line + length, sizeof(line) - length, " can=%d", can ? 1 : 0);
+                length += Format(line + length, sizeof(line) - length, " can=%d", can ? 1 : 0);
                 for (GEInt i = 0; i < attribs.GetCount() && i < 6 && length < 800; ++i)
-                    length += sprintf_s(line + length, sizeof(line) - length, " attrib:%.24s-%d", attribs[i].MissingAttribName.GetText(),
+                    length += Format(line + length, sizeof(line) - length, " attrib:%.24s-%d", attribs[i].MissingAttribName.GetText(),
                                         attribs[i].MissingAttribValue);
                 for (GEInt i = 0; i < skills.GetCount() && i < 6 && length < 800; ++i)
-                    length += sprintf_s(line + length, sizeof(line) - length, " skill:%.40s",
+                    length += Format(line + length, sizeof(line) - length, " skill:%.40s",
                                         skills[i].MissingSkill ? skills[i].MissingSkill->GetName().GetText() : "?");
-                sprintf_s(line + length, sizeof(line) - length, " use=%d", static_cast<int>(self.Inventory.GetUseType(stack)));
+                Format(line + length, sizeof(line) - length, " use=%d", static_cast<int>(self.Inventory.GetUseType(stack)));
             }
             log(line);
             return;
         }
     }
     const Entity armor = self.Inventory.GetItemFromSlot(gESlot_Body), helmet = self.Inventory.GetItemFromSlot(gESlot_Helmet);
-    int length = sprintf_s(line, "WEARHERO armor=%s helmet=%s equipped=", armor.GetInstance() ? armor.GetName().GetText() : "-",
+    int length = Format(line, "WEARHERO armor=%s helmet=%s equipped=", armor.GetInstance() ? armor.GetName().GetText() : "-",
                            helmet.GetInstance() ? helmet.GetName().GetText() : "-");
     for (GEInt i = 0; i < self.Inventory.GetStackCount() && length > 0 && length < 900; ++i) {
         const int slot = static_cast<int>(self.Inventory.GetSlotFromStack(i));
         const Entity item = slot ? self.Inventory.GetTemplateItem(i) : Entity();
-        if (item.GetInstance()) length += sprintf_s(line + length, sizeof(line) - length, "%d:%.40s,", slot, item.GetName().GetText());
+        if (item.GetInstance()) length += Format(line + length, sizeof(line) - length, "%d:%.40s,", slot, item.GetName().GetText());
     }
     log(line);
 }
@@ -687,10 +687,10 @@ void WornScan(LogFn log)
             if (body::Distance(at, there) > 10000.0f) continue;
             if (slotted < 5) {
                 ++slotted;
-                int length = sprintf_s(line, "WORNSLOTS npc=%s stacks=%d", npc.GetName().GetText(), npc.Inventory.GetStackCount());
+                int length = Format(line, "WORNSLOTS npc=%s stacks=%d", npc.GetName().GetText(), npc.Inventory.GetStackCount());
                 for (int slot = 1; slot <= 18 && length > 0; ++slot) {
                     const Entity in = npc.Inventory.GetItemFromSlot(static_cast<gESlot>(slot));
-                    if (in.GetInstance()) length += sprintf_s(line + length, sizeof(line) - length, " %d:%.40s", slot, in.GetName().GetText());
+                    if (in.GetInstance()) length += Format(line + length, sizeof(line) - length, " %d:%.40s", slot, in.GetName().GetText());
                 }
                 log(line);
             }
@@ -700,14 +700,14 @@ void WornScan(LogFn log)
                 const int use = static_cast<int>(item.Interaction.GetUseType());
                 const bool armorCategory = static_cast<int>(item.Item.GetCategory()) == gEItemCategory_Armor;
                 if (use != gEUseType_Armor && use != gEUseType_Helmet && !armorCategory) continue;
-                sprintf_s(line, "WORN npc=%s item=%s kind=%s slot=%d use=%d", npc.GetName().GetText(), item.GetName().GetText(),
+                Format(line, "WORN npc=%s item=%s kind=%s slot=%d use=%d", npc.GetName().GetText(), item.GetName().GetText(),
                           use == gEUseType_Helmet ? "helmet" : "armor", static_cast<int>(npc.Inventory.GetSlotFromStack(k)), use);
                 log(line);
                 ++count;
             }
         }
     }
-    sprintf_s(line, "WORN end count=%d", count);
+    Format(line, "WORN end count=%d", count);
     log(line);
 }
 
@@ -736,8 +736,8 @@ void PuppetInfo(char const* argument, LogFn log)
     gCInfo_PS* from = manager && *source ? manager->GetInfo(bCString(source)) : nullptr;
     if (!puppet || !from) { log("REFUSED puppetinfo: <id>_<Info> with a puppet and a known info"); return; }
     char own[32], name[128];
-    sprintf_s(own, "G3T_Player%d", id);
-    sprintf_s(name, "G3T_%s_%d", source, id);
+    Format(own, "G3T_Player%d", id);
+    Format(name, "G3T_%s_%d", source, id);
     puppet->SetName(bCString(own));
     gCInfo_PS* info = manager->GetInfo(bCString(name));
     const bool added = !info;
@@ -755,7 +755,7 @@ void PuppetInfo(char const* argument, LogFn log)
     Entity body(puppet);
     body.Dialog.TradeEnabled = GETrue;
     gCInfoScript_PS* script = info->AccessInfoScript().GetObject();
-    sprintf_s(line, "PUPPETINFO id=%d puppet=%s by_name=%d info=%s added=%d cond_type=%d type=%d owner=%s lines=%d infos=%d has_info=%d trade=%d", id,
+    Format(line, "PUPPETINFO id=%d puppet=%s by_name=%d info=%s added=%d cond_type=%d type=%d owner=%s lines=%d infos=%d has_info=%d trade=%d", id,
               puppet->GetName().GetText(), Entity::GetEntity(bCString(own)).GetInstance() == puppet ? 1 : 0, name, added ? 1 : 0,
               static_cast<int>(static_cast<gEInfoCondType const&>(info->AccessConditionType())),
               static_cast<int>(static_cast<gEInfoType const&>(info->AccessType())), info->AccessOwner().GetText(),
@@ -774,7 +774,7 @@ void PuppetTradeOn(char const* argument, LogFn log)
     Entity body(puppet);
     body.Dialog.TradeEnabled = GETrue;
     gCInfoManager_PS* manager = gCSession::GetInstance().IsGameRunning() ? gCInfoManager_PS::GetInstance() : nullptr;
-    sprintf_s(line, "PUPPETTRADE id=%s name=%s trade=%d has_info=%d", argument, puppet->GetName().GetText(), body.Dialog.TradeEnabled ? 1 : 0,
+    Format(line, "PUPPETTRADE id=%s name=%s trade=%d has_info=%d", argument, puppet->GetName().GetText(), body.Dialog.TradeEnabled ? 1 : 0,
               manager && manager->HasInfos(puppet) ? 1 : 0);
     log(line);
 }

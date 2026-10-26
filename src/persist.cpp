@@ -924,7 +924,7 @@ void BadTransfer(LogFn log)
         ++sent;
     }
     char line[100];
-    sprintf_s(line, "BADTRANSFER sent=%u", sent);
+    Format(line, "BADTRANSFER sent=%u", sent);
     log(line);
 }
 
@@ -946,7 +946,7 @@ void Pause(char const* argument, LogFn log)
     if (!net::IsHost() || ms <= 0 || ms > 30000) { log("REFUSED persistpause: host only, 1 to 30000 ms"); return; }
     pausedUntil = GetTickCount() + static_cast<uint32_t>(ms);
     char line[80];
-    sprintf_s(line, "PERSISTPAUSE ok=1 ms=%d", ms);
+    Format(line, "PERSISTPAUSE ok=1 ms=%d", ms);
     log(line);
 }
 
@@ -965,7 +965,7 @@ void RecordWaitOff(LogFn log)
 void Waiting(LogFn log)
 {
     char line[400];
-    sprintf_s(line, "RECORDWAIT waiting=%d record=%.300s", refusedRecord.empty() ? 0 : 1, refusedRecord.empty() ? "-" : refusedRecord.c_str());
+    Format(line, "RECORDWAIT waiting=%d record=%.300s", refusedRecord.empty() ? 0 : 1, refusedRecord.empty() ? "-" : refusedRecord.c_str());
     log(line);
 }
 
@@ -985,7 +985,7 @@ void LoadTicksOff(char const* argument, LogFn log)
         const uint32_t before = net::WelcomeSerial();
         net::AdvanceWelcomeSerialForTest();
         char line[120];
-        sprintf_s(line, "LOADTICKSOFF welcome=%u->%u", before, net::WelcomeSerial());
+        Format(line, "LOADTICKSOFF welcome=%u->%u", before, net::WelcomeSerial());
         log(line);
         return;
     }
@@ -1001,7 +1001,7 @@ void WorldReport(LogFn log)
     std::string players;
     for (uint8_t i = 2; i < net::MaxPlayers; ++i)
         if (net::PeerJoined(i)) players += std::to_string(i) + (net::InWorld(i) ? ":in," : ":out,");
-    sprintf_s(line, "WORLD role=%s kind=%s save=%s loading=%s new_pending=%d changes=%u epoch=%08x syncing=%d host_epoch=%08x host_kind=%s host_campaign=%s synced=%08x in_world=%d readies=%u others=%u gated_in=%u gated_out=%u players=%s",
+    Format(line, "WORLD role=%s kind=%s save=%s loading=%s new_pending=%d changes=%u epoch=%08x syncing=%d host_epoch=%08x host_kind=%s host_campaign=%s synced=%08x in_world=%d readies=%u others=%u gated_in=%u gated_out=%u players=%s",
               net::IsHost() ? "host" : "client", KindName(localKind), localSave.empty() ? "-" : localSave.c_str(), loading.empty() ? "-" : loading.c_str(),
               newWorld ? 1 : 0, worldChanges, epoch, syncing ? 1 : 0, hostWorld.epoch, KindName(hostWorld.kind), hostWorld.campaign[0] ? hostWorld.campaign : "-",
               synced, net::InWorld(net::LocalId()) ? 1 : 0, readies, others, in, out, players.empty() ? "-" : players.c_str());
@@ -1011,7 +1011,7 @@ void WorldReport(LogFn log)
 void Report(LogFn log)
 {
     char line[800];
-    sprintf_s(line, "PERSIST hooked=%d saves=%u loads=%u written=%u read=%u last_save=%s last_load=%s writing=%d records_written=%u records_applied=%u campaign=%s sent=%u received=%u auto_loads=%u last_received=%s load_frames=%u load_frames_ran=%u autoload_posted=%u autoload_stale=%u load_ticks=%d",
+    Format(line, "PERSIST hooked=%d saves=%u loads=%u written=%u read=%u last_save=%s last_load=%s writing=%d records_written=%u records_applied=%u campaign=%s sent=%u received=%u auto_loads=%u last_received=%s load_frames=%u load_frames_ran=%u autoload_posted=%u autoload_stale=%u load_ticks=%d",
               originalSave && originalLoad ? 1 : 0, saves, loads, sidecarsWritten, sidecarsRead, lastSave.c_str(), lastLoad.c_str(),
               writing ? 1 : 0, recordsWritten, recordsApplied, campaign.empty() ? "-" : campaign.c_str(), filesSent, filesReceived,
               autoLoads, lastReceived.c_str(), loadFrames, loadFramesRan, autoloadPosted, autoloadStale, loadTicks ? 1 : 0);

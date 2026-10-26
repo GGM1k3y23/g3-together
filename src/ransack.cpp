@@ -355,7 +355,7 @@ void Report(LogFn log)
         ransacked = puppet.NPC.Ransacked ? 1 : 0;
     }
     eCDynamicEntity* hero = gCSession::GetInstance().GetHero();
-    sprintf_s(line, "RANSACK enabled=%d hooked=%d hook_failed=%d downs=%u holds_sent=%u holds_taken=%u takes_sent=%u takes_received=%u takes_paid=%u"
+    Format(line, "RANSACK enabled=%d hooked=%d hook_failed=%d downs=%u holds_sent=%u holds_taken=%u takes_sent=%u takes_received=%u takes_paid=%u"
                     " gold_taken=%d gold_paid=%d gold_paid_here=%d corrections=%u refunds=%u pending=%zu puppet_aimode=%d puppet_gold=%d"
                     " puppet_ransacked=%d native_down=%d hero_gold=%d",
               enabled ? 1 : 0, hooked ? 1 : 0, hookFailed ? 1 : 0, downs, holdsSent, holdsTaken, takesSent, takesReceived, takesPaid, goldTaken, goldPaid,
@@ -374,7 +374,7 @@ void NpcGold(char const* name, LogFn log)
 {
     char line[200];
     Entity npc = Entity::GetEntity(bCString(name));
-    sprintf_s(line, "NPCGOLD name=%s found=%d gold=%d task=%s", name, npc.GetInstance() ? 1 : 0, npc.GetInstance() ? GoldOn(npc) : -1,
+    Format(line, "NPCGOLD name=%s found=%d gold=%d task=%s", name, npc.GetInstance() ? 1 : 0, npc.GetInstance() ? GoldOn(npc) : -1,
               npc.GetInstance() ? npc.Routine.GetCurrentTask().GetText() : "-");
     log(line);
 }

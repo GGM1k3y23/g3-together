@@ -175,7 +175,7 @@ void OnState(uint8_t from, net::WorldState const& s)
 void Report(LogFn log)
 {
     char line[220];
-    sprintf_s(line, "RESPAWNSYNC enabled=%d installed=%d native=%d rolls=%u stood=%u gone=%u kept=%u mirrors_skipped=%u applied=%u",
+    Format(line, "RESPAWNSYNC enabled=%d installed=%d native=%d rolls=%u stood=%u gone=%u kept=%u mirrors_skipped=%u applied=%u",
               enabled ? 1 : 0, installed ? 1 : 0, native ? 1 : 0, rolls, stood, gone, kept, mirrorsSkipped, applied);
     log(line);
 }

@@ -181,7 +181,7 @@ void OnWorldChange()
 void Report(LogFn log)
 {
     char line[200];
-    sprintf_s(line, "OCCUPANCY enabled=%d using=%s occupied=%u released=%u applied=%u cleared=%u busy=%u marked=%u refused=%u", enabled ? 1 : 0,
+    Format(line, "OCCUPANCY enabled=%d using=%s occupied=%u released=%u applied=%u cleared=%u busy=%u marked=%u refused=%u", enabled ? 1 : 0,
               used ? used->GetName().GetText() : "-", occupied, released, applied, cleared, busy, static_cast<unsigned>(marked.size()), refused);
     log(line);
 }
@@ -199,7 +199,7 @@ void StandUp(LogFn log)
     if (!hero) { log("REFUSED unuse: no hero"); return; }
     Entity self(hero);
     self.Routine.SetTask(bCString("PS_Interact_End"));
-    sprintf_s(line, "UNUSE task=%s", self.Routine.GetCurrentTask().GetText());
+    Format(line, "UNUSE task=%s", self.Routine.GetCurrentTask().GetText());
     log(line);
 }
 }

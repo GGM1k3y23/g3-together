@@ -65,6 +65,8 @@ Config const& LoadConfig()
         else if (!_stricmp(key, "name")) strncpy_s(config.name, value, _TRUNCATE);
         else if (!_stricmp(key, "language")) {
             if (!_stricmp(value, "de")) strcpy_s(config.language, "de");
+            else if (!_stricmp(value, "pl")) strcpy_s(config.language, "pl");
+            else if (!_stricmp(value, "auto")) strcpy_s(config.language, "auto");
             else {
                 strcpy_s(config.language, "en");
                 if (_stricmp(value, "en")) Logf("config: unknown language '%s', using en", value);

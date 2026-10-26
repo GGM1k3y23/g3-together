@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <vector>
 
 namespace g3t::witness {
 namespace {
@@ -38,6 +39,16 @@ gFScript originalMurder = nullptr, originalSendMurder = nullptr;
 unsigned murdersSent = 0, murderAsked = 0, murderReacted = 0;
 bool seenEnabled = true;  // QA negative control: murderseenoff
 unsigned hitsSeen = 0, knockOutsSeen = 0, murdersSeen = 0;
+// Taking an item or opening a chest someone minds (P7, 26.10.): the game sends the perception on the machine of the player
+// who acts (SendPerceptionTakeItem 0x32840 from PS_Normal_Take, SendPerceptionUseInteractObject 0x32a90 from the chest's
+// use), to every NPC that may perceive (0x31c80: not in AIMode Talk to Abandoned). Mirrors are pacified (body.cpp: AIMode
+// Abandoned), so on the client nobody judged its take: Eusebio (Ben Erai), who attacked the host's hero for the same apple,
+// did nothing about the client (stageTheftSeen 26.10.). While this machine's hero's perception goes out, the mirrors near
+// it are in routine mode; one that judges the hero passes it to the machine that runs it as before (Assess: WitnessSaw).
+constexpr uintptr_t SendTakeRva = 0x32840, SendUseRva = 0x32a90;
+gFScript originalSendTake = nullptr, originalSendUse = nullptr;
+bool mirrorsPerceive = true;  // QA negative control: mirrorperceiveoff
+unsigned perceptionsOpened = 0, mirrorsOpened = 0;
 
 bool CrimeReason(GEInt reason)
 {
@@ -93,6 +104,45 @@ char const* Who(eCEntity* entity)
     if (entity == gCSession::GetInstance().GetHero()) return "hero";
     if (remote::IsPuppet(entity)) return "puppet";
     return npcs::IsMirrored(entity) ? "mirror" : "npc";
+}
+
+GEInt SendWithMirrors(gFScript original, gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid other, GEInt args)
+{
+    eCEntity* actor = self ? static_cast<Entity*>(self)->GetInstance() : (spu ? spu->GetSelfEntity() : nullptr);
+    eCEntity* thing = other ? static_cast<Entity*>(other)->GetInstance() : (spu ? spu->GetOtherEntity() : nullptr);
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    if (!mirrorsPerceive || !enabled || !hero || (actor != hero && thing != hero) || !net::Connected()) return original(spu, self, other, args);
+    std::vector<eCEntity*> opened;
+    const bCVector& at = hero->GetWorldPosition();
+    const bTObjArray<Entity> all = Entity::GetNPCs();
+    for (int i = 0; i < all.GetCount(); ++i) {
+        Entity npc = all.GetAt(i);
+        eCEntity* body = npc.GetInstance();
+        if (!body || body == hero || !npcs::IsMirrored(body) || !body->GetPropertySet(eEPropertySetType_NPC) || npc.IsDead() || npc.IsDown()) continue;
+        const bCVector& p = body->GetWorldPosition();
+        const float dx = p.GetX() - at.GetX(), dy = p.GetY() - at.GetY(), dz = p.GetZ() - at.GetZ();
+        if (dx * dx + dy * dy + dz * dz > 2000.0f * 2000.0f || npc.Routine.AIMode != gEAIMode_Abandoned) continue;
+        npc.Routine.AIMode = gEAIMode_Routine;
+        opened.push_back(body);
+    }
+    const GEInt result = original(spu, self, other, args);
+    for (eCEntity* body : opened) {
+        Entity npc(body);
+        npc.Routine.AIMode = gEAIMode_Abandoned;  // still a mirror: pacified again (body.cpp)
+    }
+    ++perceptionsOpened;
+    mirrorsOpened += static_cast<unsigned>(opened.size());
+    return result;
+}
+
+GEInt GE_STDCALL SendTake(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid other, GEInt args)
+{
+    return SendWithMirrors(originalSendTake, spu, self, other, args);
+}
+
+GEInt GE_STDCALL SendUse(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid other, GEInt args)
+{
+    return SendWithMirrors(originalSendUse, spu, self, other, args);
 }
 
 GEInt GE_STDCALL SendMurder(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid other, GEInt args)
@@ -297,16 +347,26 @@ void Tick()
     if (unsigned char* code = NativeAt(0x32720, 0x204)) originalSendMurder = reinterpret_cast<gFScript>(ai::JumpTo(code, reinterpret_cast<void*>(&SendMurder)));
     Logf("witness: AssessMurder %s, SendPerceptionMurder %s", originalMurder ? "wrapped" : "not wrapped (other build)",
          originalSendMurder ? "counted" : "not counted (other build)");
+    static const unsigned char prologue[] = {0x55, 0x8b, 0xec, 0x83, 0xe4, 0xf8};  // this build: complete instructions
+    if (HMODULE game = GetModuleHandleA("Script_Game.dll")) {
+        auto* take = reinterpret_cast<unsigned char*>(game) + SendTakeRva;
+        auto* use = reinterpret_cast<unsigned char*>(game) + SendUseRva;
+        if (!std::memcmp(take, prologue, sizeof(prologue))) originalSendTake = reinterpret_cast<gFScript>(ai::JumpTo(take, reinterpret_cast<void*>(&SendTake)));
+        if (!std::memcmp(use, prologue, sizeof(prologue))) originalSendUse = reinterpret_cast<gFScript>(ai::JumpTo(use, reinterpret_cast<void*>(&SendUse)));
+    }
+    Logf("witness: SendPerceptionTakeItem %s, SendPerceptionUseInteractObject %s (mirrors perceive this hero's take and use)",
+         originalSendTake ? "wrapped" : "not wrapped", originalSendUse ? "wrapped" : "not wrapped");
 }
 
 void Report(LogFn log)
 {
-    char line[400];
-    sprintf_s(line, "WITNESS enabled=%d installed=%d native=%d together=%d seen=%u sent=%u applied=%u refused=%u holds_sent=%u holds_applied=%u judges_sent=%u judges_applied=%u"
-              " seen_on=%d hits_seen=%u knockouts_seen=%u murders_seen=%u murder_sent=%u murder_asked=%u murder_reacted=%u",
+    char line[600];
+    Format(line, "WITNESS enabled=%d installed=%d native=%d together=%d seen=%u sent=%u applied=%u refused=%u holds_sent=%u holds_applied=%u judges_sent=%u judges_applied=%u"
+              " seen_on=%d hits_seen=%u knockouts_seen=%u murders_seen=%u murder_sent=%u murder_asked=%u murder_reacted=%u"
+              " mirror_perceive=%d perceptions_opened=%u mirrors_opened=%u",
               enabled ? 1 : 0, installed ? 1 : 0, native ? 1 : 0, enclaves::Together() ? 1 : 0, seen, sent, applied, refused, holdsSent,
               holdsApplied, judgesSent, judgesApplied, seenEnabled ? 1 : 0, hitsSeen, knockOutsSeen, murdersSeen, murdersSent, murderAsked,
-              murderReacted);
+              murderReacted, mirrorsPerceive ? 1 : 0, perceptionsOpened, mirrorsOpened);
     log(line);
 }
 
@@ -314,6 +374,12 @@ void Off(LogFn log)
 {
     enabled = false;
     log("WITNESSOFF ok=1");
+}
+
+void MirrorPerceiveOff(LogFn log)
+{
+    mirrorsPerceive = false;
+    log("MIRRORPERCEIVEOFF ok=1");
 }
 
 // The last step of the game's own judgement (AssessTakeItem ends in AssessTarget(witness, thief, Theft)).
@@ -329,7 +395,7 @@ void Saw(char const* argument, LogFn log)
     if (!npc.GetInstance() || !hero) { log("REFUSED witness: no such NPC or no hero"); return; }
     const unsigned sentBefore = sent;
     const GEInt result = GetScriptAdminExt().CallScript(bCString("AssessTarget"), npc.GetInstance(), hero, reason);
-    sprintf_s(line, "WITNESSSAW name=%s reason=%d result=%d passed_on=%d mirrored=%d last_crime=%d", name, reason, result, sent != sentBefore ? 1 : 0,
+    Format(line, "WITNESSSAW name=%s reason=%d result=%d passed_on=%d mirrored=%d last_crime=%d", name, reason, result, sent != sentBefore ? 1 : 0,
               npcs::IsMirrored(npc.GetInstance()) ? 1 : 0, npc.GetInstance()->GetPropertySet(eEPropertySetType_NPC) ? LastCrime(npc.GetInstance()) : -1);
     log(line);
 }

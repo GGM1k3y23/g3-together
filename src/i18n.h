@@ -58,10 +58,17 @@ enum Message
     Robbed,
     PlaceInUse,
     NpcTalking,
+    EpilogueWaits,
     MessageCount
 };
 
 // Local display only; language does not change the protocol or install parity.
-// Formatted messages use the same printf placeholders in both languages.
+// Formatted messages use the same printf placeholders in every language.
 wchar_t const* Text(Message message);
+// The language Text uses: en, de or pl. With language = auto it follows the game's text language (UserOptions.ini
+// SubtitleLanguage, the options menu), asked again at every message
+// (English while the game has none yet, and for languages the mod has no texts in).
+char const* Language();
+char const* LanguageFor(char const* game);  // a game text language (German, Polish, ...) -> de, pl, or en for any other
+char const* GameTextLanguage();             // the game's current text language (hud.cpp: eCLocAdmin)
 }

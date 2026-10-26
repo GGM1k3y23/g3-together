@@ -185,7 +185,7 @@ void OfferHelp(Entity& hero, net::Remote const* remotes, uint32_t now)
     for (int i = 1; i < net::MaxPlayers; ++i) {
         if (i == net::LocalId()) continue;
         char infoName[32];
-        sprintf_s(infoName, "G3T_HelpUp_%d", i);
+        Format(infoName, "G3T_HelpUp_%d", i);
         // Chosen: the running info is ours (once per choice; the option hides itself when it ran).
         const bool ours = running && !std::strcmp(running->AccessName().GetText(), infoName);
         if (ours && !helpStarted[i]) {
@@ -204,7 +204,7 @@ void OfferHelp(Entity& hero, net::Remote const* remotes, uint32_t now)
             info = manager->AddInfo(bCString(infoName));
             if (!info) continue;
             char owner[32];
-            sprintf_s(owner, "G3T_Player%d", i);  // the puppet's name (remote.cpp)
+            Format(owner, "G3T_Player%d", i);  // the puppet's name (remote.cpp)
             info->AccessOwner() = bCString(owner);
             info->AccessConditionType() = gEInfoCondType_General;
             info->AccessType() = gEInfoType_Info;
@@ -437,7 +437,7 @@ void GivePotion(char const* argument, LogFn log)
     }
     eCDynamicEntity* instance = gCSession::GetInstance().GetHero();
     const Template item(templ);
-    if (!instance || !item.IsValid()) { sprintf_s(line, "GIVEPOTION name=%s valid=%d", templ, item.IsValid() ? 1 : 0); log(line); return; }
+    if (!instance || !item.IsValid()) { Format(line, "GIVEPOTION name=%s valid=%d", templ, item.IsValid() ? 1 : 0); log(line); return; }
     Entity hero(instance);
     if (amount > 0) {
         hero.Inventory.CreateItems(item, 0, amount);
@@ -447,7 +447,7 @@ void GivePotion(char const* argument, LogFn log)
             if (carried.GetInstance() && !std::strcmp(carried.GetName().GetText(), templ)) hero.Inventory.DeleteItems(i, hero.Inventory.GetAmount(i));
         }
     }
-    sprintf_s(line, "GIVEPOTION name=%s valid=1 amount=%d now=%d", templ, amount, hero.Inventory.GetItemAmount(item));
+    Format(line, "GIVEPOTION name=%s valid=1 amount=%d now=%d", templ, amount, hero.Inventory.GetItemAmount(item));
     log(line);
 }
 
@@ -464,17 +464,17 @@ void Potions(LogFn log)
         if (!item.GetInstance() || std::strncmp(item.GetName().GetText(), "It_Potion", 9) != 0) continue;
         const GEInt amount = hero.Inventory.GetAmount(i);
         if (!std::strncmp(item.GetName().GetText(), PotionPrefix, std::strlen(PotionPrefix))) total += amount;
-        sprintf_s(line, "POTION name=%s amount=%d gold=%d", item.GetName().GetText(), amount, item.Item.GetGoldValue());
+        Format(line, "POTION name=%s amount=%d gold=%d", item.GetName().GetText(), amount, item.Item.GetGoldValue());
         log(line);
     }
-    sprintf_s(line, "POTIONS end health=%d", total);
+    Format(line, "POTIONS end health=%d", total);
     log(line);
 }
 
 void Report(LogFn log)
 {
     char line[240];
-    sprintf_s(line, "DOWNED lethal=%d lethal_only=%d enabled=%d hold=%d held=%d redirects=%u revives=%u releases=%u deaths=%u potions_paid=%u no_potion=%u potion_needed=%d"
+    Format(line, "DOWNED lethal=%d lethal_only=%d enabled=%d hold=%d held=%d redirects=%u revives=%u releases=%u deaths=%u potions_paid=%u no_potion=%u potion_needed=%d"
                     " auto_help=%d help_option=%d offered=%u chosen=%u",
               lethal ? 1 : 0, lethalOnly ? 1 : 0, enabled ? 1 : 0, holdEnabled ? 1 : 0, held ? 1 : 0, redirects, revives, releases, deaths, potionsPaid, refusedNoPotion,
               potionNeeded ? 1 : 0, autoHelp ? 1 : 0, helpOption ? 1 : 0, optionsOffered, optionsChosen);

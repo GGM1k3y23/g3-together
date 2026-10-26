@@ -74,10 +74,10 @@ void Caller(void* address, char* text, size_t size)
                            static_cast<LPCSTR>(address), &module) && module) {
         GetModuleFileNameA(module, name, MAX_PATH);
         char const* base = std::strrchr(name, '\\');
-        sprintf_s(text, size, "%s+0x%x", base ? base + 1 : name,
+        Format(text, size, "%s+0x%x", base ? base + 1 : name,
                   static_cast<unsigned>(reinterpret_cast<uintptr_t>(address) - reinterpret_cast<uintptr_t>(module)));
     } else {
-        sprintf_s(text, size, "%p", address);
+        Format(text, size, "%p", address);
     }
 }
 
@@ -111,7 +111,7 @@ void __fastcall PlayMotionDetour(eCVisualAnimation_PS* self, void* edx, int type
     eCEntity* entity = self ? self->GetEntity() : nullptr;
     if (!Wanted(entity)) return;
     char what[200];
-    sprintf_s(what, "type=%d motion=%s", type, MotionName(self, type));
+    Format(what, "type=%d motion=%s", type, MotionName(self, type));
     Write("anim", entity, what, caller);
 }
 
@@ -122,7 +122,7 @@ void TaskLine(char const* kind, gCScriptRoutine_PS* self, bCString const& task, 
     eCEntity* entity = self ? self->GetEntity() : nullptr;
     if (!Wanted(entity)) return;
     char what[1200];
-    sprintf_s(what, "task=%s", task.GetText());
+    Format(what, "task=%s", task.GetText());
     // AISetTask is reached through Script.dll's wrapper: the direct caller alone does not say who wants the task
     // (puppet turn, 20.10.). The frames above it, as far as the stack walk finds them, nearest first.
     if (!std::strcmp(kind, "aitask")) {
@@ -181,7 +181,7 @@ void Command(char const* text, LogFn log)
 {
     if (text && *text) Configure(text);  // no argument: status only
     char line[160];
-    sprintf_s(line, "TRACE mode=%s lines=%u hooks=%d%d%d", mode == All ? "all" : mode == Driven ? "driven" : "off", lines,
+    Format(line, "TRACE mode=%s lines=%u hooks=%d%d%d", mode == All ? "all" : mode == Driven ? "driven" : "off", lines,
               playMotion != nullptr, setCurrentTask != nullptr, aiSetTask != nullptr);
     log(line);
 }

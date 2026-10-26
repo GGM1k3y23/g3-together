@@ -1,6 +1,6 @@
 # G3 Together: Kurzanleitung für den Mitspieler
 
-[English](JOINING.md) · **Deutsch**
+[English](JOINING.md) · **Deutsch** · [Polski](DOLACZANIE.md)
 
 ## Vor dem Start
 
@@ -11,7 +11,7 @@
 ## Installieren
 
 **Einrichten:** Sind Gothic 3 und beide Patches installiert, das ganze Paket irgendwohin entpacken und `Einrichten.cmd`
-doppelklicken (`Setup.cmd` auf Englisch). Es erledigt das Kopieren und die INI: Es findet Gothic 3 (Steam, GOG oder der
+doppelklicken (`Setup.cmd` auf Englisch, `Instalacja.cmd` auf Polnisch). Es erledigt das Kopieren und die INI: Es findet Gothic 3 (Steam, GOG oder der
 Ordner, den du angibst), prüft Community Patch 1.75.14 und Parallel Universe Patch 1.1.1, nimmt eine andere Koop-Mod aus
 `scripts`, kopiert die Mod nach `scripts` und schreibt `g3together.ini` nach deinen Antworten (Host oder Mitspieler, dein
 Name, die Adresse des Hosts). Ersetzte Dateien liegen danach in `G3Together-backup` im Spielordner. Das Einrichten wurde
@@ -26,13 +26,14 @@ role = client
 address = <Adresse des Hosts>
 port = 34567
 name = <Dein Name>
-language = de
+language = auto
 ```
 
 Ersetze die beiden Platzhalter. **Über Hamachi** ist die Adresse des Hosts seine Hamachi-Adresse (`25.x.x.x`, steht bei ihm oben im Hamachi-Fenster); beide müssen im selben Hamachi-Netz sein, vorzugsweise mit direkter Verbindung. Auf deinem Rechner muss unbedingt `role = client` stehen. Behalte deinen Namen bei:
 Gefolgsleute findet der Host nach dem Laden eines Spielstands über diesen Namen wieder.
 
-`language = de` schaltet die Mod-Meldungen auf Deutsch; Standard ist Englisch (`language = en`).
+`language = auto` zeigt die Mod-Meldungen in der Textsprache deines Gothic 3 (Deutsch, Polnisch, sonst Englisch).
+Fest einstellen: `language = de`, `en` oder `pl`; ohne die Zeile sind sie englisch.
 Die Sprache kann jeder unabhängig wählen. Die Spielsprache von Gothic 3 bleibt unverändert.
 
 ## Beitreten

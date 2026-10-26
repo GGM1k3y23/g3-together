@@ -122,7 +122,7 @@ void SendGesture(eCEntity* partner)
     net::WorldState s{};
     s.kind = GestureKind;
     Guid(partner, s.guid);
-    sprintf_s(s.routine, "%08x", hash);
+    Format(s.routine, "%08x", hash);
     const bCQuaternion q = partner->GetWorldRotation();
     s.rotation[0] = q.GetX(); s.rotation[1] = q.GetY(); s.rotation[2] = q.GetZ(); s.rotation[3] = q.GetW();
     net::SendWorldState(s, 0);
@@ -277,7 +277,7 @@ void Choose(int index, LogFn log)
     gCInfo_PS* info = manager && manager->AccessIsRunning() ? manager->GetAvailableInfo(index) : nullptr;
     if (!info) { log("REFUSED talkchoose: no dialog or no such option"); return; }
     const GEBool ok = manager->ExecuteDialogInfo(info);
-    sprintf_s(line, "TALKCHOOSE index=%d name=%s ok=%d", index, info->AccessName().GetText(), ok ? 1 : 0);
+    Format(line, "TALKCHOOSE index=%d name=%s ok=%d", index, info->AccessName().GetText(), ok ? 1 : 0);
     log(line);
 }
 
@@ -287,9 +287,9 @@ void ChooseInfo(char const* name, LogFn log)
     char line[200];
     gCInfoManager_PS* manager = Infos();
     gCInfo_PS* info = manager && manager->AccessIsRunning() ? manager->GetInfo(bCString(name)) : nullptr;
-    if (!info) { sprintf_s(line, "REFUSED talkinfo %s: no dialog or no such info", name); log(line); return; }
+    if (!info) { Format(line, "REFUSED talkinfo %s: no dialog or no such info", name); log(line); return; }
     const GEBool ok = manager->ExecuteDialogInfo(info);
-    sprintf_s(line, "TALKINFO name=%s ok=%d", name, ok ? 1 : 0);
+    Format(line, "TALKINFO name=%s ok=%d", name, ok ? 1 : 0);
     log(line);
 }
 
@@ -298,7 +298,7 @@ void Report(LogFn log)
     char line[260];
     std::string held;
     for (auto const& entry : holds) held += std::string(held.empty() ? "" : ",") + entry.second.entity.GetName().GetText();
-    sprintf_s(line, "TALKSYNC talking=%d partner=%s begins=%u ends=%u held=%zu held_names=%s holds_started=%u holds_ended=%u repacified=%u hold_disabled=%d busy_refused=%u assess_wrapped=%d gestures_sent=%u gestures_played=%u gestures_unknown=%u",
+    Format(line, "TALKSYNC talking=%d partner=%s begins=%u ends=%u held=%zu held_names=%s holds_started=%u holds_ended=%u repacified=%u hold_disabled=%d busy_refused=%u assess_wrapped=%d gestures_sent=%u gestures_played=%u gestures_unknown=%u",
               talkingWith != nullptr, talkingWith ? Entity(talkingWith).GetName().GetText() : "-", begins, ends, holds.size(),
               held.empty() ? "-" : held.c_str(), holdsStarted, holdsEnded, repacified, holdDisabled, busyRefused, assessNative ? 1 : 0, gesturesSent,
               gesturesPlayed, gesturesUnknown);

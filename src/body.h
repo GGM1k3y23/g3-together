@@ -80,6 +80,8 @@ extern bool combatReplay;                       // QA: off = replay those by mot
 extern unsigned kindStarted[3], kindPlayed[3], kindShown[3];
 extern unsigned scriptAnis, scriptAniFaults, loopRestarts;  // gestures/knock-downs as play-ani instructions; loops restarted
 extern bool scriptAniReplay, loopRestart;                    // QA comparisons: scriptanioff, looprestartoff
+extern bool swimStrokes;                                     // QA negative control: swimstrokeoff
+extern unsigned swimStrokesPlayed;                           // swim strokes started on puppets
 char const* IdleTask();
 void Pacify(Entity& entity, State& state);
 void Release(Entity& entity, State& state);

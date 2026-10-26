@@ -14,4 +14,6 @@ void OnWorldChange();
 using LogFn = void (*)(char const*);
 void Report(LogFn log);  // QA: ENDING line
 void Off(LogFn log);     // QA negative control: endingsyncoff, the epilogue plays only where it started
+void Hold(char const* seconds, LogFn log);  // QA endinghold <s>: this hero counts as busy for that long (0 ends it)
+void Limit(LogFn log);   // QA negative control: endinglimit, another player's epilogue is dropped after 60 s busy as before
 }

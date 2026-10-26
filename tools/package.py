@@ -1,4 +1,4 @@
-"""Build a player package: the mod DLL, the setup (Setup.cmd, Einrichten.cmd, tools/setup.ps1), example configuration,
+"""Build a player package: the mod DLL, the setup (Setup.cmd, Einrichten.cmd, Instalacja.cmd, tools/setup.ps1), example configuration,
 the player guides, the test plan, the log collector and the licences.
 
     python tools/package.py <built Script_G3Together.dll> <output folder>
@@ -17,8 +17,9 @@ HOST_INI = """# G3 Together: this player hosts the campaign.
 role = host
 port = 34567
 name = Host
-# Mod messages only: en (default) or de. Each player can choose independently.
-language = en
+# Mod messages only: auto (the language of your Gothic 3 texts), en, de or pl; without this line: en.
+# Each player can choose independently.
+language = auto
 # Key that jumps to the other player (default PAGEDOWN): F1-F24, PAGEUP, HOME, END, INSERT, DELETE or a letter
 partner_key = PAGEDOWN
 # Keys that accept / decline the other player's trade offer (same names; the mod warns if two of these keys are the same)
@@ -36,8 +37,9 @@ role = client
 address = 127.0.0.1
 port = 34567
 name = Player
-# Mod messages only: en (default) or de. Each player can choose independently.
-language = en
+# Mod messages only: auto (the language of your Gothic 3 texts), en, de or pl; without this line: en.
+# Each player can choose independently.
+language = auto
 partner_key = PAGEDOWN
 offer_accept_key = INSERT
 offer_decline_key = DELETE
@@ -59,11 +61,12 @@ def main():
         z.writestr('g3together.ini.client-example', CLIENT_INI)
         # Explicit public guides only. Keep their relative language links valid in the ZIP.
         for guide in ('PLAYING.md', 'JOINING.md', 'PLAYTEST.md',
-                      'SPIELEN.md', 'MITSPIELER.md', 'TESTPLAN.md'):
+                      'SPIELEN.md', 'MITSPIELER.md', 'TESTPLAN.md',
+                      'GRANIE.md', 'DOLACZANIE.md'):
             z.write(ROOT / 'docs' / guide, guide)
         z.write(ROOT / 'tools/collect_logs.py', 'tools/collect_logs.py')
         z.write(ROOT / 'tools/setup.ps1', 'tools/setup.ps1')
-        for launcher in ('Setup.cmd', 'Einrichten.cmd'):
+        for launcher in ('Setup.cmd', 'Einrichten.cmd', 'Instalacja.cmd'):
             z.write(ROOT / launcher, launcher)
         z.write(ROOT / 'COPYING', 'COPYING')
         enet = ROOT / 'thirdparty/enet/LICENSE'

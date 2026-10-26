@@ -124,7 +124,7 @@ void OnState(uint8_t from, net::WorldState const& s)
 void Report(LogFn log)
 {
     char line[200];
-    sprintf_s(line, "PICKSYNC enabled=%d installed=%d native=%d tries=%u successes=%u sent=%u applied=%u already=%u", enabled ? 1 : 0,
+    Format(line, "PICKSYNC enabled=%d installed=%d native=%d tries=%u successes=%u sent=%u applied=%u already=%u", enabled ? 1 : 0,
               installed ? 1 : 0, native ? 1 : 0, tries, successes, sent, applied, already);
     log(line);
 }
@@ -154,14 +154,14 @@ void Candidates(LogFn log)
         const eCEntityProxy proxy(instance);
         bCPropertyID::bSCore core;
         std::memcpy(&core, &proxy.GetEntityID().GetCore(), 16);
-        sprintf_s(line, "PICKCAND guid=%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X name=%s level=%u picked=%d dist=%.0f mirrored=%d down=%d",
+        Format(line, "PICKCAND guid=%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X name=%s level=%u picked=%d dist=%.0f mirrored=%d down=%d",
                   core.Data1, core.Data2, core.Data3, core.Data4[0], core.Data4[1], core.Data4[2], core.Data4[3], core.Data4[4],
                   core.Data4[5], core.Data4[6], core.Data4[7], npc.GetName().GetText(), static_cast<unsigned>(npc.NPC.LevelMax),
                   npc.Dialog.PickedPocket ? 1 : 0, dist, npcs::IsMirrored(instance) ? 1 : 0, npc.IsDown() ? 1 : 0);
         log(line);
         ++count;
     }
-    sprintf_s(line, "PICKCANDS end count=%d", count);
+    Format(line, "PICKCANDS end count=%d", count);
     log(line);
 }
 
@@ -170,7 +170,7 @@ void Info(char const* guid, LogFn log)
     char line[200];
     Entity npc = ByGuid(guid);
     if (!HasDialog(npc.GetInstance())) { log("REFUSED pickinfo: no such NPC"); return; }
-    sprintf_s(line, "PICKINFO guid=%s name=%s picked=%d", guid, npc.GetName().GetText(), npc.Dialog.PickedPocket ? 1 : 0);
+    Format(line, "PICKINFO guid=%s name=%s picked=%d", guid, npc.GetName().GetText(), npc.Dialog.PickedPocket ? 1 : 0);
     log(line);
 }
 
@@ -185,7 +185,7 @@ void ThiefPrep(LogFn log)
     const Template perk("Perk_PickPocket_3");
     if (!self.Inventory.HasLearnedSkill(perk)) self.Inventory.TeachSkill(perk);
     if (self.PlayerMemory.GetTheft() < 150) self.PlayerMemory.SetTheft(150);  // 150 / 2 - 50 + 85 = 110 > 99
-    sprintf_s(line, "THIEFPREP theft=%d perk=%d", self.PlayerMemory.GetTheft(), self.Inventory.IsSkillActive(perk) ? 1 : 0);
+    Format(line, "THIEFPREP theft=%d perk=%d", self.PlayerMemory.GetTheft(), self.Inventory.IsSkillActive(perk) ? 1 : 0);
     log(line);
 }
 
@@ -195,10 +195,10 @@ void LearnPerk(char const* name, LogFn log)
     char line[160];
     eCEntity* hero = gCSession::GetInstance().GetHero();
     const Template perk(name);
-    if (!hero || !perk.IsValid()) { sprintf_s(line, "REFUSED learnperk %s: no hero or no such skill", name); log(line); return; }
+    if (!hero || !perk.IsValid()) { Format(line, "REFUSED learnperk %s: no hero or no such skill", name); log(line); return; }
     Entity self(hero);
     if (!self.Inventory.HasLearnedSkill(perk)) self.Inventory.TeachSkill(perk);
-    sprintf_s(line, "LEARNPERK name=%s learned=%d", name, self.Inventory.HasLearnedSkill(perk) ? 1 : 0);
+    Format(line, "LEARNPERK name=%s learned=%d", name, self.Inventory.HasLearnedSkill(perk) ? 1 : 0);
     log(line);
 }
 
@@ -212,7 +212,7 @@ void Pick(char const* guid, LogFn log)
     const int before = ItemCount(thief);
     const bool pickedBefore = npc.Dialog.PickedPocket;
     const GEInt result = GetScriptAdminExt().CallScript(bCString("PickPocket"), hero, npc.GetInstance(), 0);  // the dialog command's call
-    sprintf_s(line, "PICKPOCKET guid=%s name=%s result=%d picked_before=%d picked_after=%d items_before=%d items_after=%d", guid,
+    Format(line, "PICKPOCKET guid=%s name=%s result=%d picked_before=%d picked_after=%d items_before=%d items_after=%d", guid,
               npc.GetName().GetText(), result, pickedBefore ? 1 : 0, npc.Dialog.PickedPocket ? 1 : 0, before, ItemCount(thief));
     log(line);
 }

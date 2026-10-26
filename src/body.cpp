@@ -26,6 +26,8 @@ unsigned kindStarted[3] = {}, kindPlayed[3] = {}, kindShown[3] = {};
 unsigned scriptAnis = 0, scriptAniFaults = 0, loopRestarts = 0;
 bool scriptAniReplay = true;  // QA comparison: scriptanioff
 bool loopRestart = true;      // QA comparison: looprestartoff
+bool swimStrokes = true;      // QA negative control: swimstrokeoff (a swimming puppet only glides, as before 26.10.)
+unsigned swimStrokesPlayed = 0;
 Glide glide[2];
 unsigned stanceStops = 0;   // replayed stance motions ended because the body set off
 unsigned stopOwners[8] = {};  // QA: slot 0's owner when that happened
@@ -36,7 +38,7 @@ void GlideReport(void (*log)(char const*))
     char line[200];
     for (int kind = 0; kind < 2; ++kind) {
         Glide const& g = glide[kind];
-        sprintf_s(line, "GLIDE kind=%s moving_ms=%u glide_ms=%u steer_ms=%u place_ms=%u snaps=%u stance_stops=%u owners=%u/%u/%u/%u/%u/%u/%u",
+        Format(line, "GLIDE kind=%s moving_ms=%u glide_ms=%u steer_ms=%u place_ms=%u snaps=%u stance_stops=%u owners=%u/%u/%u/%u/%u/%u/%u",
                   kind ? "puppet" : "mirror", g.movingMs, g.glideMs, g.steerMs, g.placeMs, g.snaps, stanceStops, stopOwners[0], stopOwners[1],
                   stopOwners[2], stopOwners[3], stopOwners[4], stopOwners[5], stopOwners[6]);
         log(line);
@@ -45,7 +47,7 @@ void GlideReport(void (*log)(char const*))
         for (auto const& [name, ms] : glideMotions[kind]) top.emplace_back(ms, name);
         std::sort(top.rbegin(), top.rend());
         for (size_t i = 0; i < top.size() && i < 5; ++i) {
-            sprintf_s(line, "GLIDEMOTION kind=%s ms=%u motion=%.120s", kind ? "puppet" : "mirror", top[i].first, top[i].second.c_str());
+            Format(line, "GLIDEMOTION kind=%s ms=%u motion=%.120s", kind ? "puppet" : "mirror", top[i].first, top[i].second.c_str());
             log(line);
         }
     }
@@ -407,6 +409,11 @@ void Drive(Entity& entity, State& state, Target const& target, uint32_t now)
     // instead of the attack. Action motions play in place, the pose follows.
     const bool action = target.motion && *target.motion && !strstr(target.motion, "_Move_") && !strstr(target.motion, "_Ambient_");
     const bool moving = !action && mode >= gECharMovementMode_Sneak && mode <= gECharMovementMode_Sprint && (target.speed > 40.0f || error > 60.0f);
+    // Swimming is no mode the movement controller takes for a driven body (steered with mode 7 it stayed in mode 1, 26.10.):
+    // the body is placed and showed the swim idle while its player made strokes (stageSwim). The player's stroke
+    // (Hero_Swim_..._Move_*) plays here like a loop instead, and the pose follows closely.
+    const bool swimStroke = swimStrokes && mode == gECharMovementMode_Swim && target.motion && strstr(target.motion, "_Swim_") &&
+                            strstr(target.motion, "_Move_");
     if (error > 300.0f) {
         entity.CharacterMovement.StopMovement();
         entity.MoveTo(pose);
@@ -453,7 +460,7 @@ void Drive(Entity& entity, State& state, Target const& target, uint32_t now)
         // Setting the pose every frame restarted the body's motion and cut attacks short; while an action plays the
         // pose is only corrected when it drifted.
         const bool acting = static_cast<int32_t>(state.actionUntil - now) > 0;
-        if (!acting || error > 100.0f) entity.MoveTo(pose);
+        if (!acting || error > (swimStroke ? 40.0f : 100.0f)) entity.MoveTo(pose);
         // A motion of another stance (lying knocked out: AniState 16) did not play while the body stayed in its
         // standing state (stage A: the client fell, its puppet on the host kept standing); take the stance first.
         // Not during an action: an attack changes the body's stance by itself, and setting it back started that
@@ -468,8 +475,8 @@ void Drive(Entity& entity, State& state, Target const& target, uint32_t now)
         // standing, the body plays its own idle variants, but sitting or lying it froze as well (Gorn with fruit).
         // An animal shown for a transformed player plays its idles through its own AI, which a driven body does not run
         // (transformdiag: a wolf puppet stood frozen in 5 of 12 looks); its idles (_Ambient_Ambient) restart as well.
-        if (loopRestart && target.motion && (strstr(target.motion, "_Loop_") || strstr(target.motion, "_Ambient_")) &&
-            !strstr(target.motion, "_Move_") &&
+        if (loopRestart && target.motion && (strstr(target.motion, "_Loop_") || strstr(target.motion, "_Ambient_") || swimStroke) &&
+            (!strstr(target.motion, "_Move_") || swimStroke) &&
             !strcmp(target.motion, state.playing) && static_cast<int32_t>(now - state.loopCheckAt) >= 0) {
             const bool idle = strstr(target.motion, "_Ambient_") != nullptr;
             state.loopCheckAt = now + (idle ? 1000 : 300);
@@ -485,7 +492,8 @@ void Drive(Entity& entity, State& state, Target const& target, uint32_t now)
             }
         }
         // Stance and action motions exist in the game; StartPlayAni takes the name without extension.
-        if (target.motion && *target.motion && !strstr(target.motion, "_Move_") && strcmp(target.motion, state.playing) != 0) {
+        if (target.motion && *target.motion && (!strstr(target.motion, "_Move_") || swimStroke) && strcmp(target.motion, state.playing) != 0) {
+            if (swimStroke) ++swimStrokesPlayed;
             char name[96];
             strncpy_s(name, target.motion, _TRUNCATE);
             if (char* extension = strstr(name, ".xmot")) *extension = '\0';

@@ -4,6 +4,8 @@
 // had touched their targets). Both are wrapped through the script admin's own tables.
 #pragma once
 
+class eCEntity;
+
 namespace g3t::ai {
 void Tick();             // installs the filter once the game's scripts have registered it
 bool PerceptionFiltered();
@@ -29,6 +31,8 @@ void* PatchImport(void* module, char const* dll, char const* function, void* rep
 // GetAttitude wrapper: an NPC judging a puppet judges the local hero instead.
 bool AttitudeInstalled();
 bool AttitudeNative();          // jump in the native function (all callers), not only the script table
+int PlainAttitude(eCEntity* self, eCEntity* other);  // QA: GetAttitude without the puppet -> hero redirect (as attitudeoff)
+eCEntity* RedirectedFor();  // QA: the puppet a running GetAttitude answers for as the local hero (else null)
 unsigned AttitudeAsked();       // GetAttitude calls with a puppet as the judged entity
 unsigned AttitudeRedirected();  // of these, answered as for the local hero
 unsigned AttitudeFleeKept();    // of these, left alone: the judge flees from that puppet (Panic)

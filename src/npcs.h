@@ -29,6 +29,7 @@ void Unclaim(eCEntity* entity);
 bool OnClaim(uint8_t const guid[16], uint8_t player, bool take);  // host; false: refused (someone else has it)
 // Host: a companion given back stands there on the player's machine; its copy here is put there if it stands elsewhere.
 void PlaceGivenBack(uint8_t const guid[16], float const position[3], float const rotation[4]);
+void StoryMoved(uint8_t const guid[16], float const position[3], float const rotation[4]);  // a story move on the host (infocmd.cpp)
 void Revoked(uint8_t const guid[16]);  // client: the host refused or ended our claim
 void Rebind(uint8_t const guid[16]);   // look this mirror's GUID up again (its copy was just given that GUID: summon.cpp)
 void Foreign(uint8_t const guid[16]);  // an NPC here that another machine simulates: never send it as ours (a copy)
@@ -48,6 +49,7 @@ void DeadPoseReport(LogFn log);  // QA: DEADPOSE line
 void LayDownCorpse(eCEntity* entity);  // a death applied here outside mirroring (journal.cpp): lay the body down like a dead mirror
 unsigned HoldChanges();  // QA: weapons put into mirrors' hands so far
 bool Claimed(eCEntity const* entity);  // client: taken over by this player
+uint8_t ClaimedBy(eCEntity const* entity);  // host: the client that took this NPC over as its companion, 0 if none
 void Mirrored(std::vector<eCEntity*>& out);  // client: the NPCs driven from another machine's snapshots now (guide.cpp)
 // Host: an NPC a client simulates guides or follows the host's hero (guide.cpp): simulated here from now on, the client's
 // snapshots of it refused (the client's copy becomes a mirror of the host's), until HostRelease. False if not mirrored.

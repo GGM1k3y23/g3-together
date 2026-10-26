@@ -318,7 +318,7 @@ void Tick()
 void Report(LogFn log)
 {
     char line[520];
-    sprintf_s(line, "SPELLSTATE installed=%d mirror=%d sent=%u received=%u replayed=%u refused=%u no_hero=%u npc_sent=%u npc_received=%u "
+    Format(line, "SPELLSTATE installed=%d mirror=%d sent=%u received=%u replayed=%u refused=%u no_hero=%u npc_sent=%u npc_received=%u "
                     "npc_applied=%u npc_refused=%u taken_over=%u given_back=%u tick_hooked=%d tick_guard=%d ticks_run=%u ticks_skipped=%u "
                     "poisoned_skipped=%u",
               installed, mirror, sent, received, replayed, refused, noHero, npcSent, npcReceived, npcApplied, npcRefused, takenOver, givenBack,
@@ -340,7 +340,7 @@ void PuppetGuid(char const* player, LogFn log)
     const eCEntityProxy proxy(puppet);
     bCPropertyID::bSCore core;
     std::memcpy(&core, &proxy.GetEntityID().GetCore(), 16);
-    sprintf_s(line, "PUPPET player=%s guid=%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", player, core.Data1, core.Data2, core.Data3,
+    Format(line, "PUPPET player=%s guid=%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", player, core.Data1, core.Data2, core.Data3,
               core.Data4[0], core.Data4[1], core.Data4[2], core.Data4[3], core.Data4[4], core.Data4[5], core.Data4[6], core.Data4[7]);
     log(line);
 }
@@ -351,7 +351,7 @@ void SpawnNpc(char const* name, LogFn log)
     char line[200];
     eCEntity* hero = remote::ControlledBody();
     const Template t(name);
-    if (!hero || !t.IsValid()) { sprintf_s(line, "SPAWNNPC refused template %s valid=%d", name, t.IsValid() ? 1 : 0); log(line); return; }
+    if (!hero || !t.IsValid()) { Format(line, "SPAWNNPC refused template %s valid=%d", name, t.IsValid() ? 1 : 0); log(line); return; }
     bCMatrix pose = hero->GetWorldMatrix();
     pose.AccessTranslation() = hero->GetWorldPosition() + hero->GetWorldMatrix().GetZAxis() * 400.0f;
     Entity npc = Entity::Spawn(t, pose);
@@ -359,7 +359,7 @@ void SpawnNpc(char const* name, LogFn log)
     const eCEntityProxy proxy(npc.GetInstance());
     bCPropertyID::bSCore g;
     std::memcpy(&g, &proxy.GetEntityID().GetCore(), 16);
-    sprintf_s(line, "SPAWNNPC name=%s guid=%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", npc.GetName().GetText(), g.Data1, g.Data2,
+    Format(line, "SPAWNNPC name=%s guid=%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", npc.GetName().GetText(), g.Data1, g.Data2,
               g.Data3, g.Data4[0], g.Data4[1], g.Data4[2], g.Data4[3], g.Data4[4], g.Data4[5], g.Data4[6], g.Data4[7]);
     log(line);
 }
@@ -375,7 +375,7 @@ void StatusOf(char const* guid, LogFn log)
     Entity npc = ByGuid(bytes);
     if (!npc.GetInstance() || !npc.GetInstance()->GetPropertySet(eEPropertySetType_NPC)) { log("STATUSOF refused no such NPC"); return; }
     const bCVector at = npc.GetPosition();
-    sprintf_s(line, "STATUSOF name=%s bits=%u hp=%d hp_max=%d poisoned_at=%u mirrored=%d owner=%u dead=%d ai_mode=%d pos=%.0f,%.0f,%.0f task=%s state=%s",
+    Format(line, "STATUSOF name=%s bits=%u hp=%d hp_max=%d poisoned_at=%u mirrored=%d owner=%u dead=%d ai_mode=%d pos=%.0f,%.0f,%.0f task=%s state=%s",
               npc.GetName().GetText(), static_cast<unsigned>(npc.NPC.StatusEffects), static_cast<int>(npc.DamageReceiver.HitPoints),
               static_cast<int>(npc.DamageReceiver.HitPointsMax), static_cast<unsigned>(npc.NPC.TimeStampPoisoned),
               npcs::IsMirrored(npc.GetInstance()), npcs::OwnerOf(npc.GetInstance()), npc.IsDead() ? 1 : 0,
@@ -422,7 +422,7 @@ void Party(LogFn log)
             bCPropertyID::bSCore g;
             std::memcpy(&g, &proxy.GetEntityID().GetCore(), 16);
             const bCVector& at = m.GetInstance()->GetWorldPosition();
-            sprintf_s(line, "MEMBER name=%s guid=%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X type=%d task=%s at=%.0f_%.0f_%.0f",
+            Format(line, "MEMBER name=%s guid=%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X type=%d task=%s at=%.0f_%.0f_%.0f",
                       m.GetName().GetText(), g.Data1, g.Data2, g.Data3, g.Data4[0], g.Data4[1], g.Data4[2], g.Data4[3], g.Data4[4],
                       g.Data4[5], g.Data4[6], g.Data4[7], static_cast<int>(static_cast<gEPartyMemberType>(m.Party.PartyMemberType)),
                       m.Routine.GetCurrentTask().GetText(), at.GetX(), at.GetY(), at.GetZ());
@@ -442,7 +442,7 @@ void NpcMemory(char const* guid, LogFn log)
     std::memcpy(bytes, &raw, 16);
     Entity npc = ByGuid(bytes);
     if (!npc.GetInstance() || !npc.GetInstance()->GetPropertySet(eEPropertySetType_NPC)) { log("NPCMEMORY refused no such NPC"); return; }
-    sprintf_s(line, "NPCMEMORY name=%s attitude=%d last_player_ar=%d attack_reason=%d last_fight=%d last_crime=%d last_fight_time=%.0f",
+    Format(line, "NPCMEMORY name=%s attitude=%d last_player_ar=%d attack_reason=%d last_fight=%d last_crime=%d last_fight_time=%.0f",
               npc.GetName().GetText(), static_cast<int>(static_cast<gEAttitude>(npc.NPC.AttitudeToPlayer2)),
               static_cast<int>(static_cast<gEAttackReason>(npc.NPC.LastPlayerAR)), static_cast<int>(static_cast<gEAttackReason>(npc.NPC.AttackReason)),
               static_cast<int>(static_cast<gELastFightAgainstPlayer>(npc.NPC.LastFightAgainstPlayer)),
@@ -474,7 +474,7 @@ void SetHp(char const* value, LogFn log)
     Entity self(hero);
     const int before = self.PlayerMemory.GetHitPoints();
     self.PlayerMemory.SetHitPoints(std::atoi(value));
-    sprintf_s(line, "SETHP before=%d after=%d max=%d", before, self.PlayerMemory.GetHitPoints(), self.PlayerMemory.GetHitPointsMax());
+    Format(line, "SETHP before=%d after=%d max=%d", before, self.PlayerMemory.GetHitPoints(), self.PlayerMemory.GetHitPointsMax());
     log(line);
 }
 
@@ -495,13 +495,13 @@ void Locks(LogFn log)
         if (distance > 3000.0f) continue;
         Entity lock(e);
         const Template key = lock.Lock.GetKey();
-        sprintf_s(line, "LOCK name=%s distance=%.0f door=%d locked=%d difficulty=%d key=%d", e->GetName().GetText(), distance,
+        Format(line, "LOCK name=%s distance=%.0f door=%d locked=%d difficulty=%d key=%d", e->GetName().GetText(), distance,
                   e->GetPropertySet(eEPropertySetType_Door) ? 1 : 0, lock.Lock.IsLocked() ? 1 : 0,
                   static_cast<int>(lock.Lock.Difficulty), key.IsValid() ? 1 : 0);
         log(line);
         ++count;
     }
-    sprintf_s(line, "LOCKS end count=%u", count);
+    Format(line, "LOCKS end count=%u", count);
     log(line);
 }
 // QA (plan 3.6): which scripts a spell item runs, "It_Spell_A,It_Spell_B": SPELLFUNC lines. A missing item is lent to
@@ -518,7 +518,7 @@ void SpellFunc(char const* names, LogFn log)
         char line[300];
         const Template item(bCString(name.c_str()));
         if (!item.IsValid() || !hero.GetInstance()) {
-            sprintf_s(line, "SPELLFUNC item=%s valid=0", name.c_str());
+            Format(line, "SPELLFUNC item=%s valid=0", name.c_str());
             log(line);
             continue;
         }
@@ -529,7 +529,7 @@ void SpellFunc(char const* names, LogFn log)
         const bCString cast = spell.GetInstance() ? static_cast<bCString>(spell.Magic.FuncOnCast) : bCString("-");
         const bCString hit = spell.GetInstance() ? static_cast<bCString>(spell.Magic.FuncOnTargetHit) : bCString("-");
         if (lent && stack >= 0) hero.Inventory.DeleteItems(stack, 1);
-        sprintf_s(line, "SPELLFUNC item=%s valid=1 on_cast=%s on_target_hit=%s", name.c_str(), cast.GetText(), hit.GetText());
+        Format(line, "SPELLFUNC item=%s valid=1 on_cast=%s on_target_hit=%s", name.c_str(), cast.GetText(), hit.GetText());
         log(line);
     }
     log("SPELLFUNC end");

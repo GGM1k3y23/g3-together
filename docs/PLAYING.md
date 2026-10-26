@@ -1,6 +1,6 @@
 # Playing G3 Together
 
-**English** · [Deutsch](SPIELEN.md)
+**English** · [Deutsch](SPIELEN.md) · [Polski](GRANIE.md)
 
 G3 Together adds co-op to Gothic 3 for two players. More players are planned but have not been tested.
 One player is the **host**: their world is the shared campaign, and their save is everyone's campaign save.
@@ -24,7 +24,7 @@ This is a test version. See the known issues and limitations below.
 ## Installation
 
 **Setup:** once Gothic 3 and both patches are installed, unpack the whole package anywhere and double-click
-`Setup.cmd` (`Einrichten.cmd` for German). It does the copying and the INI for you: it finds Gothic 3 (Steam, GOG or the
+`Setup.cmd` (`Einrichten.cmd` for German, `Instalacja.cmd` for Polish). It does the copying and the INI for you: it finds Gothic 3 (Steam, GOG or the
 folder you name), checks Community Patch 1.75.14 and Parallel Universe Patch 1.1.1, moves another co-op mod out of
 `scripts`, copies the mod into `scripts` and writes `g3together.ini` from your answers (host or joining player, your name,
 the host's address). Replaced files are kept in `G3Together-backup` in the game folder. The setup was checked on test
@@ -59,9 +59,11 @@ folders, not yet by players; the steps below do the same by hand.
 
 ### Mod message language
 
-English is the default (`language = en`). To use German messages, add `language = de` to your own
-`g3together.ini` and restart the game. Each player may choose independently. This setting does not
-change Gothic 3's own language. The message examples in this guide assume English.
+`language = auto` (written by the setup and the example INIs) shows the mod's messages in the language of your
+Gothic 3 texts: German for a German game, Polish for a Polish one, English otherwise. To fix a language, set
+`language = en`, `language = de` or `language = pl` in your own `g3together.ini` and restart the game. Without a
+`language` line the messages are English. Each player may choose independently. This setting does not change
+Gothic 3's own language. The message examples in this guide assume English.
 
 ## Connecting over the internet
 
@@ -119,6 +121,8 @@ these guides used two game copies on one PC; play over the real internet remains
   quests also count enemies killed in the joining player's region.
 - The main story is shared to the end: when one player hands over the artefacts at a god's shrine, the chapter changes
   for both, and when one player starts the epilogue, the other sees the same pictures and the game's end at the same time.
+  If the other player is in a dialog, a menu or a fight just then, their epilogue starts as soon as that is over (a message
+  says so).
 - A stool, bench, campfire or other place has one user: while your partner uses it, you are kept off ("<Name> is
   using this."), and NPCs do not take it either.
 - Items, chests, corpses and trading are shared: what one player takes is gone for everyone. An NPC whose pocket one

@@ -180,7 +180,7 @@ void OnWorldChange() { held.clear(); }
 void Report(LogFn log)
 {
     char line[200];
-    sprintf_s(line, "ARENASYNC on=%d installed=%d native=%d sent=%u taken=%u started=%u held=%zu given=%u readopted=%u", on ? 1 : 0,
+    Format(line, "ARENASYNC on=%d installed=%d native=%d sent=%u taken=%u started=%u held=%zu given=%u readopted=%u", on ? 1 : 0,
               installed ? 1 : 0, native ? 1 : 0, sent, taken, started, held.size(), given, readopted);
     log(line);
 }

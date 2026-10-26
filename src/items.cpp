@@ -33,7 +33,7 @@ void FormatGuid(eCEntity* entity, char* out, size_t size)
     const eCEntityProxy proxy(entity);
     bCPropertyID::bSCore core;
     std::memcpy(&core, &proxy.GetEntityID().GetCore(), 16);
-    sprintf_s(out, size, "%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", core.Data1, core.Data2, core.Data3, core.Data4[0],
+    Format(out, size, "%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", core.Data1, core.Data2, core.Data3, core.Data4[0],
               core.Data4[1], core.Data4[2], core.Data4[3], core.Data4[4], core.Data4[5], core.Data4[6], core.Data4[7]);
 }
 
@@ -51,7 +51,7 @@ void Line(char const* tag, char const* guid, Entity& item, LogFn log)
 {
     char line[300];
     Entity owner = item.GetInstance() ? item.GetOwner() : Entity();
-    sprintf_s(line, "%s guid=%s exists=%d name=%s item=%d owner=%s distance_cm=%.0f", tag, guid, item.GetInstance() != nullptr,
+    Format(line, "%s guid=%s exists=%d name=%s item=%d owner=%s distance_cm=%.0f", tag, guid, item.GetInstance() != nullptr,
               item.GetInstance() ? item.GetName().GetText() : "-", item.GetInstance() && item.IsItem() ? 1 : 0,
               owner.GetInstance() ? owner.GetName().GetText() : "-", DistanceToHero(item.GetInstance()));
     log(line);
@@ -69,11 +69,11 @@ void List(LogFn log)
         const float distance = DistanceToHero(entity.GetInstance());
         if (distance > 3000.0f) continue;
         FormatGuid(entity.GetInstance(), guid, sizeof(guid));
-        sprintf_s(line, "ITEM guid=%s name=%s distance_cm=%.0f", guid, entity.GetName().GetText(), distance);
+        Format(line, "ITEM guid=%s name=%s distance_cm=%.0f", guid, entity.GetName().GetText(), distance);
         log(line);
         ++items;
     }
-    sprintf_s(line, "ITEMS entities=%d world_items_near=%d", all.GetCount(), items);
+    Format(line, "ITEMS entities=%d world_items_near=%d", all.GetCount(), items);
     log(line);
     log("ITEMS end");
 }
@@ -87,7 +87,7 @@ void Take(char const* guid, LogFn log)
     if (!item.GetInstance()) { log("REFUSED itemtake: no such entity"); return; }
     const GEInt stack = Entity(hero).Inventory.InsertStack(item);
     char line[120];
-    sprintf_s(line, "ITEMTAKE guid=%s stack=%d", guid, stack);
+    Format(line, "ITEMTAKE guid=%s stack=%d", guid, stack);
     log(line);
     Entity again = Entity(bCPropertyID(bCGuid(raw)));
     Line("ITEMAFTER", guid, again, log);
@@ -172,9 +172,9 @@ void AfterTake(gCScriptProcessingUnit*)
     char guid[48];
     bCPropertyID::bSCore core;
     std::memcpy(&core, takingGuid, 16);
-    sprintf_s(guid, "%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", core.Data1, core.Data2, core.Data3, core.Data4[0],
+    Format(guid, "%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", core.Data1, core.Data2, core.Data3, core.Data4[0],
               core.Data4[1], core.Data4[2], core.Data4[3], core.Data4[4], core.Data4[5], core.Data4[6], core.Data4[7]);
-    sprintf_s(lastTook, "guid=%s name=%s amount=%u", guid, takingName, takingAmount);
+    Format(lastTook, "guid=%s name=%s amount=%u", guid, takingName, takingAmount);
     Logf("items: hero took %s", lastTook);
     if (disabled) return;
     net::ItemNote note{net::IsHost() ? net::ItemGone : net::ItemTook, {}, takingAmount, {}};
@@ -251,14 +251,14 @@ void Pick(char const* guid, LogFn log)
     self.Routine.FullStop();
     self.Routine.SetTask(bCString("PS_Normal_Take"));
     char line[200];
-    sprintf_s(line, "ITEMPICK guid=%s task=%s", guid, self.Routine.GetCurrentTask().GetText());
+    Format(line, "ITEMPICK guid=%s task=%s", guid, self.Routine.GetCurrentTask().GetText());
     log(line);
 }
 
 void TookReport(LogFn log)
 {
     char line[320];
-    sprintf_s(line, "ITEMTOOK count=%u sent=%u received=%u granted=%u denials=%u removed=%u returned=%u last=%s", tookCount, sent,
+    Format(line, "ITEMTOOK count=%u sent=%u received=%u granted=%u denials=%u removed=%u returned=%u last=%s", tookCount, sent,
               received, granted, denials, removed, returned, lastTook);
     log(line);
 }
@@ -270,7 +270,7 @@ void Count(char const* templateName, LogFn log)
     char line[160];
     eCDynamicEntity* hero = gCSession::GetInstance().GetHero();
     const GEInt amount = hero ? Entity(hero).Inventory.GetItemAmount(Template(templateName)) : -1;
-    sprintf_s(line, "INVCOUNT name=%s amount=%d", templateName, amount);
+    Format(line, "INVCOUNT name=%s amount=%d", templateName, amount);
     log(line);
 }
 

@@ -8,7 +8,7 @@ struct Config
     char address[64] = "127.0.0.1"; // host address for clients
     unsigned short port = 34567;
     char name[24] = "Player";
-    char language[3] = "en";       // local HUD language: en | de (not a network setting)
+    char language[5] = "en";       // local HUD language: en | de | pl | auto (the game's text language); not a network setting
     char puppetTemplate[64] = "PC_Hero";  // template used to show other players (the hero himself) who chose no look
     char look[32] = "";                  // this player's own look: the template the others show it as (empty: theirs)
     char partnerKey[16] = "PAGEDOWN";     // key that jumps to the other player (partner.cpp)

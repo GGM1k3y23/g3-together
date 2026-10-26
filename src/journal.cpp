@@ -242,7 +242,7 @@ void Report(LogFn log)
     unsigned pending = 0;
     for (auto const& [key, d] : deaths) pending += d.applied ? 0 : 1;
     char line[200];
-    sprintf_s(line, "JOURNAL entries=%zu pending=%u reported=%u received=%u applied=%u reporting=%d quest_kills=%u", deaths.size(), pending,
+    Format(line, "JOURNAL entries=%zu pending=%u reported=%u received=%u applied=%u reporting=%d quest_kills=%u", deaths.size(), pending,
               reported, received, appliedCount, reporting ? 1 : 0, questKills);
     log(line);
 }
@@ -252,11 +252,11 @@ void Entry(char const* name, LogFn log)
     char line[200];
     for (auto const& [key, d] : deaths)
         if (d.name == name) {
-            sprintf_s(line, "JENTRY name=%s found=1 by=%u applied=%d", name, d.by, d.applied ? 1 : 0);
+            Format(line, "JENTRY name=%s found=1 by=%u applied=%d", name, d.by, d.applied ? 1 : 0);
             log(line);
             return;
         }
-    sprintf_s(line, "JENTRY name=%s found=0", name);
+    Format(line, "JENTRY name=%s found=0", name);
     log(line);
 }
 }

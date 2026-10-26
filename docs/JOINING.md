@@ -1,6 +1,6 @@
 # G3 Together: joining a host
 
-**English** · [Deutsch](MITSPIELER.md)
+**English** · [Deutsch](MITSPIELER.md) · [Polski](DOLACZANIE.md)
 
 ## Before you start
 
@@ -14,7 +14,7 @@
 ## Installation
 
 **Setup:** once Gothic 3 and both patches are installed, unpack the whole package anywhere and double-click
-`Setup.cmd` (`Einrichten.cmd` for German). It does the copying and the INI for you: it finds Gothic 3 (Steam, GOG or the
+`Setup.cmd` (`Einrichten.cmd` for German, `Instalacja.cmd` for Polish). It does the copying and the INI for you: it finds Gothic 3 (Steam, GOG or the
 folder you name), checks Community Patch 1.75.14 and Parallel Universe Patch 1.1.1, moves another co-op mod out of
 `scripts`, copies the mod into `scripts` and writes `g3together.ini` from your answers (host or joining player, your name,
 the host's address). Replaced files are kept in `G3Together-backup` in the game folder. The setup was checked on test
@@ -32,7 +32,7 @@ folders, not yet by players; the steps below do the same by hand.
    address = <host address>
    port = 34567
    name = <your name>
-   language = en
+   language = auto
    ```
 
 Replace both placeholders. **With Hamachi**, use the host's Hamachi address (`25.x.x.x`, shown at the
@@ -40,8 +40,9 @@ top of their Hamachi window). Both players must be in the same Hamachi network; 
 connection. Your PC must use `role = client`. Keep your player name unchanged: the host uses it to
 restore your companions after loading a save.
 
-English is the default message language. Set `language = de` for German mod messages. Each player
-can choose independently; this does not change Gothic 3's own language.
+`language = auto` shows the mod's messages in the language of your Gothic 3 texts (German, Polish, otherwise
+English). To fix one, set `language = en`, `de` or `pl`; without the line the messages are English. Each player can
+choose independently; this does not change Gothic 3's own language.
 
 ## Joining
 

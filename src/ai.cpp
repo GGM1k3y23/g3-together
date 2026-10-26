@@ -172,6 +172,8 @@ bool fleeKeep = true;    // QA negative control: fleekeepoff
 unsigned attitudeAsked = 0, attitudeRedirected = 0, attitudeFleeKept = 0;
 
 bool attitudeNative = false;
+eCEntity* redirectedFor = nullptr;  // the puppet whose GetAttitude runs as the local hero's right now
+bool plainAsk = false;              // QA attchain: one question answered without the redirect (as attitudeoff would)
 
 // Script_Game.dll of this build: GetAttitude at RVA 0xE3B0 starts with push ebp; mov ebp,esp; and esp,-8 (6 bytes
 // of complete, position-independent instructions), then sub esp,0x354.
@@ -243,7 +245,7 @@ GEInt GE_STDCALL FilterAttitude(gCScriptProcessingUnit* spu, GELPVoid self, GELP
         eCEntity* judge = Self(spu, self);
         remote::NoteContact(judge, target);
         eCEntity* hero = gCSession::GetInstance().GetHero();
-        if (attitudeOn && hero && judge && judge != hero && !Driven(judge)) {
+        if (attitudeOn && !plainAsk && hero && judge && judge != hero && !Driven(judge)) {
             // GetAttitude answers Panic when self flees and its current target is other. With the hero in place of
             // the puppet that check fails, and an NPC fleeing from the puppet turned on it (re/findings/attitude-callers.md).
             Entity npc(judge);
@@ -254,7 +256,11 @@ GEInt GE_STDCALL FilterAttitude(gCScriptProcessingUnit* spu, GELPVoid self, GELP
             }
             ++attitudeRedirected;
             Entity asHero(hero);
-            return originalAttitude(spu, self, &asHero, args);
+            eCEntity* const before = redirectedFor;
+            redirectedFor = target;  // QA p7probe: whom the parts of GetAttitude answer for meanwhile
+            const GEInt result = originalAttitude(spu, self, &asHero, args);
+            redirectedFor = before;
+            return result;
         }
     }
     return originalAttitude(spu, self, other, args);
@@ -288,6 +294,14 @@ GEBool GE_STDCALL FilterCallback(gCScriptProcessingUnit* spu)
 bool PerceptionFiltered() { return installed; }
 bool AttitudeInstalled() { return attitudeInstalled; }
 bool AttitudeNative() { return attitudeNative; }
+eCEntity* RedirectedFor() { return redirectedFor; }
+int PlainAttitude(eCEntity* self, eCEntity* other)
+{
+    plainAsk = true;
+    const GEInt result = GetScriptAdminExt().CallScript(bCString("GetAttitude"), self, other, 0);
+    plainAsk = false;
+    return static_cast<int>(result);
+}
 unsigned AttitudeAsked() { return attitudeAsked; }
 unsigned AttitudeRedirected() { return attitudeRedirected; }
 unsigned AttitudeFleeKept() { return attitudeFleeKept; }
@@ -308,7 +322,7 @@ unsigned UnknownCount() { return unknown; }
 void ContinueRoutineReport(void (*log)(char const*))
 {
     char line[160];
-    sprintf_s(line, "CONTINUEROUTINE wrapped=%d block=%d blocked=%u run=%u", originalContinue != nullptr, continueBlock ? 1 : 0,
+    Format(line, "CONTINUEROUTINE wrapped=%d block=%d blocked=%u run=%u", originalContinue != nullptr, continueBlock ? 1 : 0,
               continueBlocked, continueRun);
     log(line);
 }
@@ -320,7 +334,7 @@ void ContinueRoutineOn(void (*log)(char const*))
 void MoveLengthReport(void (*log)(char const*))
 {
     char line[160];
-    sprintf_s(line, "MOVELENGTH wrapped=%d guard=%d calls=%u sanitized=%u unknown=%u", originalMoveLength != nullptr,
+    Format(line, "MOVELENGTH wrapped=%d guard=%d calls=%u sanitized=%u unknown=%u", originalMoveLength != nullptr,
               moveLengthGuard ? 1 : 0, moveLengthCalls, moveLengthSanitized, moveLengthUnknown);
     log(line);
 }
@@ -339,7 +353,7 @@ void Count(char const* names, void (*log)(char const*))
     }
     char line[200];
     for (auto const& entry : counted) {
-        sprintf_s(line, "AICOUNT name=%s hero=%u others=%u", entry.first.c_str(), entry.second.first, entry.second.second);
+        Format(line, "AICOUNT name=%s hero=%u others=%u", entry.first.c_str(), entry.second.first, entry.second.second);
         log(line);
     }
     log("AICOUNT end");
@@ -354,7 +368,7 @@ void FindByRva(char const* rvaHex, void (*log)(char const*))
     unsigned found = 0;
     auto check = [&](char const* table, char const* name, void const* fn) {
         if (reinterpret_cast<uintptr_t>(fn) != want) return;
-        sprintf_s(line, "SCRIPTFIND rva=%s table=%s name=%s", rvaHex, table, name);
+        Format(line, "SCRIPTFIND rva=%s table=%s name=%s", rvaHex, table, name);
         log(line);
         ++found;
     };
@@ -366,7 +380,7 @@ void FindByRva(char const* rvaHex, void (*log)(char const*))
         if (routine) check("routine", name.GetText(), reinterpret_cast<void const*>(routine->m_funcScriptAIRoutine));
     for (auto const& entry : originalStates) check("state", entry.first.c_str(), reinterpret_cast<void const*>(entry.second));
     for (auto const& entry : originalFunctions) check("function", entry.first.c_str(), reinterpret_cast<void const*>(entry.second));
-    sprintf_s(line, "SCRIPTFIND end rva=%s found=%u", rvaHex, found);
+    Format(line, "SCRIPTFIND end rva=%s found=%u", rvaHex, found);
     log(line);
 }
 
@@ -374,7 +388,7 @@ void Describe(char const* name, void (*log)(char const*))
 {
     gCScriptAdminExt& admin = GetScriptAdminExt();
     char line[200];
-    sprintf_s(line, "SCRIPTINFO name=%s script=%d callback=%d state=%d function=%d routine=%d", name,
+    Format(line, "SCRIPTINFO name=%s script=%d callback=%d state=%d function=%d routine=%d", name,
               Find(admin.GetScripts(), name) != nullptr, Find(admin.GetScriptAICallbacks(), name) != nullptr,
               Find(admin.GetScriptAIStates(), name) != nullptr, Find(admin.GetScriptAIFunctions(), name) != nullptr,
               Find(admin.GetScriptAIRoutines(), name) != nullptr);
@@ -390,7 +404,7 @@ void Describe(char const* name, void (*log)(char const*))
         char file[MAX_PATH] = {};
         if (owner) GetModuleFileNameA(owner, file, MAX_PATH);
         char const* base = strrchr(file, '\\');
-        sprintf_s(line, "SCRIPTINFO address name=%s module=%s rva=%#lx", name, base ? base + 1 : file,
+        Format(line, "SCRIPTINFO address name=%s module=%s rva=%#lx", name, base ? base + 1 : file,
                   static_cast<unsigned long>(reinterpret_cast<uintptr_t>(target) - reinterpret_cast<uintptr_t>(owner)));
         log(line);
     }
@@ -401,7 +415,7 @@ void Describe(char const* name, void (*log)(char const*))
         char file[MAX_PATH] = {};
         if (owner) GetModuleFileNameA(owner, file, MAX_PATH);
         char const* base = strrchr(file, '\\');
-        sprintf_s(line, "SCRIPTINFO address name=%s module=%s rva=%#lx", name, base ? base + 1 : file,
+        Format(line, "SCRIPTINFO address name=%s module=%s rva=%#lx", name, base ? base + 1 : file,
                   static_cast<unsigned long>(reinterpret_cast<uintptr_t>(script->m_funcScript) - reinterpret_cast<uintptr_t>(owner)));
         log(line);
     }
@@ -477,7 +491,7 @@ void ListNames(char const* text, void (*log)(char const*))
         GE_MAP_FOR_EACH (name, entry, map)
         {
             if (!entry || !strstr(name.GetText(), text)) continue;
-            sprintf_s(line, "NAME kind=%s name=%s", kind, name.GetText());
+            Format(line, "NAME kind=%s name=%s", kind, name.GetText());
             log(line);
         }
     };
@@ -524,7 +538,7 @@ void DumpNames(char const* path, void (*log)(char const*))
     dump("routine", admin.GetScriptAIRoutines(), &gSScriptAIRoutine::m_funcScriptAIRoutine);
     std::fclose(file);
     char line[120];
-    sprintf_s(line, "SCRIPTDUMP count=%d", count);
+    Format(line, "SCRIPTDUMP count=%d", count);
     log(line);
 }
 }

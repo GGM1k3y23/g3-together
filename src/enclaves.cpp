@@ -56,6 +56,89 @@ std::map<std::string, int> statusSeen;
 bool statusSync = true;  // QA negative control: townstatusoff
 unsigned statusSent = 0;
 bool keepLocal = true;        // QA negative control: KeepLocalOff (the host's counters overwrite unreported deeds)
+
+// Political crimes (PlayerMemory.PoliticalCrimeCount per alignment): the game counts one only in ChangeEnclaveStatus, when a
+// town turns to Flee (freed; not Ardea), for GetPlayer of the machine where it turns (re/out/world-scripts-c.c 1340). A boss
+// offers its news while that count is above PoliticalSuspectComment (HasBossNews 0xbd050): after Montera was freed only
+// the liberating machine's hero heard it from Kan (p4-dialog 26.10.). Owner 26.10.: as the reputation setting. Every machine
+// watches its hero's counts; a rise goes to the others (EnclavePolitical) in shared and together, which add it to their
+// own hero; personal keeps it with the liberator, and a rise from another player's kill of the town's defender goes to that
+// player's hero instead (NotifyFreeing).
+constexpr int Alignments = 13;  // gEPoliticalAlignment 0..12
+int32_t politicalSeen[Alignments] = {};
+eCEntity* politicalHero = nullptr;  // whose counts politicalSeen holds (a loaded or new hero starts over)
+bool politicalSync = true;          // QA negative control: politicaloff
+unsigned politicalSent = 0, politicalApplied = 0, politicalMoved = 0;
+
+bool ReadPolitical(int32_t out[Alignments])
+{
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    if (!hero || !hero->GetPropertySet(eEPropertySetType_PlayerMemory)) return false;
+    Entity self(hero);
+    for (int i = 0; i < Alignments; ++i) out[i] = self.PlayerMemory.GetPoliticalCrimeCount(static_cast<gEPoliticalAlignment>(i));
+    return true;
+}
+
+// This hero's political crime count of one alignment changed by `by` (a note, or a move to the killer); the baseline follows
+// so that the watch does not send it on.
+void AddPolitical(int alignment, int32_t by)
+{
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    if (!hero || !hero->GetPropertySet(eEPropertySetType_PlayerMemory) || alignment < 0 || alignment >= Alignments) return;
+    Entity self(hero);
+    const auto a = static_cast<gEPoliticalAlignment>(alignment);
+    const int32_t value = self.PlayerMemory.GetPoliticalCrimeCount(a) + by;
+    self.PlayerMemory.SetPoliticalCrimeCount(a, value < 0 ? 0 : value);
+    if (politicalHero == hero) politicalSeen[alignment] = self.PlayerMemory.GetPoliticalCrimeCount(a);
+}
+
+net::EnclaveNote PoliticalNote(int alignment, int32_t count)
+{
+    net::EnclaveNote n;
+    n.op = net::EnclavePolitical;
+    n.mode = mode;
+    strncpy_s(n.name, "political", _TRUNCATE);
+    n.known = alignment;
+    n.fame = count;
+    return n;
+}
+
+// To every other player: a client's goes to the host, the host's to every client but the one it came from.
+void SendPolitical(net::EnclaveNote const& note, uint8_t except)
+{
+    if (!net::IsHost()) {
+        net::SendEnclave(note, 0);
+        ++politicalSent;
+        return;
+    }
+    for (int id = 2; id <= net::MaxPlayers; ++id) {
+        if (id == except || !net::InWorld(static_cast<uint8_t>(id))) continue;
+        net::SendEnclave(note, static_cast<uint8_t>(id));
+        ++politicalSent;
+    }
+}
+
+// The watch (every scan): a rise of this hero's counts is this machine's liberation.
+void WatchPolitical()
+{
+    int32_t now[Alignments];
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    if (!ReadPolitical(now)) return;
+    if (hero != politicalHero) {
+        politicalHero = hero;
+        std::memcpy(politicalSeen, now, sizeof(now));
+        return;
+    }
+    for (int i = 0; i < Alignments; ++i) {
+        if (now[i] <= politicalSeen[i]) { politicalSeen[i] = now[i]; continue; }
+        const int32_t rise = now[i] - politicalSeen[i];
+        politicalSeen[i] = now[i];
+        if (!politicalSync || mode == Personal) continue;
+        SendPolitical(PoliticalNote(i, rise), 0);
+        Logf("enclaves: this player committed a political crime against alignment %d (+%d, now %d); sent %s", i, rise, now[i],
+             net::IsHost() ? "to everyone" : "to the host");
+    }
+}
 uint32_t scanPausedUntil = 0;  // QA: no scan before this (GetTickCount), to widen the 500 ms window between deed and scan
 
 Mode FromConfig()
@@ -187,6 +270,15 @@ void OnNote(uint8_t from, net::EnclaveNote const& note)
 {
     if (!sync) return;
     ++received;
+    if (note.op == net::EnclavePolitical) {  // another player freed a town (shared, together), or this one did (personal: moved)
+        if (!politicalSync) return;
+        AddPolitical(note.known, note.fame);
+        ++politicalApplied;
+        Logf("enclaves: player %u: political crime against alignment %d (+%d) for this hero too (%s)", from, note.known, note.fame,
+             ModeName(static_cast<Mode>(note.mode <= Personal ? note.mode : Shared)));
+        if (net::IsHost() && note.mode != Personal) SendPolitical(note, from);  // and on to the other clients
+        return;
+    }
     if (note.op == net::EnclaveCredit) {  // personal: a murder by this machine's player, counted where the victim was simulated
         Entity e = PSEnclave::GetEnclave(bCString(note.name));
         gCEnclave_PS* enclave = Native(e);
@@ -356,6 +448,30 @@ void Credit(RemoteKill const& kill, char const* town, char const* victim)
     Logf("enclaves: player %u murdered %s at %s; personal: counted on that player's machine", kill.player, victim, town);
 }
 
+// NotifyEnclave for another player's kill: if the town turns to Flee here, the game booked the political crime on this
+// machine's hero; personal: it is the killer's (as a murder is), so it moves to that player's hero.
+GEInt NotifyFreeing(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid other, GEInt args, RemoteKill const& kill)
+{
+    int32_t before[Alignments], after[Alignments];
+    const bool watched = mode == Personal && politicalSync && ReadPolitical(before);
+    const GEInt result = originalNotify(spu, self, other, args);
+    if (!watched || !ReadPolitical(after)) return result;
+    for (int i = 0; i < Alignments; ++i) {
+        if (after[i] <= before[i]) continue;
+        const int32_t rise = after[i] - before[i];
+        AddPolitical(i, -rise);
+        ++politicalMoved;
+        if ((!net::IsHost() && kill.player != 1) || (net::IsHost() && net::PeerGeneration(kill.player) != kill.generation)) {
+            Logf("enclaves: player %u freed a town (alignment %d); personal: not counted (that player is not reachable)", kill.player, i);
+            continue;
+        }
+        net::SendEnclave(PoliticalNote(i, rise), net::IsHost() ? kill.player : 0);
+        ++politicalSent;
+        Logf("enclaves: player %u freed a town (alignment %d, +%d); personal: counted on that player's hero", kill.player, i, rise);
+    }
+    return result;
+}
+
 // Whether the game counts this murder itself: its killer (the victim's CurrentAttacker) is our hero or of its party.
 bool CountsNatively(eCEntity* killer)
 {
@@ -399,16 +515,16 @@ GEInt GE_STDCALL Notify(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid oth
     remoteKills.erase(it);  // once per death
     if (!CountsNatively(killer)) {
         CountRemote(victim, kill);  // first, as the game counts before its other steps
-        return originalNotify(spu, self, other, args);
+        return NotifyFreeing(spu, self, other, args, kill);
     }
     ++remoteNative;
-    if (mode != Personal || !remoteMurders) return originalNotify(spu, self, other, args);
+    if (mode != Personal || !remoteMurders) return NotifyFreeing(spu, self, other, args, kill);
     // personal: the game books it on this machine's player (its killer is an old CurrentAttacker, this hero's knock-out),
     // but the deadly blow was the other player's: that one murder goes to the other's record (C review 2).
     Entity town = Entity(victim).GetEnclave();
     gCEnclave_PS* enclave = Native(town);
     const int before = enclave ? Read(enclave).crime[gEPlayerCrime_Murder] : 0;
-    const GEInt result = originalNotify(spu, self, other, args);
+    const GEInt result = NotifyFreeing(spu, self, other, args, kill);
     if (enclave && Read(enclave).crime[gEPlayerCrime_Murder] > before) {
         Counters c = Read(enclave);
         --c.crime[gEPlayerCrime_Murder];
@@ -450,6 +566,12 @@ void NoteRemoteKill(uint8_t const victim[16], uint8_t player, eCEntity* actor)
     kill.generation = net::IsHost() ? net::PeerGeneration(player) : 0;
     kill.actor = actor ? actor->GetName().GetText() : "";
     kill.at = now;
+}
+
+void PoliticalOff(LogFn log)
+{
+    politicalSync = false;
+    log("POLITICALOFF ok=1");
 }
 
 void TownStatusOff(LogFn log)
@@ -558,10 +680,12 @@ void Tick()
         if (net::IsHost()) SendState(name, c, 0);
         else if (mode != Personal) SendDelta(name, before, c);
     });
+    WatchPolitical();
 }
 
 void OnWorldChange()
 {
+    politicalHero = nullptr;
     seen.clear();
     statusSeen.clear();
     pending.clear();
@@ -571,14 +695,16 @@ void OnWorldChange()
 
 void Report(LogFn log)
 {
-    char line[520];
-    sprintf_s(line, "ENCLAVESYNC sync=%d mode=%s config=%s sent=%u received=%u applied=%u deltas=%u dropped=%u pending=%u seen=%u kept_local=%u "
+    char line[640];
+    Format(line, "ENCLAVESYNC sync=%d mode=%s config=%s sent=%u received=%u applied=%u deltas=%u dropped=%u pending=%u seen=%u kept_local=%u "
               "notify=%d remote_kills=%u remote_counted=%u remote_credited=%u remote_native=%u remote_not_counted=%u remote_expired=%u credits=%u "
-              "remote_moved=%u status_sync=%d status_sent=%u credits_held=%u credits_late=%u credits_lost=%u",
+              "remote_moved=%u status_sync=%d status_sent=%u credits_held=%u credits_late=%u credits_lost=%u political_sync=%d political_sent=%u "
+              "political_applied=%u political_moved=%u",
               sync ? 1 : 0, ModeName(mode), GetConfig().reputation, sent, received, applied, deltas, dropped,
               static_cast<unsigned>(pending.size()), static_cast<unsigned>(seen.size()), keptLocal, notifyNative ? 1 : 0,
               static_cast<unsigned>(remoteKills.size()), remoteCounted, remoteCredited, remoteNative, remoteNotCounted, remoteExpired, credits,
-              remoteMoved, statusSync ? 1 : 0, statusSent, creditsHeld, creditsLate, creditsLost);
+              remoteMoved, statusSync ? 1 : 0, statusSent, creditsHeld, creditsLate, creditsLost, politicalSync ? 1 : 0, politicalSent,
+              politicalApplied, politicalMoved);
     log(line);
 }
 
@@ -622,14 +748,14 @@ void MurderCandidates(char const* name, LogFn log)
         const eCEntityProxy proxy(member);
         bCPropertyID::bSCore g;  // for a claim on a member far from every player (stageLiberate)
         std::memcpy(&g, &proxy.GetEntityID().GetCore(), 16);
-        sprintf_s(line, "MURDERCAND enclave=%s status=%d murders=%d known=%d member=%s alive=%d political=%d excepted=%d counts=%d "
+        Format(line, "MURDERCAND enclave=%s status=%d murders=%d known=%d member=%s alive=%d political=%d excepted=%d counts=%d "
                   "guid=%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", name, status, c.crime[gEPlayerCrime_Murder], c.known, who,
                   npc.IsDead() ? 0 : 1, political, why && !std::strcmp(why, "Faring exception") ? 1 : 0, why ? 0 : 1, g.Data1, g.Data2,
                   g.Data3, g.Data4[0], g.Data4[1], g.Data4[2], g.Data4[3], g.Data4[4], g.Data4[5], g.Data4[6], g.Data4[7]);
         log(line);
         ++shown;
     }
-    sprintf_s(line, "MURDERCAND end enclave=%s status=%d murders=%d members=%d", name, status, c.crime[gEPlayerCrime_Murder], members.GetCount());
+    Format(line, "MURDERCAND end enclave=%s status=%d murders=%d members=%d", name, status, c.crime[gEPlayerCrime_Murder], members.GetCount());
     log(line);
 }
 
@@ -657,7 +783,7 @@ void TownFarKill(char const* name, LogFn log)
         admin.CallScript(bCString("OnCheatKill"), hero, member, 0);
         ++killed;
     }
-    sprintf_s(line, "TOWNFARKILL enclave=%s members=%d alive=%d killed=%d near=%d", name, members.GetCount(), alive, killed, kept);
+    Format(line, "TOWNFARKILL enclave=%s members=%d alive=%d killed=%d near=%d", name, members.GetCount(), alive, killed, kept);
     log(line);
 }
 
@@ -668,7 +794,7 @@ void CheatKill(char const* name, LogFn log)
     eCEntity* hero = gCSession::GetInstance().GetHero();
     if (!npc.GetInstance() || !hero) { log("REFUSED cheatkill: no such NPC or no hero"); return; }
     const GEInt result = GetScriptAdminExt().CallScript(bCString("OnCheatKill"), hero, npc.GetInstance(), 0);  // self kills other
-    sprintf_s(line, "CHEATKILL name=%s result=%d dead=%d task=%s", name, result, npc.IsDead() ? 1 : 0, npc.Routine.GetCurrentTask().GetText());
+    Format(line, "CHEATKILL name=%s result=%d dead=%d task=%s", name, result, npc.IsDead() ? 1 : 0, npc.Routine.GetCurrentTask().GetText());
     log(line);
 }
 
@@ -688,7 +814,7 @@ void AddCrime(char const* argument, LogFn log)
     c.crime[index] += n;
     Write(e, c);
     char line[120];
-    sprintf_s(line, "CRIMEADD enclave=%s crime=%d now=%d", name, index, c.crime[index]);
+    Format(line, "CRIMEADD enclave=%s crime=%d now=%d", name, index, c.crime[index]);
     log(line);
 }
 
@@ -710,7 +836,7 @@ void SetSuspect(char const* argument, LogFn log)
     Write(e, c);
     const Counters now = Read(enclave);
     char line[120];
-    sprintf_s(line, "CRIMESUSPECT enclave=%s crime=%d suspect=%d count=%d", name, index, now.suspect[index], now.crime[index]);
+    Format(line, "CRIMESUSPECT enclave=%s crime=%d suspect=%d count=%d", name, index, now.suspect[index], now.crime[index]);
     log(line);
 }
 
@@ -731,7 +857,7 @@ void SetKnown(char const* argument, LogFn log)
     c.known = value;
     Write(e, c);
     char line[120];
-    sprintf_s(line, "CRIMEKNOWN enclave=%s known=%d", name, value);
+    Format(line, "CRIMEKNOWN enclave=%s known=%d", name, value);
     log(line);
 }
 }

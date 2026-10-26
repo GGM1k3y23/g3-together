@@ -361,8 +361,9 @@ void SetWitnessHandler(WitnessHandler handler);
 // enclave, and the host's reputation mode. Client -> host: EnclaveDelta (what this player's own deeds added to the
 // counters; suspect/known: the new values) or EnclaveRequest (send me every enclave). Personal mode, the machine that
 // simulates a victim -> the killer's machine (client -> host, host -> that client): EnclaveCredit, a murder by that player
-// for its own counters (crime: added).
-enum : uint8_t { EnclaveState = 1, EnclaveDelta = 2, EnclaveRequest = 3, EnclaveCredit = 4 };
+// for its own counters (crime: added). EnclavePolitical (protocol 56): a political crime of the sender's player (a town it
+// freed; known = gEPoliticalAlignment, fame = how many), for the receiving hero's own memory (enclaves.cpp).
+enum : uint8_t { EnclaveState = 1, EnclaveDelta = 2, EnclaveRequest = 3, EnclaveCredit = 4, EnclavePolitical = 5 };
 #pragma pack(push, 1)
 struct EnclaveNote {
     uint8_t op = 0;

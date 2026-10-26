@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "world.h"
+#include "log.h"
 
 #include "body.h"
 #include "remote.h"
@@ -68,7 +69,7 @@ eCEntity* Nearest(char const* name)
             _GUID raw;
             std::memcpy(&raw, &proxy.GetEntityID().GetCore(), 16);
             char text[40];
-            sprintf_s(text, "%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", raw.Data1, raw.Data2, raw.Data3, raw.Data4[0], raw.Data4[1],
+            Format(text, "%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", raw.Data1, raw.Data2, raw.Data3, raw.Data4[0], raw.Data4[1],
                       raw.Data4[2], raw.Data4[3], raw.Data4[4], raw.Data4[5], raw.Data4[6], raw.Data4[7]);
             if (_stricmp(text, name) != 0) continue;
         } else if (std::strcmp(instance->GetName().GetText(), name) != 0) {
@@ -90,7 +91,7 @@ void Describe(eCEntity* entity, char* line, size_t size)
     const bool door = entity->GetPropertySet(eEPropertySetType_Door) != nullptr;
     const bool lock = entity->GetPropertySet(eEPropertySetType_Lock) != nullptr;
     const bCString use = e.Interaction.UseFunc;
-    sprintf_s(line, size, "name=%s pos=%.0f_%.0f_%.0f usefunc=%s usetype=%d item=%d door=%d open=%d lock=%d locked=%d user=%s", entity->GetName().GetText(), p[0], p[1],
+    Format(line, size, "name=%s pos=%.0f_%.0f_%.0f usefunc=%s usetype=%d item=%d door=%d open=%d lock=%d locked=%d user=%s", entity->GetName().GetText(), p[0], p[1],
               p[2], *use.GetText() ? use.GetText() : "-", static_cast<int>(e.Interaction.GetUseType()), entity->GetPropertySet(eEPropertySetType_Item) ? 1 : 0, door ? 1 : 0, door && e.Door.IsOpen() ? 1 : 0, lock ? 1 : 0, lock && e.Lock.IsLocked() ? 1 : 0,
               e.Interaction.GetUser().GetInstance() ? e.Interaction.GetUser().GetName().GetText() : "-");
 }
@@ -121,11 +122,11 @@ void Usables(char const* radiusText, LogFn log)
         doors += instance->GetPropertySet(eEPropertySetType_Door) != nullptr;
         if (!Usable(instance)) continue;
         Describe(instance, text, sizeof(text));
-        sprintf_s(line, "USABLE %s distance=%.0f", text, d);
+        Format(line, "USABLE %s distance=%.0f", text, d);
         log(line);
         ++count;
     }
-    sprintf_s(line, "USABLE end count=%d entities=%d nearby=%d interaction=%d doors=%d", count, total, nearby, interaction, doors);
+    Format(line, "USABLE end count=%d entities=%d nearby=%d interaction=%d doors=%d", count, total, nearby, interaction, doors);
     log(line);
 }
 
@@ -145,7 +146,7 @@ void UseInfo(char const* name, LogFn log)
     const eCEntityProxy proxy(target);
     bCPropertyID::bSCore g;  // for the loot QA (contents, loottake) on an interact object (treasurediag)
     std::memcpy(&g, &proxy.GetEntityID().GetCore(), 16);
-    sprintf_s(line, "USEINFO %s hero_task=%s hero_state=%s hero_pos=%.0f_%.0f_%.0f hero_ani=%d focus=%s focus_is_it=%d focus_priority=%d "
+    Format(line, "USEINFO %s hero_task=%s hero_state=%s hero_pos=%.0f_%.0f_%.0f hero_ani=%d focus=%s focus_is_it=%d focus_priority=%d "
               "guid=%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", text, self.Routine.GetCurrentTask().GetText(),
               self.Routine.GetCurrentState().GetText(), at[0], at[1], at[2], hero ? static_cast<int>(self.Routine.AniState) : -1,
               focus.GetInstance() ? focus.GetName().GetText() : "-", focus.GetInstance() == target ? 1 : 0, priority, g.Data1, g.Data2,
@@ -164,11 +165,11 @@ void FindEntities(char const* prefix, LogFn log)
         if (!instance || std::strncmp(instance->GetName().GetText(), prefix, length) != 0) continue;
         float p[3];
         PositionOf(instance, p);
-        sprintf_s(line, "FINDENT name=%s pos=%.0f_%.0f_%.0f", instance->GetName().GetText(), p[0], p[1], p[2]);
+        Format(line, "FINDENT name=%s pos=%.0f_%.0f_%.0f", instance->GetName().GetText(), p[0], p[1], p[2]);
         log(line);
         ++count;
     }
-    sprintf_s(line, "FINDENTS end count=%d", count);
+    Format(line, "FINDENTS end count=%d", count);
     log(line);
 }
 
@@ -185,11 +186,11 @@ void FindAll(char const* name, LogFn log)
         float p[3];
         PositionOf(instance, p);
         Entity e(instance);
-        sprintf_s(line, "FINDALL name=%s pos=%.0f_%.0f_%.0f dead=%d", name, p[0], p[1], p[2], e.IsDead() ? 1 : 0);
+        Format(line, "FINDALL name=%s pos=%.0f_%.0f_%.0f dead=%d", name, p[0], p[1], p[2], e.IsDead() ? 1 : 0);
         log(line);
         ++count;
     }
-    sprintf_s(line, "FINDALL end count=%d", count);
+    Format(line, "FINDALL end count=%d", count);
     log(line);
 }
 
@@ -201,7 +202,7 @@ void Unlock(char const* name, LogFn log)
     Entity e(target);
     const bool before = e.Lock.IsLocked() != GEFalse;
     e.Lock.Status = gELockStatus_Unlocked;
-    sprintf_s(line, "UNLOCK name=%s was_locked=%d locked=%d", name, before ? 1 : 0, e.Lock.IsLocked() ? 1 : 0);
+    Format(line, "UNLOCK name=%s was_locked=%d locked=%d", name, before ? 1 : 0, e.Lock.IsLocked() ? 1 : 0);
     log(line);
 }
 
@@ -251,7 +252,7 @@ void Use(char const* name, LogFn log)
     self.NPC.SetCurrentTarget(object);
     self.Routine.SetTask(bCString("PS_Interact"));
     const bCString use = object.Interaction.UseFunc;
-    sprintf_s(line, "USE name=%s usefunc=%s hero_task=%s anchor=%s", name, use.GetText(), self.Routine.GetCurrentTask().GetText(),
+    Format(line, "USE name=%s usefunc=%s hero_task=%s anchor=%s", name, use.GetText(), self.Routine.GetCurrentTask().GetText(),
               anchor.GetInstance() ? anchor.GetName().GetText() : "-");
     log(line);
 }
@@ -266,7 +267,7 @@ void Face(char const* name, LogFn log)
     if (!hero || !target) { log("REFUSED face: no hero or no such entity"); return; }
     Approach(hero, target);
     char line[200];
-    sprintf_s(line, "FACE name=%s", name);
+    Format(line, "FACE name=%s", name);
     log(line);
 }
 }

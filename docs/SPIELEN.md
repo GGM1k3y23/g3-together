@@ -1,6 +1,6 @@
 # G3 Together spielen
 
-[English](PLAYING.md) · **Deutsch**
+[English](PLAYING.md) · **Deutsch** · [Polski](GRANIE.md)
 
 G3 Together macht Gothic 3 zu einem Koop-Spiel für 2 Spieler (mehr sind vorgesehen, aber nicht getestet). Ein Spieler ist der **Host**: Seine Welt
 ist die gemeinsame Kampagne, sein Spielstand ist der Spielstand aller. Die anderen treten bei.
@@ -22,7 +22,7 @@ Stand: Testversion. Was geht und was nicht, steht unten unter „Bekannte Grenze
 ## Installieren
 
 **Einrichten:** Sind Gothic 3 und beide Patches installiert, das ganze Paket irgendwohin entpacken und `Einrichten.cmd`
-doppelklicken (`Setup.cmd` auf Englisch). Es erledigt das Kopieren und die INI: Es findet Gothic 3 (Steam, GOG oder der
+doppelklicken (`Setup.cmd` auf Englisch, `Instalacja.cmd` auf Polnisch). Es erledigt das Kopieren und die INI: Es findet Gothic 3 (Steam, GOG oder der
 Ordner, den du angibst), prüft Community Patch 1.75.14 und Parallel Universe Patch 1.1.1, nimmt eine andere Koop-Mod aus
 `scripts`, kopiert die Mod nach `scripts` und schreibt `g3together.ini` nach deinen Antworten (Host oder Mitspieler, dein
 Name, die Adresse des Hosts). Ersetzte Dateien liegen danach in `G3Together-backup` im Spielordner. Das Einrichten wurde
@@ -55,10 +55,12 @@ an Testordnern geprüft, noch nicht von Spielern; die Schritte unten machen dass
 
 ### Sprache der Mod-Meldungen
 
-Standard ist Englisch (`language = en`). Für deutsche Meldungen `language = de` in die eigene
-`g3together.ini` eintragen und das Spiel neu starten. Die Spieler können die Sprache unabhängig
+`language = auto` (so schreiben es das Einrichten und die Beispiel-INIs) zeigt die Mod-Meldungen in der Textsprache
+deines Gothic 3: Deutsch bei einem deutschen Spiel, Polnisch bei einem polnischen, sonst Englisch. Fest einstellen lässt
+sich die Sprache mit `language = de`, `language = en` oder `language = pl` in der eigenen `g3together.ini`, danach das
+Spiel neu starten. Ohne `language`-Zeile sind die Meldungen englisch. Die Spieler können die Sprache unabhängig
 voneinander wählen. Die Sprache von Gothic 3 selbst wird dadurch nicht geändert. Die deutschen
-Meldungen in dieser Anleitung beziehen sich auf `language = de`.
+Meldungen in dieser Anleitung beziehen sich auf ein deutsches Spiel oder `language = de`.
 
 ## Verbinden über das Internet
 
@@ -121,6 +123,8 @@ beschriebenen Tests liefen auf einem PC mit zwei Spielkopien; Spielen über das 
   der abgibt.
 - Die Hauptgeschichte ist bis zum Ende gemeinsam: Gibt einer die Artefakte an einem Götterschrein ab, wechselt das Kapitel
   für beide, und startet einer den Epilog, sieht der andere dieselben Bilder und das Spielende zur selben Zeit.
+  Steckt der andere gerade in einem Dialog, Menü oder Kampf, beginnt sein Epilog, sobald das vorbei ist (eine Meldung sagt
+  es).
 - Ein Hocker, eine Bank, ein Lagerfeuer oder ein anderer Platz hat einen Benutzer: Solange dein Mitspieler ihn benutzt,
   kommst du nicht dran („<Name> benutzt das gerade.“), und NPCs nehmen ihn auch nicht.
 - Gegenstände, Truhen, Leichen und Handel: Was einer nimmt, ist für alle weg. Wem einer die Taschen geleert hat, den kann

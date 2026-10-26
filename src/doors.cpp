@@ -164,7 +164,7 @@ void OnWorldChange()
 void Report(LogFn log)
 {
     char line[200];
-    sprintf_s(line, "DOORS sync=%d watched=%u sent=%u received=%u applied=%u pending=%zu changed=%zu", sync ? 1 : 0, watched, sent, received,
+    Format(line, "DOORS sync=%d watched=%u sent=%u received=%u applied=%u pending=%zu changed=%zu", sync ? 1 : 0, watched, sent, received,
               applied, wanted.size(), changed.size());
     log(line);
 }
@@ -191,7 +191,7 @@ void Movers(LogFn log)
         GuidOf(entity, guid);
         const bCVector& p = entity->GetWorldPosition();
         const float d = (p - hero->GetWorldPosition()).GetMagnitude();
-        sprintf_s(line, "MOVER name=%s guid=%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X state=%d loop=%d distance=%.0f pos=%.0f_%.0f_%.0f",
+        Format(line, "MOVER name=%s guid=%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X state=%d loop=%d distance=%.0f pos=%.0f_%.0f_%.0f",
                   entity->GetName().GetText(), *reinterpret_cast<uint32_t*>(guid), *reinterpret_cast<uint16_t*>(guid + 4),
                   *reinterpret_cast<uint16_t*>(guid + 6), guid[8], guid[9], guid[10], guid[11], guid[12], guid[13], guid[14], guid[15],
                   static_cast<int>(static_cast<gEMoverState>(Entity(entity).Mover.MoverState)), mover->AccessLoopAni() ? 1 : 0, d,

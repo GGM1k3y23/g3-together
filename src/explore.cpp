@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "explore.h"
+#include "log.h"
 
 #include "ai.h"
 #include "body.h"
@@ -81,14 +82,14 @@ void Summary(LogFn log)
         rows.push_back({body::Distance(p, at), npc});
     }
     std::sort(rows.begin(), rows.end(), [](Row const& a, Row const& b) { return a.distance < b.distance; });
-    sprintf_s(line, "NPCSUMMARY npcs=%zu entities=%d farthest_m=%.0f", rows.size(), Entity::GetEntities().GetCount(),
+    Format(line, "NPCSUMMARY npcs=%zu entities=%d farthest_m=%.0f", rows.size(), Entity::GetEntities().GetCount(),
               rows.empty() ? 0.0f : rows.back().distance / 100.0f);
     log(line);
     // About 200 samples spread over all distances: enough to pick targets at any range.
     for (size_t i = 0; i < rows.size(); i += (rows.size() > 200 ? rows.size() / 200 : 1)) {
         float p[3];
         PositionOf(rows[i].npc.GetInstance(), p);
-        sprintf_s(line, "NPCAT name=%s distance_m=%.0f pos=%.0f_%.0f_%.0f dead=%d", rows[i].npc.GetName().GetText(),
+        Format(line, "NPCAT name=%s distance_m=%.0f pos=%.0f_%.0f_%.0f dead=%d", rows[i].npc.GetName().GetText(),
                   rows[i].distance / 100.0f, p[0], p[1], p[2], rows[i].npc.IsDead() ? 1 : 0);
         log(line);
     }
@@ -106,7 +107,7 @@ void Teleport(char const* xyz, LogFn log)
     Entity(hero).MoveTo(body::Pose(*hero, target, rotation));
     float now[3];
     PositionOf(hero, now);
-    sprintf_s(line, "TELEPORT target=%s pos=%.0f_%.0f_%.0f", xyz, now[0], now[1], now[2]);
+    Format(line, "TELEPORT target=%s pos=%.0f_%.0f_%.0f", xyz, now[0], now[1], now[2]);
     log(line);
 }
 
@@ -123,7 +124,7 @@ void Attitude(char const* name, LogFn log)
     // P7 (26.10.): the parts the game asks for its own player, as this machine's hero sees them (the focus name's colour).
     const GEInt toPlayer = admin.CallScript(bCString("GetAttitudeToPlayer"), npc.GetInstance(), hero, 0);
     const GEInt focus = admin.CallScript(bCString("GetFocusNameAttitude"), npc.GetInstance(), hero, 0);
-    sprintf_s(line, "ATTITUDE name=%s hero=%d puppet=%d task=%s to_player=%d focus=%d", name, toHero, toPuppet, npc.Routine.GetCurrentTask().GetText(),
+    Format(line, "ATTITUDE name=%s hero=%d puppet=%d task=%s to_player=%d focus=%d", name, toHero, toPuppet, npc.Routine.GetCurrentTask().GetText(),
               toPlayer, focus);
     log(line);
 }
@@ -136,7 +137,7 @@ void HeroPos(LogFn log)
     float at[3];
     PositionOf(body, at);
     Entity zone = Entity(body).GetZone();
-    sprintf_s(line, "HEROPOS pos=%.1f,%.1f,%.1f zone=%s ani_state=%d", at[0], at[1], at[2], zone.GetInstance() ? zone.GetName().GetText() : "-",
+    Format(line, "HEROPOS pos=%.1f,%.1f,%.1f zone=%s ani_state=%d", at[0], at[1], at[2], zone.GetInstance() ? zone.GetName().GetText() : "-",
               static_cast<int>(Entity(body).Routine.AniState));
     log(line);
 }
@@ -149,7 +150,7 @@ void RunTo(char const* argument, LogFn log)
     eCEntity* body = remote::ControlledBody();
     if (!body || sscanf_s(argument, "%f_%f_%f", &target[0], &target[1], &target[2]) != 3) { log("REFUSED runto: no hero or not X_Y_Z"); return; }
     const GEBool started = Entity(body).StartGoto(bCVector(target[0], target[1], target[2]), gEWalkMode_Run);
-    sprintf_s(line, "RUNTO started=%d target=%.0f,%.0f,%.0f", started ? 1 : 0, target[0], target[1], target[2]);
+    Format(line, "RUNTO started=%d target=%.0f,%.0f,%.0f", started ? 1 : 0, target[0], target[1], target[2]);
     log(line);
 }
 
@@ -162,7 +163,7 @@ void SetAttribute(char const* argument, LogFn log)
     if (!hero || sscanf_s(argument, "%3[A-Z]_%d", tag, static_cast<unsigned>(sizeof(tag)), &value) != 2) { log("REFUSED setattr: no hero or not TAG_value"); return; }
     Entity self(hero);
     self.PlayerMemory.SetBaseValue(bCString(tag), value);
-    sprintf_s(line, "SETATTR tag=%s value=%d strength=%d", tag, value, static_cast<int>(self.PlayerMemory.GetStrength()));
+    Format(line, "SETATTR tag=%s value=%d strength=%d", tag, value, static_cast<int>(self.PlayerMemory.GetStrength()));
     log(line);
 }
 
@@ -186,7 +187,7 @@ void LookAt(char const* name, LogFn log)
     const float rotation[4] = {0.0f, std::sin(yaw / 2), 0.0f, std::cos(yaw / 2)};
     const float place[3] = {at[0] - dx * 400.0f, at[1] + 50.0f, at[2] - dz * 400.0f};
     Entity(hero).MoveTo(body::Pose(*hero, place, rotation));
-    sprintf_s(line, "LOOKAT name=%s pos=%.0f_%.0f_%.0f", name, place[0], place[1], place[2]);
+    Format(line, "LOOKAT name=%s pos=%.0f_%.0f_%.0f", name, place[0], place[1], place[2]);
     log(line);
 }
 
@@ -205,7 +206,7 @@ void Near(char const* xyz, LogFn log)
         float p[3];
         PositionOf(instance, p);
         if (body::Distance(p, at) > 4000.0f) continue;
-        sprintf_s(line, "NEAR name=%s pos=%.0f_%.0f_%.0f task=%s hp=%d dead=%d mirrored=%d", npc.GetName().GetText(), p[0], p[1], p[2],
+        Format(line, "NEAR name=%s pos=%.0f_%.0f_%.0f task=%s hp=%d dead=%d mirrored=%d", npc.GetName().GetText(), p[0], p[1], p[2],
                   npc.Routine.GetCurrentTask().GetText(), static_cast<int>(npc.DamageReceiver.HitPoints), npc.IsDead() ? 1 : 0,
                   npcs::IsMirrored(instance) ? 1 : 0);
         log(line);
@@ -220,7 +221,7 @@ void Near(char const* xyz, LogFn log)
         PositionOf(instance, p);
         if (body::Distance(p, at) <= 4000.0f) ++entities;
     }
-    sprintf_s(line, "NEARSUM at=%s npcs=%d entities=%d", xyz, count, entities);
+    Format(line, "NEARSUM at=%s npcs=%d entities=%d", xyz, count, entities);
     log(line);
     log("NEAR end");
 }
@@ -257,10 +258,10 @@ void FarNpcs(LogFn log)
         rows.push_back(row);
     }
     std::sort(rows.begin(), rows.end(), [](Row const& a, Row const& b) { return a.distance < b.distance; });
-    sprintf_s(line, "FARNPCS owners=%zu resolved=%d", owners.size(), resolved);
+    Format(line, "FARNPCS owners=%zu resolved=%d", owners.size(), resolved);
     log(line);
     for (size_t i = 0; i < rows.size(); i += (rows.size() > 60 ? rows.size() / 60 : 1)) {
-        sprintf_s(line, "FARNPC name=%s distance_m=%.0f pos=%.0f_%.0f_%.0f", rows[i].name.c_str(), rows[i].distance / 100.0f,
+        Format(line, "FARNPC name=%s distance_m=%.0f pos=%.0f_%.0f_%.0f", rows[i].name.c_str(), rows[i].distance / 100.0f,
                   rows[i].pos[0], rows[i].pos[1], rows[i].pos[2]);
         log(line);
     }
@@ -269,19 +270,21 @@ void FarNpcs(LogFn log)
 }
 
 namespace g3t::explore {
-// QA: one named entity wherever it is: position, task, distance to the hero.
+// QA: one named entity wherever it is: position, task, distance to the hero. Truncated, not sprintf_s: a line longer than
+// the buffer ended the game (0xC0000409; a mirrored escaped slave 1694 m off with a long-named target is 241 characters:
+// the host's crashes in stageEscort 25.10. and stageEscortFar 26.10., both waiting for this reply).
 void Find(char const* name, LogFn log)
 {
-    char line[240];
+    char line[512];
     eCEntity* hero = gCSession::GetInstance().GetHero();
     Entity npc = Entity::GetEntity(bCString(name));
-    if (!hero || !npc.GetInstance()) { sprintf_s(line, "FIND name=%s found=0", name); log(line); return; }
+    if (!hero || !npc.GetInstance()) { _snprintf_s(line, sizeof(line), _TRUNCATE, "FIND name=%s found=0", name); log(line); return; }
     float p[3], h[3];
     PositionOf(npc.GetInstance(), p);
     PositionOf(hero, h);
     const bool damageable = npc.GetInstance()->GetPropertySet(eEPropertySetType_DamageReceiver) != nullptr;
     Entity target = npc.GetInstance()->GetPropertySet(eEPropertySetType_NPC) ? npc.NPC.GetCurrentTarget() : Entity();
-    sprintf_s(line, "FIND name=%s found=1 pos=%.0f_%.0f_%.0f task=%s distance_m=%.0f mirrored=%d hp=%d dead=%d state=%s target=%s ai_mode=%d target_puppet=%d target_hero=%d owner=%u", name,
+    _snprintf_s(line, sizeof(line), _TRUNCATE, "FIND name=%s found=1 pos=%.0f_%.0f_%.0f task=%s distance_m=%.0f mirrored=%d hp=%d dead=%d state=%s target=%s ai_mode=%d target_puppet=%d target_hero=%d owner=%u", name,
               p[0], p[1], p[2], npc.Routine.GetCurrentTask().GetText(), body::Distance(p, h) / 100.0f, npcs::IsMirrored(npc.GetInstance()) ? 1 : 0,
               damageable ? static_cast<int>(npc.DamageReceiver.HitPoints) : -1, npc.IsDead() ? 1 : 0, npc.Routine.GetCurrentState().GetText(),
               target.GetInstance() ? target.GetName().GetText() : "-", static_cast<int>(npc.Routine.AIMode),
@@ -304,14 +307,14 @@ void FarKill(char const* name, LogFn log)
         npc = Entity(bCPropertyID(bCGuid(raw)));
     }
     if (!hero || !npc.GetInstance() || npc.IsDead() || !npc.GetInstance()->GetPropertySet(eEPropertySetType_DamageReceiver)) {
-        sprintf_s(line, "REFUSED farkill %s: no hero, no such NPC, already dead or not damageable", name);
+        Format(line, "REFUSED farkill %s: no hero, no such NPC, already dead or not damageable", name);
         log(line);
         return;
     }
     auto& admin = GetScriptAdminExt();
     admin.CallScript(bCString("AddHitPoints"), npc.GetInstance(), hero, -static_cast<GEInt>(npc.DamageReceiver.HitPoints));
     admin.CallScript(bCString("OnCheatKill"), hero, npc.GetInstance(), 0);
-    sprintf_s(line, "FARKILL name=%s hp=%d dead=%d task=%s", name, static_cast<int>(npc.DamageReceiver.HitPoints), npc.IsDead() ? 1 : 0,
+    Format(line, "FARKILL name=%s hp=%d dead=%d task=%s", name, static_cast<int>(npc.DamageReceiver.HitPoints), npc.IsDead() ? 1 : 0,
               npc.Routine.GetCurrentTask().GetText());
     log(line);
 }
@@ -322,7 +325,18 @@ void Chapter(LogFn log)
 {
     char line[80];
     eCEntity* hero = gCSession::GetInstance().GetHero();
-    sprintf_s(line, "CHAPTER value=%d", hero ? static_cast<int>(Entity(hero).PlayerMemory.Chapter) : -1);
+    Format(line, "CHAPTER value=%d", hero ? static_cast<int>(Entity(hero).PlayerMemory.Chapter) : -1);
+    log(line);
+}
+
+// QA (P7 attitudes, 26.10. pair 1): set the local hero's chapter (story.cpp shares it with the others).
+void SetChapter(char const* value, LogFn log)
+{
+    char line[120];
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    if (!hero || !value || !*value) { log("REFUSED setchapter: no hero or no value"); return; }
+    Entity(hero).PlayerMemory.Chapter = std::atoi(value);
+    Format(line, "SETCHAPTER value=%d", static_cast<int>(Entity(hero).PlayerMemory.Chapter));
     log(line);
 }
 
@@ -335,11 +349,11 @@ void QuickUse(char const* item, LogFn log)
     if (!hero) { log("REFUSED quickuse: no hero"); return; }
     Entity self(hero);
     const GEInt stack = self.Inventory.FindStackIndex(Template(item));
-    if (stack < 0) { sprintf_s(line, "REFUSED quickuse %s: not carried", item); log(line); return; }
+    if (stack < 0) { Format(line, "REFUSED quickuse %s: not carried", item); log(line); return; }
     const GEInt before = self.Inventory.GetAmount(stack);
     const GEBool assigned = self.Inventory.AssignStackToQuickSlot(stack, 1);
     const GEInt result = GetScriptAdminExt().CallScript(bCString("OnPlayerUseQuickSlot"), hero, nullptr, 1);
-    sprintf_s(line, "QUICKUSE item=%s stack=%d before=%d assigned=%d result=%d task=%s", item, stack, before, assigned ? 1 : 0, result,
+    Format(line, "QUICKUSE item=%s stack=%d before=%d assigned=%d result=%d task=%s", item, stack, before, assigned ? 1 : 0, result,
               self.Routine.GetCurrentTask().GetText());
     log(line);
 }
@@ -349,17 +363,17 @@ void MoveMode(LogFn log)
 {
     char line[200];
     eCEntity* hero = gCSession::GetInstance().GetHero();
-    int n = sprintf_s(line, "MOVEMODE hero=%d", hero ? static_cast<int>(Entity(hero).CharacterMovement.GetMovementMode()) : -1);
+    int n = Format(line, "MOVEMODE hero=%d", hero ? static_cast<int>(Entity(hero).CharacterMovement.GetMovementMode()) : -1);
     for (int id = 1; id <= 4 && n > 0; ++id)
         if (eCEntity* puppet = remote::PuppetOf(id))
-            n += sprintf_s(line + n, sizeof(line) - n, " puppet%d=%d", id, static_cast<int>(Entity(puppet).CharacterMovement.GetMovementMode()));
+            n += Format(line + n, sizeof(line) - n, " puppet%d=%d", id, static_cast<int>(Entity(puppet).CharacterMovement.GetMovementMode()));
     log(line);
 }
 
 void Sector(char const* name, LogFn log)
 {
     char line[160];
-    sprintf_s(line, "SECTOR name=%s on=%d", name, world.GetSectorStatus(bCString(name)) ? 1 : 0);
+    Format(line, "SECTOR name=%s on=%d", name, world.GetSectorStatus(bCString(name)) ? 1 : 0);
     log(line);
 }
 
@@ -371,13 +385,13 @@ void FarHeal(char const* name, LogFn log)
     eCEntity* hero = gCSession::GetInstance().GetHero();
     Entity npc = Entity::GetEntity(bCString(name));
     if (!hero || !npc.GetInstance() || npc.IsDead() || !npc.GetInstance()->GetPropertySet(eEPropertySetType_DamageReceiver)) {
-        sprintf_s(line, "REFUSED farheal %s: no hero, no such NPC, dead or not damageable", name);
+        Format(line, "REFUSED farheal %s: no hero, no such NPC, dead or not damageable", name);
         log(line);
         return;
     }
     const int before = static_cast<int>(npc.DamageReceiver.HitPoints);
     GetScriptAdminExt().CallScript(bCString("AddHitPoints"), npc.GetInstance(), hero, 100000);
-    sprintf_s(line, "FARHEAL name=%s before=%d hp=%d", name, before, static_cast<int>(npc.DamageReceiver.HitPoints));
+    Format(line, "FARHEAL name=%s before=%d hp=%d", name, before, static_cast<int>(npc.DamageReceiver.HitPoints));
     log(line);
 }
 
@@ -394,13 +408,13 @@ void FarMove(char const* argument, LogFn log)
         return;
     }
     Entity entity = Entity::GetEntity(bCString(name));
-    if (!entity.GetInstance()) { sprintf_s(line, "REFUSED farmove %s: not found", name); log(line); return; }
+    if (!entity.GetInstance()) { Format(line, "REFUSED farmove %s: not found", name); log(line); return; }
     const bCQuaternion q = entity.GetInstance()->GetWorldRotation();
     const float rotation[4] = {q.GetX(), q.GetY(), q.GetZ(), q.GetW()};
     entity.MoveTo(body::Pose(*entity.GetInstance(), target, rotation));
     float now[3];
     PositionOf(entity.GetInstance(), now);
-    sprintf_s(line, "FARMOVE name=%s target=%.0f_%.0f_%.0f pos=%.0f_%.0f_%.0f", name, target[0], target[1], target[2], now[0], now[1],
+    Format(line, "FARMOVE name=%s target=%.0f_%.0f_%.0f pos=%.0f_%.0f_%.0f", name, target[0], target[1], target[2], now[0], now[1],
               now[2]);
     log(line);
 }
@@ -417,7 +431,7 @@ void TeleportTo(char const* name, LogFn log)
     const GEBool ok = Entity(hero).Teleport(target);
     float p[3];
     PositionOf(hero, p);
-    sprintf_s(line, "TELEPORTTO name=%s ok=%d pos=%.0f_%.0f_%.0f", name, ok ? 1 : 0, p[0], p[1], p[2]);
+    Format(line, "TELEPORTTO name=%s ok=%d pos=%.0f_%.0f_%.0f", name, ok ? 1 : 0, p[0], p[1], p[2]);
     log(line);
 }
 }
@@ -435,7 +449,7 @@ void Page(char const* what, LogFn log)
     else if (!std::strcmp(what, "menu")) session.OpenMenu();
     else if (!std::strcmp(what, "close")) { ok = gui->ClosePage(); gui->CloseMenu(); }
     else if (std::strcmp(what, "state")) { log("REFUSED page: inventory|menu|close|state"); return; }
-    sprintf_s(line, "PAGE what=%s ok=%d paused=%d active_page=%d", what, ok ? 1 : 0, session.IsPaused() ? 1 : 0,
+    Format(line, "PAGE what=%s ok=%d paused=%d active_page=%d", what, ok ? 1 : 0, session.IsPaused() ? 1 : 0,
               static_cast<int>(gui->GetActivePage()));
     log(line);
 }
@@ -481,7 +495,7 @@ void NativeSave(char const* name, LogFn log)
     remote::DespawnAll("native save");
     const bCString slot(name);
     const bool ok = save(getter(), &slot);
-    sprintf_s(line, "NATIVESAVE name=%s ok=%d folder=%s", name, ok ? 1 : 0, gCWorld::GetSaveGameFolder().GetText());
+    Format(line, "NATIVESAVE name=%s ok=%d folder=%s", name, ok ? 1 : 0, gCWorld::GetSaveGameFolder().GetText());
     log(line);
 }
 
@@ -494,11 +508,11 @@ void NativeLoad(char const* name, LogFn log)
     const bCString slot(name);
     // Loading a slot that does not exist stops the session and leaves the game hanging: check first.
     gCWorld* world = gCWorld::GetCurrentWorld();
-    if (!world || !world->ExistsSaveGame(slot)) { sprintf_s(line, "NATIVELOAD name=%s ok=0 exists=0", name); log(line); return; }
-    sprintf_s(line, "NATIVELOAD name=%s calling=1", name);
+    if (!world || !world->ExistsSaveGame(slot)) { Format(line, "NATIVELOAD name=%s ok=0 exists=0", name); log(line); return; }
+    Format(line, "NATIVELOAD name=%s calling=1", name);
     log(line);
     const bool ok = load(getter(), &slot);
-    sprintf_s(line, "NATIVELOAD name=%s ok=%d", name, ok ? 1 : 0);
+    Format(line, "NATIVELOAD name=%s ok=%d", name, ok ? 1 : 0);
     log(line);
 }
 }
@@ -512,7 +526,7 @@ void NpcState(char const* name, bool change, LogFn log)
     Entity npc = Entity::GetEntity(bCString(name));
     eCEntity* instance = npc.GetInstance();
     if (!instance || !instance->GetPropertySet(eEPropertySetType_Dialog) || !instance->GetPropertySet(eEPropertySetType_NPC)) {
-        sprintf_s(line, "REFUSED npcstate %s: no such NPC with a dialog", name);
+        Format(line, "REFUSED npcstate %s: no such NPC with a dialog", name);
         log(line);
         return;
     }
@@ -522,7 +536,7 @@ void NpcState(char const* name, bool change, LogFn log)
         infocmd::Changed(instance);
     }
     auto* nav = static_cast<gCNavigation_PS*>(instance->GetPropertySet(eEPropertySetType_Navigation));
-    sprintf_s(line, "NPCSTATE name=%s trade=%d teach=%d guard=%d routine=%s", name, npc.Dialog.TradeEnabled ? 1 : 0,
+    Format(line, "NPCSTATE name=%s trade=%d teach=%d guard=%d routine=%s", name, npc.Dialog.TradeEnabled ? 1 : 0,
               npc.Dialog.TeachEnabled ? 1 : 0, static_cast<int>(npc.NPC.GuardStatus), nav ? nav->AccessRoutine().GetText() : "-");
     log(line);
 }
@@ -538,7 +552,7 @@ void NpcRoutine(char const* name, LogFn log)
     if (!npc.GetInstance() || !npc.GetInstance()->GetPropertySet(eEPropertySetType_NPC)) { log("REFUSED npcroutine: no such NPC"); return; }
     npc.Routine.FullStop();
     npc.Routine.ContinueRoutine();
-    sprintf_s(line, "NPCROUTINE name=%s task=%s", name, npc.Routine.GetCurrentTask().GetText());
+    Format(line, "NPCROUTINE name=%s task=%s", name, npc.Routine.GetCurrentTask().GetText());
     log(line);
 }
 
@@ -570,10 +584,10 @@ void InfoScan(char const* command, LogFn log)
                 }
         }
         for (auto const& [name, c] : counts) {
-            sprintf_s(line, "INFOSCAN command=%s lines=%d example=%s", name.c_str(), c.first, c.second.c_str());
+            Format(line, "INFOSCAN command=%s lines=%d example=%s", name.c_str(), c.first, c.second.c_str());
             log(line);
         }
-        sprintf_s(line, "INFOSCAN end command=commands matches=%zu", counts.size());
+        Format(line, "INFOSCAN end command=commands matches=%zu", counts.size());
         log(line);
         return;
     }
@@ -587,7 +601,7 @@ void InfoScan(char const* command, LogFn log)
             for (int k = 0; script && k < script->AccessInfoScriptLines().GetCount(); ++k) {
                 gCInfoScriptLine_PS* l = static_cast<gCInfoScriptLine_PS*>(script->AccessInfoScriptLines().AccessAt(k));
                 if (!l) continue;
-                sprintf_s(line, "INFOSCAN info=%s owner=%s line=%d cmd=%s e1=%s e2=%s id1=%s id2=%s type=%d quest=%s", infoName,
+                Format(line, "INFOSCAN info=%s owner=%s line=%d cmd=%s e1=%s e2=%s id1=%s id2=%s type=%d quest=%s", infoName,
                           info->AccessOwner().GetText(), k, l->AccessCommand().GetText(), l->AccessEntity1().GetText(),
                           l->AccessEntity2().GetText(), l->AccessID1().GetText(), l->AccessID2().GetText(),
                           static_cast<int>(static_cast<gEInfoCondType const&>(info->AccessConditionType())), info->AccessQuest().GetText());
@@ -603,10 +617,11 @@ void InfoScan(char const* command, LogFn log)
             std::string knows;
             auto const& cond = info->AccessConditionPlayerKnows();
             for (int c = 0; c < cond.GetCount(); ++c) knows += std::string(knows.empty() ? "" : "|") + cond.GetAt(c).GetText();
-            sprintf_s(line, "INFOSCAN info=%s owner=%s distance_m=%.0f given=%d permanent=%d quest=%s parent=%s knows=%s",
+            Format(line, "INFOSCAN info=%s owner=%s distance_m=%.0f given=%d permanent=%d gold=%d itype=%d quest=%s parent=%s knows=%s",
                       info->AccessName().GetText(), info->AccessOwner().GetText(), distance, info->AccessInfoGiven() ? 1 : 0,
-                      info->AccessPermanent() ? 1 : 0, info->AccessQuest().GetText(), info->AccessParent().GetText(),
-                      knows.empty() ? "-" : knows.substr(0, 200).c_str());
+                      info->AccessPermanent() ? 1 : 0, static_cast<int>(info->AccessGoldCost()),
+                      static_cast<int>(static_cast<gEInfoType const&>(info->AccessType())), info->AccessQuest().GetText(),
+                      info->AccessParent().GetText(), knows.empty() ? "-" : knows.substr(0, 200).c_str());
             rows.push_back({distance, line});
             continue;
         }
@@ -619,7 +634,7 @@ void InfoScan(char const* command, LogFn log)
             Entity owner = Entity::GetEntity(info->AccessOwner());
             float distance = 1e9f;
             if (owner.GetInstance()) { float p[3]; PositionOf(owner.GetInstance(), p); distance = body::Distance(p, h) / 100.0f; }
-            sprintf_s(line, "INFOSCAN info=%s owner=%s distance_m=%.0f given=%d quest=%s line=%d e1=%s e2=%s id1=%s id2=%s",
+            Format(line, "INFOSCAN info=%s owner=%s distance_m=%.0f given=%d quest=%s line=%d e1=%s e2=%s id1=%s id2=%s",
                       info->AccessName().GetText(), info->AccessOwner().GetText(), distance, info->AccessInfoGiven() ? 1 : 0,
                       info->AccessQuest().GetText(), k, l->AccessEntity1().GetText(), l->AccessEntity2().GetText(),
                       l->AccessID1().GetText(), l->AccessID2().GetText());
@@ -628,7 +643,7 @@ void InfoScan(char const* command, LogFn log)
     }
     std::sort(rows.begin(), rows.end(), [](Row const& a, Row const& b) { return a.distance < b.distance; });
     for (size_t i = 0; i < rows.size() && i < 25; ++i) log(rows[i].text.c_str());
-    sprintf_s(line, "INFOSCAN end command=%s matches=%zu", command, rows.size());
+    Format(line, "INFOSCAN end command=%s matches=%zu", command, rows.size());
     log(line);
 }
 }
@@ -647,7 +662,7 @@ void Aggro(char const* argument, LogFn log)
     eCEntity* puppet = remote::PuppetOf(net::IsHost() ? 2 : 1);  // the other player of a two-player test
     if (!npc.GetInstance() || !puppet) { log("REFUSED aggro: no such NPC or no puppet"); return; }
     const GEInt result = GetScriptAdminExt().CallScript(bCString("AssessTarget"), npc.GetInstance(), puppet, reason);
-    sprintf_s(line, "AGGRO name=%s reason=%d result=%d task=%s", name, reason, result, npc.Routine.GetCurrentTask().GetText());
+    Format(line, "AGGRO name=%s reason=%d result=%d task=%s", name, reason, result, npc.Routine.GetCurrentTask().GetText());
     log(line);
 }
 
@@ -695,7 +710,7 @@ void QuestDump(char const* path, LogFn log)
     }
     std::fclose(file);
     char line[120];
-    sprintf_s(line, "QUESTDUMP quests=%d", count);
+    Format(line, "QUESTDUMP quests=%d", count);
     log(line);
 }
 
@@ -711,7 +726,7 @@ void AssessHero(char const* argument, LogFn log)
     eCEntity* hero = gCSession::GetInstance().GetHero();
     if (!npc.GetInstance() || !hero) { log("REFUSED assesshero: no such NPC or no hero"); return; }
     const GEInt result = GetScriptAdminExt().CallScript(bCString("AssessTarget"), npc.GetInstance(), hero, reason);
-    sprintf_s(line, "ASSESSHERO name=%s reason=%d result=%d task=%s", name, reason, result, npc.Routine.GetCurrentTask().GetText());
+    Format(line, "ASSESSHERO name=%s reason=%d result=%d task=%s", name, reason, result, npc.Routine.GetCurrentTask().GetText());
     log(line);
 }
 }
@@ -756,13 +771,13 @@ void XpInfos(LogFn log)
             distance = std::sqrt((a.GetX() - b.GetX()) * (a.GetX() - b.GetX()) + (a.GetY() - b.GetY()) * (a.GetY() - b.GetY()) +
                                  (a.GetZ() - b.GetZ()) * (a.GetZ() - b.GetZ())) / 100.0f;
         }
-        sprintf_s(line, "XPINFO name=%s owner=%s xp=%d cond_type=%d parent=%s distance_m=%.0f", info->AccessName().GetText(),
+        Format(line, "XPINFO name=%s owner=%s xp=%d cond_type=%d parent=%s distance_m=%.0f", info->AccessName().GetText(),
                   info->AccessOwner().GetText(), xp, static_cast<int>(static_cast<gEInfoCondType const&>(info->AccessConditionType())),
                   info->AccessParent().GetLength() ? info->AccessParent().GetText() : "-", distance);
         log(line);
         ++found;
     }
-    sprintf_s(line, "XPINFOS end found=%u", found);
+    Format(line, "XPINFOS end found=%u", found);
     log(line);
 }
 
@@ -771,8 +786,8 @@ void InfoDescribe(char const* name, LogFn log)
     char line[900];
     gCInfoManager_PS* manager = gCSession::GetInstance().IsGameRunning() ? gCInfoManager_PS::GetInstance() : nullptr;
     gCInfo_PS* info = manager ? manager->GetInfo(bCString(name)) : nullptr;
-    if (!info) { sprintf_s(line, "INFODESC name=%s found=0", name); log(line); return; }
-    sprintf_s(line, "INFODESC name=%s found=1 owner=%s parent=%s quest=%s given=%d permanent=%d cond_type=%d knows=%s knows_not=%s items=%s secondary=%s party=%s near=%s gold=%d",
+    if (!info) { Format(line, "INFODESC name=%s found=0", name); log(line); return; }
+    Format(line, "INFODESC name=%s found=1 owner=%s parent=%s quest=%s given=%d permanent=%d cond_type=%d knows=%s knows_not=%s items=%s secondary=%s party=%s near=%s gold=%d",
               name, info->AccessOwner().GetText(), info->AccessParent().GetText(), info->AccessQuest().GetText(), info->AccessInfoGiven() ? 1 : 0,
               info->AccessPermanent() ? 1 : 0, static_cast<int>(static_cast<gEInfoCondType const&>(info->AccessConditionType())),
               Join(info->AccessConditionPlayerKnows()).c_str(), Join(info->AccessConditionPlayerKnowsNot()).c_str(), Join(info->AccessCondItems()).c_str(),
@@ -784,7 +799,7 @@ void InfoDescribe(char const* name, LogFn log)
         for (int k = 0; k < lines.GetCount(); ++k) {
             gCInfoScriptLine_PS* l = static_cast<gCInfoScriptLine_PS*>(lines.AccessAt(k));
             if (!l) continue;
-            sprintf_s(line, "INFOLINE %d %s e1=%s e2=%s id1=%s id2=%s text=%s", k, l->AccessCommand().GetText(), l->AccessEntity1().GetText(),
+            Format(line, "INFOLINE %d %s e1=%s e2=%s id1=%s id2=%s text=%s", k, l->AccessCommand().GetText(), l->AccessEntity1().GetText(),
                       l->AccessEntity2().GetText(), l->AccessID1().GetText(), l->AccessID2().GetText(), l->AccessText().GetID().GetText());
             log(line);
         }
@@ -817,7 +832,7 @@ void NpcFight(char const* argument, LogFn log)
     }
     if (!attacker.GetInstance() || !target.GetInstance()) { log("REFUSED npcfight: no such NPC"); return; }
     const GEInt result = GetScriptAdminExt().CallScript(bCString("AssessTarget"), attacker.GetInstance(), target.GetInstance(), gEAttackReason_Enemy);
-    sprintf_s(line, "NPCFIGHT attacker=%s target=%s result=%d task=%s", arg.substr(0, cut).c_str(), arg.substr(cut + 1).c_str(), result,
+    Format(line, "NPCFIGHT attacker=%s target=%s result=%d task=%s", arg.substr(0, cut).c_str(), arg.substr(cut + 1).c_str(), result,
               attacker.Routine.GetCurrentTask().GetText());
     log(line);
 }
@@ -831,7 +846,7 @@ void CancelAttack(char const* name, LogFn log)
     if (!npc.GetInstance() || !npc.GetInstance()->GetPropertySet(eEPropertySetType_NPC)) { log("REFUSED cancelattack: no such NPC"); return; }
     eCEntity* target = npc.NPC.GetCurrentTarget().GetInstance();
     const GEInt result = GetScriptAdminExt().CallScript(bCString("CancelAttack"), npc.GetInstance(), target, 0);
-    sprintf_s(line, "CANCELATTACK name=%s target=%s result=%d task=%s last=%d", name, target ? Entity(target).GetName().GetText() : "-", result,
+    Format(line, "CANCELATTACK name=%s target=%s result=%d task=%s last=%d", name, target ? Entity(target).GetName().GetText() : "-", result,
               npc.Routine.GetCurrentTask().GetText(), static_cast<int>(npc.NPC.LastFightAgainstPlayer));
     log(line);
 }
@@ -851,12 +866,12 @@ void DuelHero(char const* name, LogFn log)
         s.guard = net::LocalId();
         strncpy_s(s.routine, "Duel", _TRUNCATE);
         net::SendWorldState(s, 0);
-        sprintf_s(line, "DUELHERO attacker=%s result=sent_to_owner task=%s", name, attacker.Routine.GetCurrentTask().GetText());
+        Format(line, "DUELHERO attacker=%s result=sent_to_owner task=%s", name, attacker.Routine.GetCurrentTask().GetText());
         log(line);
         return;
     }
     const GEInt result = GetScriptAdminExt().CallScript(bCString("AssessTarget"), attacker.GetInstance(), hero, gEAttackReason_Duel);
-    sprintf_s(line, "DUELHERO attacker=%s result=%d task=%s", name, result, attacker.Routine.GetCurrentTask().GetText());
+    Format(line, "DUELHERO attacker=%s result=%d task=%s", name, result, attacker.Routine.GetCurrentTask().GetText());
     log(line);
 }
 }
@@ -884,12 +899,12 @@ void QuestCounters(char const* name, LogFn log)
         std::string list;
         for (GEInt i = 0; i < targets.GetCount(); ++i) {
             char item[160];
-            sprintf_s(item, "%s%s:%d/%d", list.empty() ? "" : ",", targets.GetAt(i).GetText(),
+            Format(item, "%s%s:%d/%d", list.empty() ? "" : ",", targets.GetAt(i).GetText(),
                       i < counter.GetCount() ? static_cast<int>(counter.GetAt(i)) : -1,
                       i < amounts.GetCount() ? static_cast<int>(amounts.GetAt(i)) : -1);
             list += item;
         }
-        sprintf_s(line, "QUESTCOUNTER name=%s type=%d status=%d targets=%s", quest->GetName().GetText(), type,
+        Format(line, "QUESTCOUNTER name=%s type=%d status=%d targets=%s", quest->GetName().GetText(), type,
                   static_cast<int>(quest->GetStatus().GetValue()), list.empty() ? "-" : list.c_str());
         log(line);
     }
@@ -943,7 +958,7 @@ void NearNpcs(LogFn log)
         // Facing: the body's forward vector as a compass angle, to compare both machines.
         const bCVector forward = instance->GetAtVector();
         const int yaw = static_cast<int>(std::atan2(forward.GetX(), forward.GetZ()) * 57.29578f);
-        sprintf_s(line, "NEARX guid=%08X%04X name=%s dead=%d mirrored=%d owner=%u target=%s target_hero=%d target_puppet=%d task=%s ani=%d hand=%s motion=%s state=%s run0=%d weight0=%d yaw=%d",
+        Format(line, "NEARX guid=%08X%04X name=%s dead=%d mirrored=%d owner=%u target=%s target_hero=%d target_puppet=%d task=%s ani=%d hand=%s motion=%s state=%s run0=%d weight0=%d yaw=%d",
                   core.Data1, core.Data2, npc.GetName().GetText(), npc.IsDead() ? 1 : 0, npcs::IsMirrored(instance) ? 1 : 0,
                   npcs::OwnerOf(instance), target.GetInstance() ? target.GetName().GetText() : "-",
                   target.GetInstance() && target.GetInstance() == hero ? 1 : 0, remote::PuppetOwner(target.GetInstance()),
@@ -952,7 +967,7 @@ void NearNpcs(LogFn log)
                   npc.Routine.GetCurrentState().GetText(), running, weight, yaw);
         log(line);
     }
-    sprintf_s(line, "NEARX end actions_started=%u actions_shown=%u actions_played=%u holds=%u pacifies=%u owner_releases=%u combat_moves=%u combat_move_faults=%u motion_owner=%d "
+    Format(line, "NEARX end actions_started=%u actions_shown=%u actions_played=%u holds=%u pacifies=%u owner_releases=%u combat_moves=%u combat_move_faults=%u motion_owner=%d "
                     "attitude_installed=%d attitude_native=%d attitude_asked=%u attitude_redirected=%u attitude_flee_kept=%u puppets_in_npcs=%d puppet_alignment=%d "
                     "puppet_species=%d puppet_aimode=%d replay_started=%u/%u/%u replay_played=%u/%u/%u replay_shown=%u/%u/%u script_anis=%u script_ani_faults=%u loop_restarts=%u",
               body::actionsStarted, body::actionsShown, body::actionsPlayed, npcs::HoldChanges(), body::pacifies, body::ownerReleases, body::combatMoves, body::combatMoveFaults, body::motionOwner,
@@ -968,7 +983,7 @@ void ScriptWatch(char const* name, LogFn log)
     char line[300];
     if (!name || !*name) {
         for (int i = 0; i < watchedCount; ++i) {
-            sprintf_s(line, "SCRIPTWATCH name=%s calls=%u self=%s other=%s", watched[i].name.c_str(), watched[i].calls,
+            Format(line, "SCRIPTWATCH name=%s calls=%u self=%s other=%s", watched[i].name.c_str(), watched[i].calls,
                       watched[i].self.c_str(), watched[i].other.c_str());
             log(line);
         }
@@ -979,7 +994,7 @@ void ScriptWatch(char const* name, LogFn log)
         if (watched[i].name == name) { log("SCRIPTWATCH refused already watched"); return; }
     gSScript* script = nullptr;
     if (watchedCount >= WatchMax || !GetScriptAdminExt().GetScripts().GetAt(bCString(name), script) || !script || !script->m_funcScript) {
-        sprintf_s(line, "SCRIPTWATCH refused name=%s (no such script or %d watched)", name, watchedCount);
+        Format(line, "SCRIPTWATCH refused name=%s (no such script or %d watched)", name, watchedCount);
         log(line);
         return;
     }
@@ -987,42 +1002,445 @@ void ScriptWatch(char const* name, LogFn log)
     w.name = name;
     w.original = script->m_funcScript;
     script->m_funcScript = watchWrappers[watchedCount++];
-    sprintf_s(line, "SCRIPTWATCH name=%s watched=1", name);
+    Format(line, "SCRIPTWATCH name=%s watched=1", name);
     log(line);
 }
 
 // QA (P7, GetZoneAttitudeToPlayer): an NPC's zone attitude and attitude to the player (the scripts read GetPlayer's zone,
 // security level and fame) for the hero, and for puppet 2 asked plainly and with the puppet as the game's player.
+// 26.10. (pair 1): the game asks GetZoneAttitudeToPlayer with the ZONE as self (AssessPlayerZone 0x2fca0, AssessPlayerEnterZone
+// 0x30000: the zone's AI owner and security level, the player's fame; re/out/p7-half-20261026-b.c); with an NPC as self it
+// answers 1 everywhere (zonescandiag 26.10.). zone_zatt: the hero's zone so asked; puppet_zone_zatt: the puppet's zone with
+// the puppet as the game's player. NAME may be "-" (no NPC).
 void ZoneAttitude(char const* name, LogFn log)
 {
-    char line[500];
+    char line[700];
     eCEntity* hero = gCSession::GetInstance().GetHero();
-    Entity npc = Entity::GetEntity(bCString(name));
-    if (!hero || !npc.GetInstance()) { log("REFUSED zoneatt: no hero or no such NPC"); return; }
+    const bool noNpc = !name || !*name || !std::strcmp(name, "-");
+    Entity npc = noNpc ? Entity() : Entity::GetEntity(bCString(name));
+    if (!hero || (!noNpc && !npc.GetInstance())) { log("REFUSED zoneatt: no hero or no such NPC"); return; }
     auto& admin = GetScriptAdminExt();
     eCEntity* puppet = remote::PuppetOf(2);
     auto zoneOf = [](eCEntity* e, char* out, size_t size) {
         Entity zone = e ? Entity(e).GetZone() : Entity();
-        sprintf_s(out, size, "%s/%d", zone.GetInstance() ? zone.GetName().GetText() : "-",
-                  zone.GetInstance() ? static_cast<int>(zone.GetAIZoneSecurityLevel()) : -1);
+        Entity owner = zone.GetInstance() ? zone.GetAIZoneOwner() : Entity();
+        Format(out, size, "%s/%d/%s", zone.GetInstance() ? zone.GetName().GetText() : "-",
+                  zone.GetInstance() ? static_cast<int>(zone.GetAIZoneSecurityLevel()) : -1, owner.GetInstance() ? owner.GetName().GetText() : "-");
     };
-    char heroZone[96], puppetZone[96];
+    char heroZone[160], puppetZone[160];
     zoneOf(hero, heroZone, sizeof(heroZone));
     zoneOf(puppet, puppetZone, sizeof(puppetZone));
-    const GEInt heroZoneAtt = admin.CallScript(bCString("GetZoneAttitudeToPlayer"), npc.GetInstance(), hero, 0);
-    const GEInt heroAtt = admin.CallScript(bCString("GetAttitudeToPlayer"), npc.GetInstance(), hero, 0);
-    GEInt plainZoneAtt = -9, actingZoneAtt = -9, actingAtt = -9, puppetAtt = -9;
-    if (puppet) {
-        plainZoneAtt = admin.CallScript(bCString("GetZoneAttitudeToPlayer"), npc.GetInstance(), puppet, 0);
-        puppetAtt = admin.CallScript(bCString("GetAttitude"), npc.GetInstance(), puppet, 0);
-        guards::Acting acting(puppet);
-        actingZoneAtt = admin.CallScript(bCString("GetZoneAttitudeToPlayer"), npc.GetInstance(), puppet, 0);
-        actingAtt = admin.CallScript(bCString("GetAttitudeToPlayer"), npc.GetInstance(), puppet, 0);
+    GEInt heroZoneAtt = -9, heroAtt = -9, plainZoneAtt = -9, actingZoneAtt = -9, actingAtt = -9, puppetAtt = -9;
+    if (npc.GetInstance()) {
+        heroZoneAtt = admin.CallScript(bCString("GetZoneAttitudeToPlayer"), npc.GetInstance(), hero, 0);
+        heroAtt = admin.CallScript(bCString("GetAttitudeToPlayer"), npc.GetInstance(), hero, 0);
     }
-    sprintf_s(line, "ZONEATT name=%s hero_zone=%s hero_zoneatt=%d hero_att=%d puppet_zone=%s puppet_zoneatt=%d puppet_zoneatt_acting=%d"
-                    " puppet_att_acting=%d puppet_attitude=%d", name, heroZone, heroZoneAtt, heroAtt, puppetZone, plainZoneAtt, actingZoneAtt,
-              actingAtt, puppetAtt);
+    eCEntity* heroZoneEntity = Entity(hero).GetZone().GetInstance();
+    const GEInt zoneZatt = heroZoneEntity ? admin.CallScript(bCString("GetZoneAttitudeToPlayer"), heroZoneEntity, nullptr, 0) : -9;
+    GEInt puppetZoneZatt = -9;
+    if (puppet) {
+        eCEntity* puppetZoneEntity = Entity(puppet).GetZone().GetInstance();
+        if (npc.GetInstance()) {
+            plainZoneAtt = admin.CallScript(bCString("GetZoneAttitudeToPlayer"), npc.GetInstance(), puppet, 0);
+            puppetAtt = admin.CallScript(bCString("GetAttitude"), npc.GetInstance(), puppet, 0);
+        }
+        guards::Acting acting(puppet);
+        if (npc.GetInstance()) {
+            actingZoneAtt = admin.CallScript(bCString("GetZoneAttitudeToPlayer"), npc.GetInstance(), puppet, 0);
+            actingAtt = admin.CallScript(bCString("GetAttitudeToPlayer"), npc.GetInstance(), puppet, 0);
+        }
+        if (puppetZoneEntity) puppetZoneZatt = admin.CallScript(bCString("GetZoneAttitudeToPlayer"), puppetZoneEntity, nullptr, 0);
+    }
+    Format(line, "ZONEATT name=%s hero_zone=%s hero_zoneatt=%d hero_att=%d puppet_zone=%s puppet_zoneatt=%d puppet_zoneatt_acting=%d"
+                    " puppet_att_acting=%d puppet_attitude=%d zone_zatt=%d puppet_zone_zatt=%d", noNpc ? "-" : name, heroZone, heroZoneAtt, heroAtt,
+              puppetZone, plainZoneAtt, actingZoneAtt, actingAtt, puppetAtt, zoneZatt, puppetZoneZatt);
     log(line);
 }
 
+
+// QA (P7 attitudes, 26.10. pair 1): the parts of GetAttitude for an NPC and this machine's hero, and for puppet 2 (asked
+// as the game asks: GetAttitude about the puppet answers as about the hero, ai.cpp; the parts about the puppet plainly),
+// with the political alignment and species of each and the chapter the scripts read through GetPlayer.
+void AttitudeChain(char const* name, LogFn log)
+{
+    char line[700];
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    Entity npc = Entity::GetEntity(bCString(name));
+    if (!hero || !npc.GetInstance() || !npc.GetInstance()->GetPropertySet(eEPropertySetType_NPC)) { log("REFUSED attchain: no hero or no such NPC"); return; }
+    auto& admin = GetScriptAdminExt();
+    auto ask = [&](char const* script, eCEntity* other) { return other ? static_cast<int>(admin.CallScript(bCString(script), npc.GetInstance(), other, 0)) : -9; };
+    auto align = [](eCEntity* e) { return e && e->GetPropertySet(eEPropertySetType_NPC) ? static_cast<int>(static_cast<gEPoliticalAlignment>(Entity(e).NPC.PoliticalAlignment)) : -1; };
+    auto species = [](eCEntity* e) { return e && e->GetPropertySet(eEPropertySetType_NPC) ? static_cast<int>(static_cast<gESpecies>(Entity(e).NPC.Species)) : -1; };
+    auto chapter = [](eCEntity* e) { return e && e->GetPropertySet(eEPropertySetType_PlayerMemory) ? static_cast<int>(Entity(e).PlayerMemory.Chapter) : -1; };
+    eCEntity* puppet = remote::PuppetOf(2);
+    Format(line, "ATTCHAIN name=%s npc_align=%d npc_species=%d hero_align=%d hero_species=%d puppet_align=%d puppet_species=%d"
+                    " political_hero=%d species_hero=%d revolution_hero=%d to_player=%d attitude_hero=%d"
+                    " political_puppet=%d species_puppet=%d attitude_puppet=%d attitude_puppet_plain=%d hero_chapter=%d puppet_chapter=%d task=%s",
+              name, align(npc.GetInstance()), species(npc.GetInstance()), align(hero), species(hero), align(puppet), species(puppet),
+              ask("GetPoliticalAttitude", hero), ask("GetSpeciesAttitude", hero), ask("GetRevolutionAttitude", hero), ask("GetAttitudeToPlayer", hero),
+              ask("GetAttitude", hero), ask("GetPoliticalAttitude", puppet), ask("GetSpeciesAttitude", puppet), ask("GetAttitude", puppet),
+              puppet ? ai::PlainAttitude(npc.GetInstance(), puppet) : -9, chapter(hero), chapter(puppet), npc.Routine.GetCurrentTask().GetText());
+    log(line);
+    // The political attitude of the NPC to the owner of the zone it stands in and to its own town, as the game's player
+    // (the hero) and with puppet 2 as the game's player (guards.cpp Acting: the zone and weapon rules for another player).
+    auto* ps = static_cast<gCNPC_PS*>(npc.GetInstance()->GetPropertySet(eEPropertySetType_NPC));
+    Entity zone = npc.GetZone();
+    Entity owner = zone.GetInstance() ? zone.GetAIZoneOwner() : Entity();
+    eCEntity* town = ps ? ps->GetEnclaveProxy().GetEntity() : nullptr;
+    auto political = [&](eCEntity* other) { return other ? static_cast<int>(admin.CallScript(bCString("GetPoliticalAttitude"), npc.GetInstance(), other, 0)) : -9; };
+    const int ownerHero = political(owner.GetInstance()), townHero = political(town);
+    int ownerActing = -9, townActing = -9;
+    if (puppet) {
+        guards::Acting acting(puppet);
+        ownerActing = political(owner.GetInstance());
+        townActing = political(town);
+    }
+    Format(line, "ATTCHAIN2 name=%s zone_owner=%s political_owner=%d political_owner_acting=%d town=%s political_town=%d political_town_acting=%d puppet_chapter=%d",
+              name, owner.GetInstance() ? owner.GetName().GetText() : "-", ownerHero, ownerActing, town ? town->GetName().GetText() : "-", townHero,
+              townActing, chapter(puppet));
+    log(line);
 }
+
+namespace {
+// QA nativewatch: count every call of up to eight scripts at their native code, a jump from the function's first bytes
+// (ai::JumpTo). scriptwatch swaps the script table's entry and so sees only calls by name; the game calls many scripts
+// directly (ContinueRoutine calls CanHealSelf and SelectRoutineDestination, the routine tasks EndGoto: re/out/hero2-
+// scriptgame.c, hero5-scriptgame.c), which only a jump at the code counts. Per calling NPC (self): calls, nonzero answers,
+// the last answer, and how often the game's player was a puppet then (guards::Acting).
+constexpr int NativeMax = 8;
+struct NativeSelf {
+    unsigned calls = 0, nonzero = 0, puppetPlayer = 0;
+    int last = 0;
+};
+struct NativeWatched {
+    std::string name, lastSelf, lastOther;
+    gFScript original = nullptr;
+    unsigned calls = 0, heroSelf = 0, mirroredSelf = 0, nonzero = 0, puppetPlayer = 0;
+    std::map<std::string, NativeSelf> selves;
+};
+NativeWatched natives[NativeMax];
+int nativeCount = 0;
+
+template <int I>
+GEInt GE_STDCALL NativeWrap(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid other, GEInt args)
+{
+    NativeWatched& w = natives[I];
+    eCEntity* s = self ? static_cast<Entity*>(self)->GetInstance() : (spu ? spu->GetSelfEntity() : nullptr);
+    eCEntity* o = other ? static_cast<Entity*>(other)->GetInstance() : (spu ? spu->GetOtherEntity() : nullptr);
+    const bool puppetPlayer = guards::CurrentActor() != nullptr;
+    const GEInt result = w.original(spu, self, other, args);
+    ++w.calls;
+    if (result) ++w.nonzero;
+    if (puppetPlayer) ++w.puppetPlayer;
+    if (s && s == gCSession::GetInstance().GetHero()) ++w.heroSelf;
+    if (s && npcs::IsMirrored(s)) ++w.mirroredSelf;
+    w.lastSelf = s ? Entity(s).GetName().GetText() : "-";
+    w.lastOther = o ? Entity(o).GetName().GetText() : "-";
+    if (w.selves.size() < 64 || w.selves.count(w.lastSelf)) {
+        NativeSelf& one = w.selves[w.lastSelf];
+        ++one.calls;
+        if (result) ++one.nonzero;
+        if (puppetPlayer) ++one.puppetPlayer;
+        one.last = result;
+    }
+    return result;
+}
+const gFScript nativeWrappers[NativeMax] = {&NativeWrap<0>, &NativeWrap<1>, &NativeWrap<2>, &NativeWrap<3>,
+                                            &NativeWrap<4>, &NativeWrap<5>, &NativeWrap<6>, &NativeWrap<7>};
+}
+
+// "NAME": watch it from now on; "reset": all counts to 0; empty: NATIVEWATCH lines, then "NATIVEWATCH end". A line's
+// selves=Name:calls:nonzero:last:puppet_player, the most frequent eight.
+void NativeWatch(char const* name, LogFn log)
+{
+    char line[700];
+    if (name && !std::strcmp(name, "reset")) {
+        for (int i = 0; i < nativeCount; ++i) {
+            NativeWatched& w = natives[i];
+            w.calls = w.heroSelf = w.mirroredSelf = w.nonzero = w.puppetPlayer = 0;
+            w.selves.clear();
+            w.lastSelf = w.lastOther = "-";
+        }
+        log("NATIVEWATCH reset=1");
+        return;
+    }
+    // "only_NAME": the report with that caller only in selves (the eight most frequent hide a rare one).
+    if (!name || !*name || !std::strncmp(name, "only_", 5)) {
+        const std::string only = name && *name ? name + 5 : "";
+        for (int i = 0; i < nativeCount; ++i) {
+            NativeWatched const& w = natives[i];
+            std::vector<std::pair<std::string, NativeSelf>> rows;
+            for (auto const& row : w.selves)
+                if (only.empty() || row.first == only) rows.push_back(row);
+            std::sort(rows.begin(), rows.end(), [](auto const& a, auto const& b) { return a.second.calls > b.second.calls; });
+            std::string selves;
+            for (size_t k = 0; k < rows.size() && k < 8; ++k) {
+                char one[96];
+                Format(one, "%s%.40s:%u:%u:%d:%u", k ? "," : "", rows[k].first.c_str(), rows[k].second.calls, rows[k].second.nonzero,
+                          rows[k].second.last, rows[k].second.puppetPlayer);
+                selves += one;
+            }
+            Format(line, "NATIVEWATCH name=%s calls=%u nonzero=%u hero_self=%u mirrored_self=%u puppet_player=%u self=%.40s other=%.40s selves=%s",
+                      w.name.c_str(), w.calls, w.nonzero, w.heroSelf, w.mirroredSelf, w.puppetPlayer, w.lastSelf.c_str(), w.lastOther.c_str(),
+                      selves.empty() ? "-" : selves.c_str());
+            log(line);
+        }
+        log("NATIVEWATCH end");
+        return;
+    }
+    for (int i = 0; i < nativeCount; ++i)
+        if (natives[i].name == name) { log("NATIVEWATCH refused already watched"); return; }
+    gSScript* script = nullptr;
+    if (nativeCount >= NativeMax || !GetScriptAdminExt().GetScripts().GetAt(bCString(name), script) || !script || !script->m_funcScript) {
+        Format(line, "NATIVEWATCH refused name=%s (no such script or %d watched)", name, nativeCount);
+        log(line);
+        return;
+    }
+    // The registered function itself, in Script_Game.dll and with the prologue JumpTo can move (push ebp; mov ebp,esp;
+    // and esp,-8). A function this mod jumps from already (GetAttitude, HasAttackReasonToKill) starts with a jump.
+    auto* code = reinterpret_cast<unsigned char*>(script->m_funcScript);
+    HMODULE game = GetModuleHandleA("Script_Game.dll");
+    HMODULE owner = nullptr;
+    GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, reinterpret_cast<LPCSTR>(code), &owner);
+    static const unsigned char prologue[] = {0x55, 0x8b, 0xec, 0x83, 0xe4, 0xf8};
+    if (!game || owner != game || std::memcmp(code, prologue, sizeof(prologue))) {
+        Format(line, "NATIVEWATCH refused name=%s (not Script_Game.dll's own code with the expected prologue)", name);
+        log(line);
+        return;
+    }
+    NativeWatched& w = natives[nativeCount];
+    w.original = reinterpret_cast<gFScript>(ai::JumpTo(code, reinterpret_cast<void*>(nativeWrappers[nativeCount])));
+    if (!w.original) { log("NATIVEWATCH refused the jump failed"); return; }
+    w.name = name;
+    w.lastSelf = w.lastOther = "-";
+    ++nativeCount;
+    Format(line, "NATIVEWATCH name=%s watched=1 rva=%#lx", name,
+              static_cast<unsigned long>(reinterpret_cast<uintptr_t>(code) - reinterpret_cast<uintptr_t>(game)));
+    log(line);
+}
+
+// QA (Basis, OnAnimalSleep): animals (neither human nor orc) this machine has, with a sleeping point: the routine sends
+// them to ZS_AnimalSleep at night (SelectRoutineTask: a destination of use type SleepGround, re/out/p9-select-b.c).
+// "all": every animal. SLEEPER lines, then "SLEEPERS end".
+void Sleepers(char const* argument, LogFn log)
+{
+    char line[480];
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    if (!hero) { log("REFUSED sleepers: no hero"); return; }
+    float h[3];
+    PositionOf(hero, h);
+    const bool all = argument && !std::strcmp(argument, "all");
+    const bTObjArray<Entity> npcsHere = Entity::GetNPCs();
+    int listed = 0, animals = 0;
+    for (int i = 0; i < npcsHere.GetCount() && listed < 80; ++i) {
+        Entity npc = npcsHere.GetAt(i);
+        eCEntity* instance = npc.GetInstance();
+        if (!instance || instance == hero || remote::IsPuppet(instance) || npc.IsDead() || !instance->GetPropertySet(eEPropertySetType_NPC)) continue;
+        const gESpecies species = npc.NPC.Species;
+        if (species == gESpecies_Human || species == gESpecies_Orc) continue;
+        ++animals;
+        Entity bed = npc.Navigation.GetSleepingPoint();
+        Entity dest = npc.Navigation.GetCurrentDestinationPoint();
+        if (!bed.GetInstance() && !all) continue;
+        float p[3], b[3] = {0, 0, 0};
+        PositionOf(instance, p);
+        if (bed.GetInstance()) PositionOf(bed.GetInstance(), b);
+        const int bedUse = bed.GetInstance() && bed.GetInstance()->GetPropertySet(eEPropertySetType_Interaction) ? static_cast<int>(bed.Interaction.GetUseType()) : -1;
+        const int destUse = dest.GetInstance() && dest.GetInstance()->GetPropertySet(eEPropertySetType_Interaction) ? static_cast<int>(dest.Interaction.GetUseType()) : -1;
+        Format(line, "SLEEPER name=%.40s species=%d pos=%.0f_%.0f_%.0f distance_m=%.0f bed=%.40s bed_pos=%.0f_%.0f_%.0f bed_use=%d dest=%.40s dest_use=%d task=%s state=%s mirrored=%d",
+                  npc.GetName().GetText(), static_cast<int>(species), p[0], p[1], p[2], body::Distance(p, h) / 100.0f,
+                  bed.GetInstance() ? bed.GetName().GetText() : "-", b[0], b[1], b[2], bedUse, dest.GetInstance() ? dest.GetName().GetText() : "-",
+                  destUse, npc.Routine.GetCurrentTask().GetText(), npc.Routine.GetCurrentState().GetText(), npcs::IsMirrored(instance) ? 1 : 0);
+        log(line);
+        ++listed;
+    }
+    Format(line, "SLEEPERS end animals=%d listed=%d", animals, listed);
+    log(line);
+}
+
+// QA (OnAnimalSleep): "GUID" (or a name): that animal falls asleep as ZS_AnimalSleep ends (re/out/animalsleep-20261026-b.c,
+// 0x898c0, last step: AI mode 7, task callback OnAnimalSleep, state ZS_AnimalSleep_SleepGround). The game sends an animal
+// there only with a sleeping point of use type SleepGround (SelectRoutineTask), which no animal at Ardea, Kent or the
+// meadow north of Ardea has (p9smalldiag 26.10.: they sleep in ZS_Ambient_Sleep_Loop). "<id>_show": the ANIMALSLEEP line only.
+void AnimalSleep(char const* argument, LogFn log)
+{
+    char line[320];
+    std::string id = argument ? argument : "";
+    const bool show = id.size() > 5 && id.compare(id.size() - 5, 5, "_show") == 0;
+    if (show) id.resize(id.size() - 5);
+    Entity npc = Entity::GetEntity(bCString(id.c_str()));
+    unsigned d1, d2, d3, b[8];
+    if (sscanf_s(id.c_str(), "%8X-%4X-%4X-%2X%2X-%2X%2X%2X%2X%2X%2X", &d1, &d2, &d3, &b[0], &b[1], &b[2], &b[3], &b[4], &b[5], &b[6], &b[7]) == 11) {
+        _GUID raw{d1, static_cast<unsigned short>(d2), static_cast<unsigned short>(d3), {}};
+        for (int i = 0; i < 8; ++i) raw.Data4[i] = static_cast<unsigned char>(b[i]);
+        npc = Entity(bCPropertyID(bCGuid(raw)));
+    }
+    if (!npc.GetInstance() || !npc.GetInstance()->GetPropertySet(eEPropertySetType_NPC) || npc.IsDead()) { log("REFUSED animalsleep: no such living NPC"); return; }
+    if (!show) {
+        npc.Routine.AIMode = static_cast<gEAIMode>(7);
+        npc.Routine.SetTaskCallback(bCString("OnAnimalSleep"));
+        npc.Routine.SetState(bCString("ZS_AnimalSleep_SleepGround"));
+    }
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    Entity target = npc.NPC.GetCurrentTarget();
+    Format(line, "ANIMALSLEEP name=%s task=%s state=%s ai_mode=%d target=%s target_puppet=%d target_hero=%d mirrored=%d", npc.GetName().GetText(),
+              npc.Routine.GetCurrentTask().GetText(), npc.Routine.GetCurrentState().GetText(), static_cast<int>(static_cast<gEAIMode>(npc.Routine.AIMode)),
+              target.GetInstance() ? target.GetName().GetText() : "-", remote::PuppetOwner(target.GetInstance()),
+              target.GetInstance() && target.GetInstance() == hero ? 1 : 0, npcs::IsMirrored(npc.GetInstance()) ? 1 : 0);
+    log(line);
+}
+
+// QA (ZS_WaitForFreeDestination_Loop): "NAME": that NPC waits for its destination to become free now, as EndGoto sends it
+// when its way ends at a taken destination (re/out/p8-decompiled.c 0x42880, goto status 6): FullStop, task
+// ZS_WaitForFreeDestination, with the destination it had. Its loop lets it go on once the game's player is more than
+// 1.5 m from that destination (0x42db0). "NAME_show": only the WAITFREE line (destination and where it is).
+void WaitFree(char const* argument, LogFn log)
+{
+    char line[320];
+    std::string name = argument ? argument : "";
+    const bool show = name.size() > 5 && name.compare(name.size() - 5, 5, "_show") == 0;
+    if (show) name.resize(name.size() - 5);
+    Entity npc = Entity::GetEntity(bCString(name.c_str()));
+    if (!npc.GetInstance() || !npc.GetInstance()->GetPropertySet(eEPropertySetType_NPC)) { log("REFUSED waitfree: no such NPC"); return; }
+    Entity dest = npc.Navigation.GetCurrentDestinationPoint();
+    if (!dest.GetInstance()) {
+        Format(line, "WAITFREE name=%s dest=- task=%s state=%s", name.c_str(), npc.Routine.GetCurrentTask().GetText(),
+                  npc.Routine.GetCurrentState().GetText());
+        log(line);
+        return;
+    }
+    float d[3];
+    PositionOf(dest.GetInstance(), d);
+    if (!show) {
+        npc.Routine.FullStop();
+        npc.Routine.SetTask(bCString("ZS_WaitForFreeDestination"));
+    }
+    float n[3];
+    PositionOf(npc.GetInstance(), n);
+    const int use = dest.GetInstance()->GetPropertySet(eEPropertySetType_Interaction) ? static_cast<int>(dest.Interaction.GetUseType()) : -1;
+    Format(line, "WAITFREE name=%s dest=%.40s dest_pos=%.0f_%.0f_%.0f dest_use=%d dest_off_cm=%.0f mirrored=%d task=%s state=%s", name.c_str(),
+              dest.GetName().GetText(), d[0], d[1], d[2], use, body::Distance(n, d), npcs::IsMirrored(npc.GetInstance()) ? 1 : 0,
+              npc.Routine.GetCurrentTask().GetText(), npc.Routine.GetCurrentState().GetText());
+    log(line);
+}
+
+// QA (P4 dialog conditions, 26.10. pair 2): the local hero's political memory (PlayerMemory: PoliticalCrimeCount,
+// PoliticalSuspectComment, PoliticalFame per gEPoliticalAlignment 0..12). HasBossNews and info condition 32 read it,
+// condition 25 (PoliticalFriend) the fame. "pal_crime_suspect_fame" sets one alignment (-1 keeps a value; the QA command
+// file takes one token of [A-Za-z0-9_-]).
+void PolMem(char const* argument, LogFn log)
+{
+    char line[700];
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    if (!hero || !hero->GetPropertySet(eEPropertySetType_PlayerMemory)) { log("REFUSED polmem: no hero"); return; }
+    Entity self(hero);
+    int pal = -1, crime = -1, suspect = -1, fame = -1;
+    if (argument && *argument && sscanf_s(argument, "%d_%d_%d_%d", &pal, &crime, &suspect, &fame) >= 1 && pal >= 0 && pal <= 12) {
+        const auto a = static_cast<gEPoliticalAlignment>(pal);
+        if (crime >= 0) self.PlayerMemory.SetPoliticalCrimeCount(a, crime);
+        if (suspect >= 0) self.PlayerMemory.SetPoliticalSuspectComment(a, suspect);
+        if (fame >= 0) self.PlayerMemory.SetPoliticalFame(a, fame);
+    }
+    std::string crimes, suspects, fames;
+    for (int i = 0; i <= 12; ++i) {
+        const auto a = static_cast<gEPoliticalAlignment>(i);
+        crimes += (i ? "," : "") + std::to_string(self.PlayerMemory.GetPoliticalCrimeCount(a));
+        suspects += (i ? "," : "") + std::to_string(self.PlayerMemory.GetPoliticalSuspectComment(a));
+        fames += (i ? "," : "") + std::to_string(self.PlayerMemory.GetPoliticalFame(a));
+    }
+    Format(line, "POLMEM crime=%s suspect=%s fame=%s", crimes.c_str(), suspects.c_str(), fames.c_str());
+    log(line);
+}
+
+namespace {
+// An enclave by its own name, else the enclave of the NPC of that name.
+Entity EnclaveNamed(char const* name)
+{
+    const GEInt count = PSEnclave::GetEnclaveCount();
+    for (GEInt i = 0; i < count; ++i) {
+        Entity e = PSEnclave::GetEnclaveAt(i);
+        if (e.GetInstance() && !_stricmp(e.GetName().GetText(), name)) return e;
+    }
+    Entity npc = Entity::GetEntity(bCString(name));
+    auto* ps = npc.GetInstance() ? static_cast<gCNPC_PS*>(npc.GetInstance()->GetPropertySet(eEPropertySetType_NPC)) : nullptr;
+    eCEntity* town = ps ? ps->GetEnclaveProxy().GetEntity() : nullptr;
+    return town ? Entity(town) : Entity();
+}
+}
+
+// QA (P4, condition 24 EnclaveFriend: gCInfo_PS::Execute runs IS_Running_NoEnclaveReputation below fame 75):
+// "Name[-fame]": read or set the PlayerFame of an enclave (by its name or an NPC's), here (enclaves.cpp shares it).
+void EnclaveFame(char const* argument, LogFn log)
+{
+    char line[200], name[80] = {};
+    int fame = -1;
+    if (!argument || !*argument) { log("REFUSED enclavefame: no name"); return; }
+    strncpy_s(name, argument, _TRUNCATE);
+    if (char* dash = std::strrchr(name, '-')) { fame = std::atoi(dash + 1); *dash = 0; }
+    Entity e = EnclaveNamed(name);
+    auto* enclave = e.GetInstance() ? static_cast<gCEnclave_PS*>(e.GetInstance()->GetPropertySet(eEPropertySetType_Enclave)) : nullptr;
+    if (!enclave) { Format(line, "REFUSED enclavefame %s: no enclave", name); log(line); return; }
+    if (fame >= 0) enclave->AccessPlayerFame() = fame;
+    Format(line, "ENCLAVEFAME enclave=%s fame=%d status=%d alignment=%d", e.GetName().GetText(), static_cast<int>(enclave->AccessPlayerFame()),
+              static_cast<int>(static_cast<gEEnclaveStatus const&>(enclave->AccessStatus())),
+              static_cast<int>(static_cast<gEPoliticalAlignment const&>(enclave->AccessPoliticalAlignment())));
+    log(line);
+}
+
+// QA (P4 HasBossNews): "Name-status": the game's ChangeEnclaveStatus for that enclave here, as NotifyEnclave calls it when a
+// town's defenders are beaten (2 = Flee: freed; raises GetPlayer's PoliticalCrimeCount of the enclave's alignment, not Ardea).
+void EnclaveStatus(char const* argument, LogFn log)
+{
+    char line[200], name[80] = {};
+    int status = -1;
+    if (argument) strncpy_s(name, argument, _TRUNCATE);
+    if (char* dash = std::strrchr(name, '-')) { status = std::atoi(dash + 1); *dash = 0; }
+    if (status < 0) { log("REFUSED enclavestatus: Name-status"); return; }
+    Entity e = EnclaveNamed(name);
+    auto* enclave = e.GetInstance() ? static_cast<gCEnclave_PS*>(e.GetInstance()->GetPropertySet(eEPropertySetType_Enclave)) : nullptr;
+    if (!enclave) { Format(line, "REFUSED enclavestatus %s: no enclave", name); log(line); return; }
+    const GEInt result = GetScriptAdminExt().CallScript(bCString("ChangeEnclaveStatus"), e.GetInstance(), e.GetInstance(), status);
+    Format(line, "ENCLAVESTATUS enclave=%s result=%d status=%d", e.GetName().GetText(), static_cast<int>(result),
+              static_cast<int>(static_cast<gEEnclaveStatus const&>(enclave->AccessStatus())));
+    log(line);
+}
+}
+
+namespace g3t::explore {
+namespace {
+bCVector swimGoal;
+DWORD swimUntil = 0;
+}
+
+// QA (P2, PS_Swim; coop evening 26.10.): the hero swims toward a point by its own character movement, as body.cpp steers a
+// puppet (movement goal), no key input. "DX_DZ_MS": the goal relative to where the hero is, held for MS milliseconds.
+void SwimGoal(char const* argument, LogFn log)
+{
+    char line[200];
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    int dx = 0, dz = 0, ms = 0;
+    if (!hero || sscanf_s(argument, "%d_%d_%d", &dx, &dz, &ms) != 3 || ms <= 0) { log("REFUSED swimgoal: no hero or not DX_DZ_MS"); return; }
+    const bCVector& p = hero->GetWorldPosition();
+    swimGoal = bCVector(p.GetX() + static_cast<float>(dx), p.GetY(), p.GetZ() + static_cast<float>(dz));
+    swimUntil = GetTickCount() + static_cast<DWORD>(ms);
+    Entity e(hero);
+    e.CharacterMovement.SetMovementGoal(swimGoal);
+    Format(line, "SWIMGOAL from=%.0f_%.0f_%.0f goal=%.0f_%.0f_%.0f ms=%d mode=%d task=%s", p.GetX(), p.GetY(), p.GetZ(), swimGoal.GetX(),
+              swimGoal.GetY(), swimGoal.GetZ(), ms, static_cast<int>(e.CharacterMovement.GetMovementMode()), e.Routine.GetCurrentTask().GetText());
+    log(line);
+}
+
+void SwimTick()
+{
+    if (!swimUntil) return;
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    if (!hero) { swimUntil = 0; return; }
+    Entity e(hero);
+    if (static_cast<int>(GetTickCount() - swimUntil) > 0) {
+        e.CharacterMovement.StopMovement();
+        swimUntil = 0;
+        return;
+    }
+    e.CharacterMovement.SetMovementGoal(swimGoal);
+}
+}  // namespace g3t::explore

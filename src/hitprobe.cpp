@@ -81,7 +81,7 @@ std::string StackPath()
             if (!m.codeStart || value <= m.codeStart + 7 || value >= m.codeEnd) continue;
             if (!SafeAfterCall(value)) continue;
             char frame[48];
-            sprintf_s(frame, "%s%s+%#lx", found ? " < " : "", m.name, static_cast<unsigned long>(value - m.base));
+            Format(frame, "%s%s+%#lx", found ? " < " : "", m.name, static_cast<unsigned long>(value - m.base));
             out += frame;
             ++found;
         }
@@ -131,11 +131,11 @@ void Tick()
 void Report(LogFn log)
 {
     char line[1400];
-    sprintf_s(line, "HITSTACKS installed=%d calls=%u paths=%d", installed, calls, pathCount);
+    Format(line, "HITSTACKS installed=%d calls=%u paths=%d", installed, calls, pathCount);
     log(line);
     for (int i = 0; i < pathCount; ++i) {
         Path const& p = paths[i];
-        sprintf_s(line, "HITSTACK count=%u victim=%s other=%s delta=%d frames=%s", p.count, p.victim.c_str(), p.other.c_str(),
+        Format(line, "HITSTACK count=%u victim=%s other=%s delta=%d frames=%s", p.count, p.victim.c_str(), p.other.c_str(),
                   p.delta, p.frames.empty() ? "-" : p.frames.c_str());
         log(line);
     }

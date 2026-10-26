@@ -128,8 +128,10 @@ class Module : public eCEngineComponentBase
         g3t::remote::OnWorldDeactivate();
         g3t::npcs::OnWorldDeactivate();
         g3t::combat::OnWorldChange();
+        g3t::fightmem::OnWorldChange();
         g3t::talk::OnWorldChange();
         g3t::journal::OnWorldChange();
+        g3t::story::OnWorldChange();
         g3t::infocmd::OnWorldChange();
         g3t::guide::OnWorldChange();
         g3t::arena::OnWorldChange();

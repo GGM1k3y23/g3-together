@@ -36,6 +36,7 @@ void NpcHitsOff(LogFn log);  // QA negative control: our NPCs' hits on others' N
 void RemoteKnockOutsOff(LogFn log);  // QA negative control (P7): a client's lethal claim kills, never knocks out (as before 24.10.)
 void ShapeHitsOff(LogFn log);  // QA negative control (P6): an animal form's hits go out as one of our NPCs' (as before 24.10.)
 void ReactHitsOff(LogFn log);  // QA negative control: a client's hit does not make the host's NPC judge its attacker
+void AgressorOff(LogFn log);   // QA negative control: the struck NPC judges its attacker with AssessTarget (a friend fights at once)
 void ArenaRuleOff(LogFn log);  // QA negative control: hits on an NPC in a duel or arena bout count from anyone (as before)
 void ArenaReport(char const* name, LogFn log);  // QA: ARENA line (attack reason, target, refused hits, knock-outs)
 void NpcHp(char const* argument, LogFn log);  // QA: "Name_HP" sets an NPC's hit points
@@ -44,10 +45,10 @@ void Arm(char const* item, LogFn log);  // QA: give the hero this item template 
 bool LethalHit(eCEntity* victim);  // QA: kill through the game's own hit judgement
 void Guard(char const* shield, LogFn log);
 void NpcGuard(char const* argument, LogFn log);  // QA P4: "<guid>_<hero|puppetN>": the NPC parries that one for 15 s
-void NpcState(char const* guid, LogFn log);
+void NpcParade(char const* guid, LogFn log);       // QA P4: NPCPARADE line (that NPC's parade, stamina, hit points)
 void PuppetState(LogFn log);                      // QA P1: PUPPETSTATE line (player 2's puppet here)
 void PuppetParade(char const* guid, LogFn log);   // QA P4: PUPPETPARADE line (player 2's puppet against that NPC)
-void NpcStill(char const* guid, LogFn log);       // QA P4: the NPC stops (its fight too) and stands idle       // QA P4: NPCSTATE line
+void NpcStill(char const* guid, LogFn log);       // QA P4: the NPC stops (its fight too) and stands idle
 void HitProbe(char const* guid, LogFn log);  // QA P4: parade, strength and protection as the game judges them here  // QA P4: shield in the left hand, parrying, full stamina
 void Swing(char const* state, LogFn log);  // QA: the local hero swings as a key press would
 }

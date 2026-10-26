@@ -34,6 +34,7 @@ bool Together();  // reputation = together (the host's mode): what a witness hol
 void NoteRemoteKill(uint8_t const victim[16], uint8_t player, eCEntity* actor);
 void RemoteMurdersOff(LogFn log);            // QA negative control: such murders count nowhere (as before 24.10.)
 void TownStatusOff(LogFn log);               // QA negative control (stageLiberate): a town's status stays where it turned
+void PoliticalOff(LogFn log);                // QA negative control (stageBossNews): a freed town's political crime stays with its machine's hero
 void CreditHold(char const* ms, LogFn log);  // QA (credithold <ms>): personal credits count the killer as out of the world that long
 void CreditQueueOff(LogFn log);              // QA negative control: a credit for a killer out of the world is lost (as before 24.10.)
 // QA murdercand "<enclave>": its members with the game's own murder conditions. QA cheatkill "<NPC>": this machine's hero

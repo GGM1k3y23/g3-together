@@ -183,7 +183,7 @@ GEInt GE_STDCALL WatchHit(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid o
     applied ? ++hitsApplied : ++hitsBlocked;
     {
         const Entity owner = source.GetInstance() ? source.Interaction.GetOwner() : Entity();
-        sprintf_s(hitLines[hitLineCount++ % MaxHitLines], "SMNHIT victim=%s source=%s owner=%s owner_puppet_of=%d delta=%d hp=%d..%d applied=%d",
+        Format(hitLines[hitLineCount++ % MaxHitLines], "SMNHIT victim=%s source=%s owner=%s owner_puppet_of=%d delta=%d hp=%d..%d applied=%d",
                   NameOf(victim), NameOf(source), NameOf(owner), owner.GetInstance() ? remote::PuppetOwner(owner.GetInstance()) : 0,
                   args, before, after, applied ? 1 : 0);
     }
@@ -591,14 +591,14 @@ void WeatherFollowOff(LogFn log)
 void WeatherReport(LogFn log)
 {
     char line[120];
-    sprintf_s(line, "WEATHER follow=%d moved=%u known=%u", weatherFollow ? 1 : 0, weatherMoved, static_cast<unsigned>(known.size()));
+    Format(line, "WEATHER follow=%d moved=%u known=%u", weatherFollow ? 1 : 0, weatherMoved, static_cast<unsigned>(known.size()));
     log(line);
 }
 
 void Report(LogFn log)
 {
     char line[640];
-    sprintf_s(line, "SUMMONSTATE installed=%d watch=%d mirror=%d copy_owner=%d announced=%u unresolved=%u gone_sent=%u received=%u replayed=%u "
+    Format(line, "SUMMONSTATE installed=%d watch=%d mirror=%d copy_owner=%d announced=%u unresolved=%u gone_sent=%u received=%u replayed=%u "
                     "spawned_direct=%u no_puppet=%u copies_bound=%u copies_unbound=%u gone_applied=%u copies_ended_alone=%u known=%u "
                     "hits_applied=%u hits_blocked=%u area_hooked=%d area_ticks_skipped=%u area_ticks_run=%u creatures_announced=%u "
                     "creature_copies=%u creature_copy_failed=%u creature_copies_removed=%u",
@@ -628,7 +628,7 @@ void LateCopyCommand(char const* argument, LogFn log)
     const int ms = std::atoi(argument);
     lateCopyMs = ms > 0 && ms <= 30000 ? static_cast<uint32_t>(ms) : 0;
     char line[100];
-    sprintf_s(line, "SUMMONLATECOPY ms=%u (no Rebind)", lateCopyMs);
+    Format(line, "SUMMONLATECOPY ms=%u (no Rebind)", lateCopyMs);
     log(line);
 }
 
@@ -641,7 +641,7 @@ void Creatures(LogFn log)
         bCPropertyID::bSCore g;
         std::memcpy(&g, &proxy.GetEntityID().GetCore(), 16);
         const bCVector& at = c->GetWorldPosition();
-        sprintf_s(line, "CREATURE own name=%s guid=%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X at=%.0f_%.0f_%.0f dead=%d", NameOf(Entity(c)),
+        Format(line, "CREATURE own name=%s guid=%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X at=%.0f_%.0f_%.0f dead=%d", NameOf(Entity(c)),
                   g.Data1, g.Data2, g.Data3, g.Data4[0], g.Data4[1], g.Data4[2], g.Data4[3], g.Data4[4], g.Data4[5], g.Data4[6], g.Data4[7],
                   at.GetX(), at.GetY(), at.GetZ(), Entity(c).IsDead() ? 1 : 0);
         log(line);

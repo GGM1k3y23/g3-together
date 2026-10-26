@@ -192,12 +192,12 @@ void Report(char const* name, LogFn log)
         eCEntity* instance = npc.GetInstance();
         eCEntity* its = LeaderOf(instance);
         char part[200];
-        sprintf_s(part, " npc=%s found=%d leader=%s task=%s mirrored=%d claimed=%d", name, instance ? 1 : 0,
+        Format(part, " npc=%s found=%d leader=%s task=%s mirrored=%d claimed=%d", name, instance ? 1 : 0,
                   its ? Entity(its).GetName().GetText() : "-", instance ? npc.Routine.GetCurrentTask().GetText() : "-",
                   npcs::IsMirrored(instance) ? 1 : 0, npcs::Claimed(instance) ? 1 : 0);
         about = part;
     }
-    sprintf_s(line, "GUIDE on=%d hero_leader=%s held=%zu guides_taken=%u followers_taken=%u given=%u readopted=%u joins_started=%u%s",
+    Format(line, "GUIDE on=%d hero_leader=%s held=%zu guides_taken=%u followers_taken=%u given=%u readopted=%u joins_started=%u%s",
               on ? 1 : 0, leader ? Entity(leader).GetName().GetText() : "-", held.size(), guidesTaken, followersTaken, given, readopted,
               joinsStarted, about.c_str());
     log(line);

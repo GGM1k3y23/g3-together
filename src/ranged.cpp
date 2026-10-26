@@ -91,12 +91,12 @@ void Inventory(LogFn log)
     for (GEInt i = 0; i < self.Inventory.GetStackCount(); ++i) {
         Entity item = self.Inventory.GetTemplateItem(i);
         if (!item.GetInstance()) continue;
-        sprintf_s(line, "INV name=%s amount=%d use=%d category=%d", item.GetName().GetText(), self.Inventory.GetAmount(i),
+        Format(line, "INV name=%s amount=%d use=%d category=%d", item.GetName().GetText(), self.Inventory.GetAmount(i),
                   static_cast<int>(item.Interaction.GetUseType()), static_cast<int>(item.Item.GetCategory()));
         log(line);
     }
     char right[64], left[64];
-    sprintf_s(line, "INV end count=%d right=%s left=%s", self.Inventory.GetStackCount(), HeldName(self, gESlot_RightHand, right, sizeof(right)),
+    Format(line, "INV end count=%d right=%s left=%s", self.Inventory.GetStackCount(), HeldName(self, gESlot_RightHand, right, sizeof(right)),
               HeldName(self, gESlot_LeftHand, left, sizeof(left)));
     log(line);
 }
@@ -108,7 +108,7 @@ void Ready(char const* item, LogFn log)
     char line[400], right[64], left[64], ammoInfo[160] = "";
     Entity self = Player();
     const Template templ(item);
-    if (!self.GetInstance() || !templ.IsValid()) { sprintf_s(line, "READY refused item=%s valid=%d", item, templ.IsValid() ? 1 : 0); log(line); return; }
+    if (!self.GetInstance() || !templ.IsValid()) { Format(line, "READY refused item=%s valid=%d", item, templ.IsValid() ? 1 : 0); log(line); return; }
     if (self.Inventory.GetItemAmount(templ) < 1) self.Inventory.CreateItems(templ, 0, 1);
     const GEInt stack = self.Inventory.FindStackIndex(templ);
     Entity carried = stack >= 0 ? self.Inventory.GetTemplateItem(stack) : Entity();
@@ -129,7 +129,7 @@ void Ready(char const* item, LogFn log)
             ++reloadFallbacks;
             held = self.Inventory.HoldRightStack(arrows);
         }
-        sprintf_s(ammoInfo, " ammo_stack=%d ammo_amount=%d ammo_slot=%d right_stack=%d fallbacks=%d", arrows,
+        Format(ammoInfo, " ammo_stack=%d ammo_amount=%d ammo_slot=%d right_stack=%d fallbacks=%d", arrows,
                   arrows >= 0 ? self.Inventory.GetAmount(arrows) : -1, arrows >= 0 ? static_cast<int>(self.Inventory.GetSlotFromStack(arrows)) : -1,
                   self.Inventory.FindStackIndex(gESlot_RightHand), reloadFallbacks);
     } else {
@@ -141,7 +141,7 @@ void Ready(char const* item, LogFn log)
         Entity inHand = self.Inventory.GetItemFromSlot(slot);
         if (inHand.GetInstance()) inHand.EnableCollision(GEFalse);
     }
-    sprintf_s(line, "READY item=%s use=%d stack=%d held=%d right=%s left=%s%s", item, static_cast<int>(use), stack, held ? 1 : 0,
+    Format(line, "READY item=%s use=%d stack=%d held=%d right=%s left=%s%s", item, static_cast<int>(use), stack, held ? 1 : 0,
               HeldName(self, gESlot_RightHand, right, sizeof(right)), HeldName(self, gESlot_LeftHand, left, sizeof(left)), ammoInfo);
     log(line);
 }
@@ -162,7 +162,7 @@ void Target(char const* guid, LogFn log)
     self.SetAlignmentTarget(target);
     self.Focus.SetFocusEntity(target);
     const float dx = to.GetX() - from.GetX(), dz = to.GetZ() - from.GetZ();
-    sprintf_s(line, "TARGET name=%s distance_cm=%.0f focus=%s", target.GetName().GetText(), std::sqrt(dx * dx + dz * dz),
+    Format(line, "TARGET name=%s distance_cm=%.0f focus=%s", target.GetName().GetText(), std::sqrt(dx * dx + dz * dz),
               self.Focus.GetFocusEntity().GetInstance() ? self.Focus.GetFocusEntity().GetName().GetText() : "-");
     log(line);
 }
@@ -178,7 +178,7 @@ void Act(char const* taskAndState, LogFn log)
     if (std::strcmp(before.GetText(), task) != 0) self.Routine.SetTask(bCString(task));
     self.Routine.SetState(bCString(dash + 1));
     body::CurrentMotion(self.GetInstance(), motion, sizeof(motion));
-    sprintf_s(line, "ACT task_before=%s task=%s state=%s motion=%s", before.GetText(), self.Routine.GetCurrentTask().GetText(),
+    Format(line, "ACT task_before=%s task=%s state=%s motion=%s", before.GetText(), self.Routine.GetCurrentTask().GetText(),
               self.Routine.GetCurrentState().GetText(), motion);
     log(line);
 }
@@ -195,7 +195,7 @@ void FinishAt(char const* guid, LogFn log)
     self.NPC.SetCurrentTarget(target);
     if (std::strcmp(self.Routine.GetCurrentTask().GetText(), "PS_Melee") != 0) self.Routine.SetTask(bCString("PS_Melee"));
     self.Routine.SetState(bCString("PS_Melee_FinishingAttack"));
-    sprintf_s(line, "FINISHAT name=%s target_task=%s task=%s state=%s", target.GetName().GetText(), target.Routine.GetCurrentTask().GetText(),
+    Format(line, "FINISHAT name=%s target_task=%s task=%s state=%s", target.GetName().GetText(), target.Routine.GetCurrentTask().GetText(),
               self.Routine.GetCurrentTask().GetText(), self.Routine.GetCurrentState().GetText());
     log(line);
 }
@@ -468,7 +468,7 @@ void Tick()
     }
     const DWORD waited = GetTickCount() - pending.since;
     if (!spawned && waited < 2000) return;
-    sprintf_s(line,
+    Format(line,
               "SHOOTAT result=%d spawned=%d flying=%d mode=%d waited_ms=%lu target=%s distance_cm=%.0f right=%s held_multiplier=%.2f "
               "script_path=%d script_velocity=%.0f script_group=%d around=%s parts_off=%s others=%s held_cm=%.0f",
               pending.result, spawned, flying, pending.mode, waited, target.GetName().GetText(), distance,
@@ -486,19 +486,19 @@ void LastArrow(LogFn log)
     char line[900], path[560] = "";  // at most 16 samples of 33 chars; Log takes 1024
     for (auto const& [t, at] : trace.points) {
         char point[48];
-        sprintf_s(point, at.GetY() < -99998.0f ? "%lu:gone," : "%lu:%.0f_%.0f_%.0f,", t, at.GetX(), at.GetY(), at.GetZ());
+        Format(point, at.GetY() < -99998.0f ? "%lu:gone," : "%lu:%.0f_%.0f_%.0f,", t, at.GetX(), at.GetY(), at.GetZ());
         strncat_s(path, point, _TRUNCATE);
     }
     if (Entity arrow = LastArrowEntity(); arrow.GetInstance()) {
         const bCVector at = arrow.GetPosition();
         const float toTarget = lastTarget ? (Entity(lastTarget).GetPosition() - at).GetMagnitude() : -1.0f;
-        sprintf_s(line, "LASTARROW at=%.0f_%.0f_%.0f flying=%d path=%d velocity=%.0f to_target_cm=%.0f group=%d trace=%s", at.GetX(), at.GetY(),
+        Format(line, "LASTARROW at=%.0f_%.0f_%.0f flying=%d path=%d velocity=%.0f to_target_cm=%.0f group=%d trace=%s", at.GetX(), at.GetY(),
                   at.GetZ(), arrow.Projectile.IsFlying() ? 1 : 0, static_cast<int>(static_cast<gEProjectilePath>(arrow.Projectile.PathStyle)),
                   static_cast<float>(arrow.Projectile.ShootVelocity), toTarget, static_cast<int>(arrow.GetInstance()->GetCollisionGroup()), path);
         log(line);
         return;
     }
-    sprintf_s(line, "LASTARROW gone trace=%s", path);
+    Format(line, "LASTARROW gone trace=%s", path);
     log(line);
 }
 
@@ -529,7 +529,7 @@ void CastAt(char const* guid, LogFn log)
         script = type == gESpellType_Projectile ? "MagicProjectile" : type == gESpellType_Target ? "MagicInstant" : "MagicSummon";
     const Entity spawn = spell.Magic.GetSpawn();
     const GEInt result = admin.CallScript(script, self.GetInstance(), target.GetInstance(), stack);
-    sprintf_s(line, "CASTAT spell=%s type=%d script=%s spawn=%s stack=%d cost=%d result=%d mana=%d..%d target=%s", spell.GetName().GetText(),
+    Format(line, "CASTAT spell=%s type=%d script=%s spawn=%s stack=%d cost=%d result=%d mana=%d..%d target=%s", spell.GetName().GetText(),
               static_cast<int>(type), script.GetText(), spawn.GetInstance() ? spawn.GetName().GetText() : "-", stack, cost, result,
               manaBefore, ManaOf(self.GetInstance()), target.GetName().GetText());
     log(line);
@@ -548,19 +548,19 @@ void Summons(LogFn log)
         ++count;
         char sets[200] = "", number[8];
         for (int t = 1; t < 120; ++t)
-            if (instance->GetPropertySet(static_cast<eEPropertySetType>(t))) { sprintf_s(number, "%d,", t); strcat_s(sets, number); }
+            if (instance->GetPropertySet(static_cast<eEPropertySetType>(t))) { Format(number, "%d,", t); strcat_s(sets, number); }
         const eCEntityProxy proxy(instance);
         const _GUID& g = reinterpret_cast<_GUID const&>(proxy.GetEntityID().GetCore());
         const bCVector at = e.GetPosition();
         const Entity owner = e.Interaction.GetOwner();
-        sprintf_s(line, "SUMMON name=%s guid=%08lX-%04X-%04X at=%.0f_%.0f_%.0f owner=%s puppet_owner=%d flying=%d task=%s sets=%s", e.GetName().GetText(),
+        Format(line, "SUMMON name=%s guid=%08lX-%04X-%04X at=%.0f_%.0f_%.0f owner=%s puppet_owner=%d flying=%d task=%s sets=%s", e.GetName().GetText(),
                   g.Data1, g.Data2, g.Data3, at.GetX(), at.GetY(), at.GetZ(), owner.GetInstance() ? owner.GetName().GetText() : "-",
                   owner.GetInstance() ? remote::PuppetOwner(owner.GetInstance()) : 0,
                   instance->GetPropertySet(eEPropertySetType_Projectile) && e.Projectile.IsFlying() ? 1 : 0,
                   instance->GetPropertySet(eEPropertySetType_ScriptRoutine) ? e.Routine.GetCurrentTask().GetText() : "-", sets);
         log(line);
     }
-    sprintf_s(line, "SUMMONS end count=%d", count);
+    Format(line, "SUMMONS end count=%d", count);
     log(line);
 }
 
@@ -572,7 +572,7 @@ void Mana(LogFn log)
     Entity self(hero);
     if (self.PlayerMemory.GetManaPointsMax() < 200) self.PlayerMemory.SetManaPointsMax(200);
     self.PlayerMemory.SetManaPoints(self.PlayerMemory.GetManaPointsMax());
-    sprintf_s(line, "MANA now=%d max=%d", self.PlayerMemory.GetManaPoints(), self.PlayerMemory.GetManaPointsMax());
+    Format(line, "MANA now=%d max=%d", self.PlayerMemory.GetManaPoints(), self.PlayerMemory.GetManaPointsMax());
     log(line);
 }
 
@@ -590,14 +590,14 @@ void Flying(LogFn log)
             if (!projectiles) {
                 strncpy_s(first, e.GetName().GetText(), _TRUNCATE);
                 const bCVector& at = instance->GetWorldPosition();
-                sprintf_s(where, "%.0f_%.0f_%.0f", at.GetX(), at.GetY(), at.GetZ());
+                Format(where, "%.0f_%.0f_%.0f", at.GetX(), at.GetY(), at.GetZ());
             }
             ++projectiles;
         }
     }
     for (int i = 0; i < all.GetCount(); ++i)  // the meteor is a spawned entity (Smn_Meteor, MagicSummon), not the spell item
         if (all.GetAt(i).GetInstance() && !std::strncmp(all.GetAt(i).GetName().GetText(), "Smn_", 4)) ++meteors;
-    sprintf_s(line, "FLYING projectiles=%d first=%s at=%s meteors=%d", projectiles, first, where, meteors);
+    Format(line, "FLYING projectiles=%d first=%s at=%s meteors=%d", projectiles, first, where, meteors);
     log(line);
 }
 }

@@ -35,6 +35,11 @@ bool installed = false, enabled = true;  // enabled: QA negative control trespas
 // the puppet check had the rebels there notice the sneaking client at once (stageSneak 25.10., cause not found; giving
 // GetAttitude the hero as the player too changed nothing). QA sneakcheckon: checked again (negative control).
 bool sneakCheck = false;
+// Entering a zone is not sent for puppets: the game never sends SendPerceptionEnterZone for its own player (no caller,
+// only its registration; stageEnterHome G3_WHO=host 26.10.: 0 calls, re/findings/p7-attitudes-20261026-b.md), so the
+// owner of a home never came after the player in single-player but did after the puppet (owner 26.10.: take it out).
+// QA enterzoneon: sent again (negative control).
+bool enterZone = false;
 DWORD lastTry = 0;
 eCEntity* actor = nullptr;  // the puppet that stands for the game's player now
 int depth = 0;
@@ -42,7 +47,7 @@ unsigned checks = 0, reactions = 0, stateRuns = 0;
 std::unordered_map<eCEntity*, DWORD> lastCheck;  // per NPC: its look around runs every frame in some states
 // Entering a place: the game tells the NPCs when its player walks into a zone (SendPerceptionEnterZone, 0x33170, called
 // by name; AssessPlayerEnterZone 0x30000 sends the owner of a home there after the player, ZS_GotoPlayerZone;
-// re/out/p7-enterzone-b.c). For the other players this machine watches their puppets' zones itself.
+// re/out/p7-enterzone-b.c). It has no caller in the game, though, so this is sent for puppets only with QA enterzoneon.
 eCEntity* zoneOf[net::MaxPlayers + 1] = {};
 DWORD lastZoneLook = 0;
 unsigned zonesEntered = 0;
@@ -217,6 +222,73 @@ GEBool GE_STDCALL OnWeapon(gCScriptProcessingUnit* spu)
     return originalOnWeapon(spu);
 }
 
+// A sleeping animal (ZS_AnimalSleep, AI mode 7) checks in its task callback OnAnimalSleep (Script_Game.dll 0x89f20,
+// re/out/animalsleep-20261026-b.c) whether Entity::GetPlayer comes within 10 m (5 m sneaking; never with Perk_Sneak_2 when
+// sneaking or aiming), and wakes and attacks it unless friendly or neutral. Only this machine's hero woke it; while it still
+// sleeps after that, each puppet within 11 m is the game's player for the same check. QA animalwakeoff: not.
+gFScriptAICallback originalOnSleep = nullptr;
+bool animalWake = true;
+unsigned sleepChecks = 0, sleepWakes = 0;
+
+GEBool GE_STDCALL OnAnimalSleep(gCScriptProcessingUnit* spu)
+{
+    eCEntity* animal = spu ? spu->GetSelfEntity() : nullptr;
+    const GEBool result = originalOnSleep(spu);
+    if (!animalWake || depth || !animal || !net::Connected() || !animal->GetPropertySet(eEPropertySetType_NPC) ||
+        remote::IsPuppet(animal) || npcs::IsMirrored(animal))
+        return result;
+    Entity self(animal);
+    const bCString asleep = self.Routine.GetCurrentState();
+    if (!std::strstr(asleep.GetText(), "Sleep")) return result;  // the game's own player woke it
+    for (int id = 1; id <= net::MaxPlayers; ++id) {
+        eCEntity* puppet = remote::PuppetOf(id);
+        if (!puppet || Distance(animal, puppet) > 1100.0f) continue;
+        ++sleepChecks;
+        ++depth;
+        GEBool again;
+        {
+            Acting acting(puppet);
+            again = originalOnSleep(spu);
+        }
+        --depth;
+        if (std::strcmp(self.Routine.GetCurrentState().GetText(), asleep.GetText())) {
+            ++sleepWakes;
+            remote::NoteContact(animal, puppet);
+            Logf("guards: %s wakes up for player %d (%.0f m; task %s, target %s)", self.GetName().GetText(), id, Distance(animal, puppet) / 100.0f,
+                 self.Routine.GetCurrentTask().GetText(),
+                 self.NPC.GetCurrentTarget().GetInstance() ? self.NPC.GetCurrentTarget().GetName().GetText() : "-");
+            return again;
+        }
+    }
+    return result;
+}
+
+// An NPC whose way ended at a taken destination waits (EndGoto, goto status 6: ZS_WaitForFreeDestination) and its loop
+// (0x42db0) goes on with its routine once Entity::GetPlayer is more than 1.5 m from that destination: it waited only for
+// this machine's hero. While another player stands nearer the destination than the hero, that puppet is the game's
+// player for the loop. QA freedestoff: not.
+bool freeDest = true;
+unsigned waitActs = 0;
+
+eCEntity* WaitActor(eCEntity* self)
+{
+    if (!freeDest || !net::Connected() || remote::IsPuppet(self) || npcs::IsMirrored(self)) return nullptr;
+    Entity dest = Entity(self).Navigation.GetCurrentDestinationPoint();
+    eCEntity* point = dest.GetInstance();
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    if (!point || !hero) return nullptr;
+    float best = Distance(hero, point);
+    eCEntity* nearest = nullptr;
+    for (int id = 1; id <= net::MaxPlayers; ++id) {
+        eCEntity* puppet = remote::PuppetOf(id);
+        if (!puppet) continue;
+        const float d = Distance(puppet, point);
+        if (d < best) { best = d; nearest = puppet; }
+    }
+    if (nearest) ++waitActs;
+    return nearest;
+}
+
 // The reaction states that ask Entity::GetPlayer for the one they react to (re/out/callees-states-d1.tsv), and those
 // that lead into them.
 bool FollowsPlayer(char const* state)
@@ -229,9 +301,30 @@ bool FollowsPlayer(char const* state)
 }
 }
 
+// The scripts read the story chapter of Entity::GetPlayer (GetPoliticalAttitude: in chapter 2 the Hashishin and the orcs are
+// enemies; re/out/p7-half-20261026-b.c 0xf620). A puppet is made from the hero's template with chapter 0 (attchain 26.10.: the
+// host's hero 1, the puppet 0), so while it stands for the player it carries the chapter, which story.cpp shares among the
+// heroes: the local hero's. QA chaptercopyoff: not.
+bool chapterCopy = true;
+unsigned chaptersSet = 0;
+
+static void KeepChapter(eCEntity* puppet)
+{
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    if (!chapterCopy || !hero || !puppet->GetPropertySet(eEPropertySetType_PlayerMemory) || !hero->GetPropertySet(eEPropertySetType_PlayerMemory)) return;
+    Entity body(puppet), self(hero);
+    const GEI32 chapter = self.PlayerMemory.Chapter;
+    if (static_cast<GEI32>(body.PlayerMemory.Chapter) == chapter) return;
+    body.PlayerMemory.Chapter = chapter;
+    ++chaptersSet;
+}
+
 Acting::Acting(eCEntity* puppet) : before(actor)
 {
-    if (puppet) actor = puppet;
+    if (puppet) {
+        KeepChapter(puppet);
+        actor = puppet;
+    }
 }
 
 Acting::~Acting() { actor = before; }
@@ -240,7 +333,9 @@ eCEntity* CurrentActor() { return actor; }
 
 eCEntity* StateActor(eCEntity* self, char const* state)
 {
-    if (!installed || !enabled || !self || !state || !FollowsPlayer(state) || !self->GetPropertySet(eEPropertySetType_NPC)) return nullptr;
+    if (!installed || !self || !state || !self->GetPropertySet(eEPropertySetType_NPC)) return nullptr;
+    if (!std::strcmp(state, "ZS_WaitForFreeDestination_Loop")) return WaitActor(self);  // its own switch: freedestoff
+    if (!enabled || !FollowsPlayer(state)) return nullptr;
     eCEntity* target = Entity(self).NPC.GetCurrentTarget().GetInstance();
     if (!target || !remote::IsPuppet(target)) return nullptr;
     ++stateRuns;
@@ -258,7 +353,7 @@ static void WatchZones()
         eCEntity* zone = puppet ? Entity(puppet).GetZone().GetInstance() : nullptr;
         if (zone == zoneOf[id]) continue;
         zoneOf[id] = zone;
-        if (!zone) continue;
+        if (!zone || !enterZone) continue;
         ++zonesEntered;
         ++depth;
         {
@@ -304,24 +399,41 @@ void Tick()
             } else if (!std::strcmp(name.GetText(), "OnReactToWeapon") && callback->m_funcScriptAICallback != &OnWeapon) {
                 originalOnWeapon = callback->m_funcScriptAICallback;
                 callback->m_funcScriptAICallback = &OnWeapon;
+            } else if (!std::strcmp(name.GetText(), "OnAnimalSleep") && callback->m_funcScriptAICallback != &OnAnimalSleep) {
+                originalOnSleep = callback->m_funcScriptAICallback;
+                callback->m_funcScriptAICallback = &OnAnimalSleep;
             }
         }
     }
     installed = true;
     Logf("guards: GetPlayer %s, IsPlayer %s, AssessActivePerception %s, OnReactToZone %s, OnReactToWeapon %s, "
-         "HasAttackReasonToKill %s",
+         "HasAttackReasonToKill %s, OnAnimalSleep %s",
          originalGetPlayer ? "redirectable" : "not found", originalIsPlayer ? "redirectable" : "not found",
          originalPerceive ? "wrapped" : "not wrapped", originalOnZone ? "wrapped" : "not found", originalOnWeapon ? "wrapped" : "not found",
-         originalKill ? "wrapped" : "not wrapped");
+         originalKill ? "wrapped" : "not wrapped", originalOnSleep ? "wrapped" : "not found");
 }
 
 void Report(LogFn log)
 {
-    char line[320];
-    sprintf_s(line, "GUARDS installed=%d enabled=%d perceive=%d checks=%u reactions=%u state_runs=%u zones_entered=%u fights=%d kill_asked=%u kill_yes=%u zones_set=%u",
+    char line[480];
+    Format(line, "GUARDS installed=%d enabled=%d perceive=%d checks=%u reactions=%u state_runs=%u zones_entered=%u fights=%d kill_asked=%u kill_yes=%u zones_set=%u"
+                    " chapter_copy=%d chapters_set=%u animal_wake=%d sleep_wrapped=%d sleep_checks=%u sleep_wakes=%u free_dest=%d wait_acts=%u",
               installed ? 1 : 0, enabled ? 1 : 0, originalPerceive ? 1 : 0, checks, reactions, stateRuns, zonesEntered, fightsOn ? 1 : 0,
-              killAsked, killYes, zonesSet);
+              killAsked, killYes, zonesSet, chapterCopy ? 1 : 0, chaptersSet, animalWake ? 1 : 0, originalOnSleep ? 1 : 0, sleepChecks,
+              sleepWakes, freeDest ? 1 : 0, waitActs);
     log(line);
+}
+
+void AnimalWakeOff(LogFn log)
+{
+    animalWake = false;
+    log("ANIMALWAKEOFF ok=1");
+}
+
+void FreeDestOff(LogFn log)
+{
+    freeDest = false;
+    log("FREEDESTOFF ok=1");
 }
 
 void Off(LogFn log)
@@ -336,6 +448,12 @@ void FightsOff(LogFn log)
     log("FIGHTSOFF ok=1");
 }
 
+void ChapterCopyOff(LogFn log)
+{
+    chapterCopy = false;
+    log("CHAPTERCOPYOFF ok=1");
+}
+
 void ZoneFixOff(LogFn log)
 {
     zoneFix = false;
@@ -346,6 +464,12 @@ void SneakCheckOn(LogFn log)
 {
     sneakCheck = true;
     log("SNEAKCHECKON ok=1");
+}
+
+void EnterZoneOn(LogFn log)
+{
+    enterZone = true;
+    log("ENTERZONEON ok=1");
 }
 
 // NPCs within `radius` cm of the local hero whose home (the zone of their sleeping point) they are not in now: where a
@@ -368,10 +492,16 @@ void Homes(char const* argument, LogFn log)
         if (!home.GetInstance() || (!all && home.GetInstance() == now.GetInstance())) continue;
         const bCVector& at = bed.GetInstance()->GetWorldPosition();
         const bCVector& zone = home.GetInstance()->GetWorldPosition();
-        sprintf_s(line, "HOME npc=%s home=%s now=%s bed=%.0f,%.0f,%.0f zone_at=%.0f,%.0f,%.0f distance=%.0f mirrored=%d at_home=%d",
+        // 26.10. (pair 1): AssessPlayerEnterZone sends the owner only where the home zone's attitude to the player is not
+        // friendly (GetZoneAttitudeToPlayer with the zone as self: its AI owner, security level and the player's fame).
+        Entity owner = home.GetAIZoneOwner();
+        const GEInt zatt = GetScriptAdminExt().CallScript(bCString("GetZoneAttitudeToPlayer"), home.GetInstance(), nullptr, 0);
+        Format(line, "HOME npc=%s home=%s now=%s bed=%.0f,%.0f,%.0f zone_at=%.0f,%.0f,%.0f distance=%.0f mirrored=%d at_home=%d security=%d"
+                        " zone_owner=%s zatt=%d",
                   npc.GetName().GetText(), home.GetName().GetText(), now.GetInstance() ? now.GetName().GetText() : "-", at.GetX(), at.GetY(),
                   at.GetZ(), zone.GetX(), zone.GetY(), zone.GetZ(), Distance(hero, npc.GetInstance()), npcs::IsMirrored(npc.GetInstance()) ? 1 : 0,
-                  home.GetInstance() == now.GetInstance() ? 1 : 0);
+                  home.GetInstance() == now.GetInstance() ? 1 : 0, static_cast<int>(home.GetAIZoneSecurityLevel()),
+                  owner.GetInstance() ? owner.GetName().GetText() : "-", static_cast<int>(zatt));
         log(line);
     }
     log("HOMES end");
@@ -390,7 +520,7 @@ void Sneak(char const* on, LogFn log)
     if (HMODULE game = GetModuleHandleA("Script_Game.dll")) *(reinterpret_cast<volatile uint8_t*>(game) + 0x118b42) = sneak ? 1 : 0;
     if (!std::strcmp(self.Routine.GetCurrentTask().GetText(), "PS_Normal")) self.Routine.SetState(bCString(sneak ? "PS_Normal_Sneak" : "PS_Normal_Loop"));
     self.Routine.AniState = sneak ? gEAniState_Sneak : gEAniState_Stand;
-    sprintf_s(line, "SNEAK on=%d ani_state=%d task=%s state=%s", sneak ? 1 : 0, static_cast<int>(self.Routine.AniState),
+    Format(line, "SNEAK on=%d ani_state=%d task=%s state=%s", sneak ? 1 : 0, static_cast<int>(self.Routine.AniState),
               self.Routine.GetCurrentTask().GetText(), self.Routine.GetCurrentState().GetText());
     log(line);
 }

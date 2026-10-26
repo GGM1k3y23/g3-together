@@ -21,7 +21,7 @@ This checklist also covers recording bugs and collecting logs with `tools\collec
 - [ ] Choose a LAN or private VPN connection. Share the host's address and firewall details privately with the other
   player. The host needs incoming UDP on port 34567. Human play over the real internet remains unverified.
 - [ ] Both players record their role and local time zone for later bug reports.
-- [ ] Optional: set up with `Setup.cmd` (German: `Einrichten.cmd`) from the package instead of copying by hand, and note
+- [ ] Optional: set up with `Setup.cmd` (German: `Einrichten.cmd`, Polish: `Instalacja.cmd`) from the package instead of copying by hand, and note
   anything it got wrong. It has only been tried on test folders.
 
 ### INI and compatibility
@@ -52,8 +52,9 @@ language = en
 `offer_decline_key` (default Insert and Delete) answer a trade offer. A missing INI starts the mod in host mode,
 so check that the joining PC has `role = client` before starting.
 
-English is the default for mod messages, as quoted below. Set `language = de` for German. Players
-can choose independently; the setting changes only mod messages.
+The example INIs use `language = en`, matching the messages quoted below. `language = de` and `language = pl` give
+German and Polish messages; `language = auto` (what the setup writes) follows the game's text language. Players can
+choose independently; the setting changes only mod messages.
 
 - [ ] Both players have identical mod DLLs and installation files. The host checks Game.dll, Script.dll, Engine.dll,
   DLLs in `scripts`, rules archives, names and sizes of other Data archives, game options and the entire `[Game]`
@@ -125,6 +126,16 @@ and saving on the host. Test separate regions and rejoining in a follow-up sessi
 | Chapter | One player hands over the artefacts at a god's shrine: the chapter changes for both (other NPCs talk to both players as in the new chapter). |
 | The end | One player starts the epilogue: the other sees the same pictures at the same time, up to the game's end. Note what happens to the connection afterwards. |
 | Swimming | The joining player swims forward in the sea: the host sees that player swim, not glide. |
+
+### Optional: the features of 0.6.0
+
+| Stage | Steps and observations |
+|---|---|
+| Polish | A player with the game's subtitles in Polish (options menu) sees the mod's messages in Polish, for example when going far from the host. |
+| The end, busy | One player starts the epilogue while the other is in a dialog: the other sees a message and the epilogue starts when the dialog ends. |
+| Story moves | After Ardea is freed, both players go far away: Diego, Gorn and Milten stand at the same new places on both PCs. With Diego following the joining player, he stays with that player. |
+| Freed town | The joining player frees a town with shared reputation: the rebels speak to the host about it as to the joining player. |
+| Sleeping animal | The joining player walks up to a sleeping animal: it wakes up as it would for the host. |
 
 ## Recording a bug
 

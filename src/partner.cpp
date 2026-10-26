@@ -42,9 +42,9 @@ void KeyName(int code, char* out, size_t size)
     char const* named = code == VK_NEXT ? "PAGEDOWN" : code == VK_PRIOR ? "PAGEUP" : code == VK_HOME ? "HOME" : code == VK_END ? "END"
                         : code == VK_INSERT ? "INSERT" : code == VK_DELETE ? "DELETE" : nullptr;
     if (named) strcpy_s(out, size, named);
-    else if (code >= VK_F1 && code <= VK_F24) sprintf_s(out, size, "F%d", code - VK_F1 + 1);
-    else if ((code >= 'A' && code <= 'Z') || (code >= '0' && code <= '9')) sprintf_s(out, size, "%c", code);
-    else sprintf_s(out, size, "0x%02X", code);
+    else if (code >= VK_F1 && code <= VK_F24) Format(out, size, "F%d", code - VK_F1 + 1);
+    else if ((code >= 'A' && code <= 'Z') || (code >= '0' && code <= '9')) Format(out, size, "%c", code);
+    else Format(out, size, "0x%02X", code);
 }
 
 // The game window of this process has the keyboard (two test copies on one PC: only the focused one reacts).
@@ -124,7 +124,7 @@ void JumpQa(LogFn log)
     char const* reason = "";
     const bool ok = Jump(&reason);
     char line[160];
-    sprintf_s(line, "PARTNERJUMP ok=%d reason=%s jumps=%u refused=%u", ok ? 1 : 0, reason, jumps, refused);
+    Format(line, "PARTNERJUMP ok=%d reason=%s jumps=%u refused=%u", ok ? 1 : 0, reason, jumps, refused);
     log(line);
 }
 }

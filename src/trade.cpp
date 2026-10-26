@@ -511,7 +511,7 @@ bool OnOpen(eCEntity* body)
 void Report(LogFn log)
 {
     char line[500];
-    sprintf_s(line, "TRADESYNC goods_sent=%u serial=%u own_items=%zu own_gold=%d goods_received=%u partner=%d fills=%u swaps=%u offers=%u accepted=%u"
+    Format(line, "TRADESYNC goods_sent=%u serial=%u own_items=%zu own_gold=%d goods_received=%u partner=%d fills=%u swaps=%u offers=%u accepted=%u"
                     " declined=%u undone=%u not_sent=%u pending=%zu hero_releases=%u price_hooked=%d price_calls=%u price_equal=%u", goodsSent, serial,
               sentItems.size(), sentGold, goodsReceived, partner, fills, swaps, offersSent, offersAccepted, offersDeclined, undone, notSent,
               pending.size(), heroReleases, costHooked ? 1 : 0, costCalls, costEqual);
@@ -559,15 +559,15 @@ void GoodsReport(char const* argument, LogFn log)
         else known = false;
     }
     if (!known) {
-        sprintf_s(line, "PLAYERGOODS %s unknown", who);
+        Format(line, "PLAYERGOODS %s unknown", who);
     } else if (only) {
         int amount = 0;
         for (auto const& [key, n] : items)
             if (!std::strcmp(NameOf(key), only) && (onlyQuality < 0 || RawQuality(key) == onlyQuality)) amount += n;
-        sprintf_s(line, "PLAYERGOODS %s serial=%u item=%s:%d gold=%d stacks_normal=%d stacks_treasure=%d stacks_merchandise=%d", who, serialOut, only,
+        Format(line, "PLAYERGOODS %s serial=%u item=%s:%d gold=%d stacks_normal=%d stacks_treasure=%d stacks_merchandise=%d", who, serialOut, only,
                   amount, gold, types[0], types[1], types[2]);
     } else {
-        sprintf_s(line, "PLAYERGOODS %s serial=%u %s", who, serialOut, Describe(items, gold).c_str());
+        Format(line, "PLAYERGOODS %s serial=%u %s", who, serialOut, Describe(items, gold).c_str());
     }
     log(line);
 }
@@ -633,7 +633,7 @@ void Price(char const* argument, LogFn log)
     const GEInt sell = mine >= 0 ? GetScriptAdminExt().CallScript(bCString("OnPlayerGetGoldCost"), partnerBody, heroBody, mine) : -1;
     const GEInt value = theirs >= 0 ? other.Inventory.GetTemplateItem(theirs).Item.GetGoldValue()
                                     : mine >= 0 ? hero.Inventory.GetTemplateItem(mine).Item.GetGoldValue() : -1;
-    sprintf_s(line, "TRADEPRICE partner=%s item=%s buy=%d sell=%d value=%d hooked=%d calls=%u equal=%u no_entity=%u no_puppet=%u", who, name, buy,
+    Format(line, "TRADEPRICE partner=%s item=%s buy=%d sell=%d value=%d hooked=%d calls=%u equal=%u no_entity=%u no_puppet=%u", who, name, buy,
               sell, value, costHooked ? 1 : 0, costCalls, costEqual, costNoEntity, costNoPuppet);
     log(line);
 }
@@ -669,7 +669,7 @@ void GiveQuality(char const* argument, LogFn log)
     if (!self || !item.IsValid() || quality >= 1024) { log("REFUSED givequality: no hero, no such item or quality above 1023"); return; }
     Entity hero(self);
     const GEInt stack = hero.Inventory.CreateItems(item, quality, 1);
-    sprintf_s(line, "GIVEQUALITY name=%s quality=%u stack=%d got=%u", name, quality, stack, stack >= 0 ? hero.Inventory.GetQuality(stack) : 0u);
+    Format(line, "GIVEQUALITY name=%s quality=%u stack=%d got=%u", name, quality, stack, stack >= 0 ? hero.Inventory.GetQuality(stack) : 0u);
     log(line);
 }
 
@@ -687,9 +687,9 @@ void QualityCount(char const* name, LogFn log)
             byQuality[hero.Inventory.GetQuality(i)] += hero.Inventory.GetAmount(i);
             total += hero.Inventory.GetAmount(i);
         }
-    int at = sprintf_s(line, "QUALITYCOUNT name=%s total=%d", name, total);
+    int at = Format(line, "QUALITYCOUNT name=%s total=%d", name, total);
     for (auto const& [quality, amount] : byQuality)
-        if (at > 0 && at < static_cast<int>(sizeof(line)) - 24) at += sprintf_s(line + at, sizeof(line) - at, " q%u=%d", quality, amount);
+        if (at > 0 && at < static_cast<int>(sizeof(line)) - 24) at += Format(line + at, sizeof(line) - at, " q%u=%d", quality, amount);
     log(line);
 }
 
@@ -703,7 +703,7 @@ void CloseCommand(LogFn log)
     Entity hero(self);
     hero.Routine.FullStop();
     hero.Routine.ContinueRoutine();
-    sprintf_s(line, "TRADECLOSE task=%s state=%s", hero.Routine.GetCurrentTask().GetText(), hero.Routine.GetCurrentState().GetText());
+    Format(line, "TRADECLOSE task=%s state=%s", hero.Routine.GetCurrentTask().GetText(), hero.Routine.GetCurrentState().GetText());
     log(line);
 }
 }

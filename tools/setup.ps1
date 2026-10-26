@@ -1,12 +1,13 @@
 ﻿# SPDX-License-Identifier: GPL-3.0-or-later
 # G3 Together setup (owner 24.10.): finds Gothic 3, checks the tested patches, copies the mod into its scripts folder and
-# writes g3together.ini. Setup.cmd starts it in English, Einrichten.cmd in German. Every answer can also be given as a
-# parameter; with -Yes nothing is asked (the given values and the defaults are taken).
+# writes g3together.ini. Setup.cmd starts it in English, Einrichten.cmd in German, Instalacja.cmd in Polish. Every answer
+# can also be given as a parameter; with -Yes nothing is asked (the given values and the defaults are taken).
+# The INI gets language = auto: the mod's messages follow the game's text language, whichever language the setup spoke.
 #
-#   powershell -NoProfile -ExecutionPolicy Bypass -File tools\setup.ps1 [-Language de] [-GamePath <folder>] [-Role host|client]
+#   powershell -NoProfile -ExecutionPolicy Bypass -File tools\setup.ps1 [-Language de|pl] [-GamePath <folder>] [-Role host|client]
 #              [-Name <name>] [-Address <host address>] [-Port 34567] [-Yes]
 param(
-    [ValidateSet('en', 'de')][string]$Language = 'en',
+    [ValidateSet('en', 'de', 'pl')][string]$Language = 'en',
     [string]$GamePath = '',
     [ValidateSet('', 'host', 'client')][string]$Role = '',
     [string]$Name = '',
@@ -95,6 +96,44 @@ $texts = @{
         DoneClient   = 'Fertig. Starte Gothic 3, sobald der Host spielt. Hat der Host einen Spielstand geladen, bleib im Hauptmenü: er wird für dich geladen.'
         Yes          = 'j'
         YesNo        = '(j/n)'
+    }
+    pl = @{
+        Title        = 'Instalacja G3 Together'
+        NoDll        = 'Obok tego skryptu brakuje pliku scripts\Script_G3Together.dll. Najpierw rozpakuj cały pakiet.'
+        Found        = 'Znaleziono Gothic 3:'
+        Choose       = 'Numer folderu albo ścieżka do folderu'
+        AskPath      = 'Folder Gothic 3 (ten z plikiem Gothic3.exe)'
+        NoGame       = 'W „{0}” nie ma pliku Gothic3.exe.'
+        CopyHint     = 'Wskazówka: osobna kopia Gothic 3 do gry w kooperacji zostawia twoją zwykłą grę nietkniętą.'
+        Using        = 'Folder Gothic 3: {0}'
+        CpOk         = 'Community Patch 1.75.14: znaleziono ({0}).'
+        CpBad        = 'Community Patch: Gothic3.exe ma wersję {0}, testowana jest 1.75.14. Obaj gracze potrzebują tej samej wersji.'
+        PupOk        = 'Parallel Universe Patch 1.1.1: znaleziono.'
+        PupBad       = 'Parallel Universe Patch: {0}; testowana jest 1.1.1. Obaj gracze potrzebują tej samej wersji.'
+        PupMissing   = 'nie zainstalowano'
+        OtherCoop    = 'W folderze scripts jest inny mod kooperacji: {0}. Nie działa razem z G3 Together.'
+        MoveOther    = 'Przenieść go ze scripts (do G3Together-backup)?'
+        Moved        = 'Przeniesiono do {0}.'
+        GoOn         = 'Mimo to zainstalować G3 Together?'
+        Stopped      = 'Nic nie zmieniono.'
+        Running      = 'Gothic 3 działa z tego folderu. Zamknij grę, potem naciśnij Enter.'
+        StillRunning = 'Gothic 3 wciąż działa; nic nie zmieniono.'
+        DllSame      = 'G3 Together jest już zainstalowany (ta sama wersja).'
+        DllDone      = 'Skopiowano G3 Together do {0}.'
+        DllBackup    = 'Poprzednia wersja jest w {0}.'
+        AskRole      = 'Prowadzisz kampanię jako host (1) czy dołączasz do hosta (2)?'
+        AskName      = 'Twoja nazwa gracza (widzą ją inni)'
+        AskAddress   = 'Adres hosta (adres IP, adres Hamachi/ZeroTier/Tailscale albo nazwa)'
+        NeedAddress  = 'Kto dołącza, potrzebuje adresu hosta.'
+        AskPort      = 'Port'
+        IniBackup    = 'Twój poprzedni g3together.ini jest w {0}.'
+        IniDone      = 'Zapisano g3together.ini: {0}'
+        HostTell     = 'Podaj drugiemu graczowi jeden z tych adresów tego komputera (i port {0}):'
+        HostFirewall = 'Gdy Windows zapyta, czy Gothic 3 może korzystać z sieci, zezwól (przy Hamachi także dla sieci publicznych).'
+        DoneHost     = 'Gotowe. Uruchom Gothic 3 i rozpocznij nową grę albo wczytaj swoją kampanię kooperacji; potem startuje drugi gracz.'
+        DoneClient   = 'Gotowe. Uruchom Gothic 3, gdy host już gra. Jeśli host wczytał zapis, zostań w menu głównym: zapis zostanie wczytany dla ciebie.'
+        Yes          = 't'
+        YesNo        = '(t/n)'
     }
 }
 $t = $texts[$Language]
@@ -257,8 +296,8 @@ $lines.Add("role = $Role")
 if ($Role -eq 'client') { $lines.Add("address = $Address") }
 $lines.Add("port = $Port")
 $lines.Add("name = $Name")
-$lines.Add('# Mod messages only: en or de. Each player can choose independently.')
-$lines.Add("language = $Language")
+$lines.Add('# Mod messages only: auto (the language of your Gothic 3 texts), en, de or pl. Each player can choose independently.')
+$lines.Add('language = auto')
 $known = @('role', 'address', 'port', 'name', 'language')
 $kept = @($old.Keys | Where-Object { $known -notcontains $_ })
 if ($kept.Count -gt 0) {

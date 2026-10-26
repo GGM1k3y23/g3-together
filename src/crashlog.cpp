@@ -37,7 +37,7 @@ bool Where(uintptr_t address, char* out, size_t size)
 {
     for (Module const& m : modules)
         if (m.base && address >= m.base && address < m.base + m.size) {
-            sprintf_s(out, size, "%s+%#x", m.name, static_cast<unsigned>(address - m.base));
+            Format(out, size, "%s+%#x", m.name, static_cast<unsigned>(address - m.base));
             return true;
         }
     return false;
@@ -50,7 +50,7 @@ LONG CALLBACK OnException(EXCEPTION_POINTERS* info)
     CONTEXT const& c = *info->ContextRecord;
     char eip[64] = "?", line[1000];
     Where(c.Eip, eip, sizeof(eip));
-    sprintf_s(line, "CRASH access violation at %s (%08lX) %s %08lX eax=%08lX ebx=%08lX ecx=%08lX edx=%08lX esi=%08lX edi=%08lX esp=%08lX ebp=%08lX thread=%lu",
+    Format(line, "CRASH access violation at %s (%08lX) %s %08lX eax=%08lX ebx=%08lX ecx=%08lX edx=%08lX esi=%08lX edi=%08lX esp=%08lX ebp=%08lX thread=%lu",
               eip, c.Eip, info->ExceptionRecord->ExceptionInformation[0] ? "writing" : "reading",
               static_cast<unsigned long>(info->ExceptionRecord->ExceptionInformation[1]), c.Eax, c.Ebx, c.Ecx, c.Edx, c.Esi, c.Edi, c.Esp,
               c.Ebp, GetCurrentThreadId());

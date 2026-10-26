@@ -12,7 +12,7 @@
 
 namespace g3t::net {
 namespace {
-constexpr uint16_t ProtocolVersion = 55;  // 55: world state kind 18 (an NPC remembers a fight with the other player, fightmem.cpp); 54: world state kind 17 (the epilogue for everyone, ending.cpp), the hero's chapter as a story event; 53: world state kind 16 (an NPC with an important info walks up to a client, address.cpp); 52: world state kind 15 (a dialog partner's gestures); 51: dialog options for the listener (DialogLineNote kinds 3, 4); 50: WitnessJudge (witness op 3, P7); 49: world state kind 14 (respawn rolls); 48: HitNpcMsg.outcome (knock-outs by another machine's player), EnclaveCredit; 47: robbery (MsgRansack 34, gold and flag bit 4 in PlayerState), witnesses (MsgWitness 35), subtitles (DialogLineNote.text); 46: item quality in goods and offers; 45: send times in PlayerState and NpcsHeader (glide), armor/helmet/look, MsgGoods (31) and A's offers (32, 33); 36: MsgSummon; 37: MsgShot; 38: spell projectiles, MsgPlayerSpell; 39: MsgNpcSpell; 40: creatures; 41: town reputation (MsgEnclave); 42: world gate (MsgWorld); 43: MsgDialogLine; 44: up to 250 container entries
+constexpr uint16_t ProtocolVersion = 56;  // 56: EnclavePolitical (a freed town's political crime for the other heroes, enclaves.cpp); 55: world state kind 18 (an NPC remembers a fight with the other player, fightmem.cpp); 54: world state kind 17 (the epilogue for everyone, ending.cpp), the hero's chapter as a story event; 53: world state kind 16 (an NPC with an important info walks up to a client, address.cpp); 52: world state kind 15 (a dialog partner's gestures); 51: dialog options for the listener (DialogLineNote kinds 3, 4); 50: WitnessJudge (witness op 3, P7); 49: world state kind 14 (respawn rolls); 48: HitNpcMsg.outcome (knock-outs by another machine's player), EnclaveCredit; 47: robbery (MsgRansack 34, gold and flag bit 4 in PlayerState), witnesses (MsgWitness 35), subtitles (DialogLineNote.text); 46: item quality in goods and offers; 45: send times in PlayerState and NpcsHeader (glide), armor/helmet/look, MsgGoods (31) and A's offers (32, 33); 36: MsgSummon; 37: MsgShot; 38: spell projectiles, MsgPlayerSpell; 39: MsgNpcSpell; 40: creatures; 41: town reputation (MsgEnclave); 42: world gate (MsgWorld); 43: MsgDialogLine; 44: up to 250 container entries
 enum : uint8_t { MsgHello = 1, MsgWelcome = 2, MsgState = 3, MsgLeave = 4, MsgNpcs = 5, MsgMotionName = 6, MsgHitNpc = 7, MsgHitPlayer = 8, MsgStates = 9, MsgTalk = 10, MsgItem = 11, MsgContents = 12, MsgContainerTx = 13, MsgTxResult = 14, MsgWatch = 15, MsgKilled = 16, MsgRefused = 17, MsgDeath = 18, MsgCampaign = 19, MsgFileChunk = 20, MsgFileDone = 21, MsgClock = 22, MsgWorldState = 23, MsgSummon = 24, MsgShot = 25, MsgPlayerSpell = 26, MsgNpcSpell = 27, MsgEnclave = 28, MsgWorld = 29, MsgDialogLine = 30, MsgGoods = 31 };
 // UDP payload per datagram (ENet default 1392 = up to 1420-byte IP packets): VPNs such as Hamachi carry about 1400, so
 // stay well below (C, re/findings/hamachi-net-c.md, 21.10.). ENet splits larger messages into fragments of this size.
@@ -193,7 +193,7 @@ void OnReceive(ENetPeer* peer, ENetPacket* packet)
         hello.name[sizeof(hello.name) - 1] = '\0';
         RefusedMsg refusal{MsgRefused, {}};
         if (hello.version != ProtocolVersion || packet->dataLength != sizeof(Hello)) {
-            sprintf_s(refusal.reason, "different G3 Together version (protocol %u, host %u)", hello.version, ProtocolVersion);
+            Format(refusal.reason, "different G3 Together version (protocol %u, host %u)", hello.version, ProtocolVersion);
         } else {
             uint64_t const* ours = parity::Local();
             for (int i = 0; i != parity::ItemCount; ++i)
@@ -292,8 +292,8 @@ void OnReceive(ENetPeer* peer, ENetPacket* packet)
         std::memcpy(&message, packet->data, sizeof(message));
         if (message.delta < -1000000 || message.delta > 0) return;  // damage only, no overflow
         if (isHost && message.attackerPlayer) message.attackerPlayer = static_cast<uint8_t>(reinterpret_cast<uintptr_t>(peer->data));
-        if (isHost && message.to > 1 && message.to < MaxPlayers && peers[message.to]) {
-            Send(peers[message.to], &message, sizeof(message), ChannelReliable, true);
+        if (isHost && message.to > 1 && message.to < MaxPlayers) {  // for another client: never the host's hero, even if it just left
+            if (peers[message.to]) Send(peers[message.to], &message, sizeof(message), ChannelReliable, true);
             return;
         }
         if (hitPlayerHandler) hitPlayerHandler(message.delta, message.attacker, message.attackerPlayer);
@@ -521,8 +521,8 @@ void OnReceive(ENetPeer* peer, ENetPacket* packet)
     } else if (type == MsgKilled && packet->dataLength == sizeof(KilledMsg)) {
         KilledMsg message;
         std::memcpy(&message, packet->data, sizeof(message));
-        if (isHost && message.to > 1 && message.to < MaxPlayers && peers[message.to]) {
-            Send(peers[message.to], &message, sizeof(message), ChannelReliable, true);
+        if (isHost && message.to > 1 && message.to < MaxPlayers) {  // another client's kill: its reward, not the host's
+            if (peers[message.to]) Send(peers[message.to], &message, sizeof(message), ChannelReliable, true);
             return;
         }
         if (killedHandler) killedHandler(message.guid);

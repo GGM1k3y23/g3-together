@@ -207,14 +207,14 @@ void Tick()
 void Report(LogFn log)
 {
     char line[700];
-    int at = sprintf_s(line, "MAPMARKS map_hooked=%d compass_hooked=%d enabled=%d map_paints=%u compass_paints=%u map_drawn=%u compass_drawn=%u"
+    int at = Format(line, "MAPMARKS map_hooked=%d compass_hooked=%d enabled=%d map_paints=%u compass_paints=%u map_drawn=%u compass_drawn=%u"
                              " off_map=%u compass_mark=%d view=%.3f,%.3f",
                        originalMap ? 1 : 0, originalCompass ? 1 : 0, enabled ? 1 : 0, mapPaints, compassPaints, mapDrawn, compassDrawn, offMap,
                        compassMark && !compassMarkFailed ? 1 : compassMarkFailed ? -1 : 0, viewX, viewZ);
     for (int i = 1; i < net::MaxPlayers && at > 0; ++i) {
         if (!marks[i].shown) continue;
         Drawn const& d = drawn[i];
-        at += sprintf_s(line + at, sizeof(line) - at, " p%d=%.0f,%.0f map=%d:%.3f,%.3f@%d,%d compass=%d:%.0f@%d,%d", i, marks[i].position[0],
+        at += Format(line + at, sizeof(line) - at, " p%d=%.0f,%.0f map=%d:%.3f,%.3f@%d,%d compass=%d:%.0f@%d,%d", i, marks[i].position[0],
                         marks[i].position[2], d.onMap ? 1 : 0, d.u, d.v, d.mapX, d.mapY, d.onCompass ? 1 : 0, d.degrees, d.compassX, d.compassY);
     }
     log(line);
@@ -240,7 +240,7 @@ void OpenMap(LogFn log)
     if (stack < 0) { log("REFUSED mapopen: no world map (It_Map_World)"); return; }
     Entity map = hero.Inventory.GetTemplateItem(stack);
     const GEBool opened = gui2.OpenMap(map);
-    sprintf_s(line, "MAPOPEN stack=%d given=%d opened=%d page=%d", stack, given ? 1 : 0, opened ? 1 : 0, static_cast<int>(gui2.GetActivePage()));
+    Format(line, "MAPOPEN stack=%d given=%d opened=%d page=%d", stack, given ? 1 : 0, opened ? 1 : 0, static_cast<int>(gui2.GetActivePage()));
     log(line);
 }
 
@@ -248,7 +248,7 @@ void CloseMap(LogFn log)
 {
     char line[100];
     const GEBool closed = gui2.ClosePage();
-    sprintf_s(line, "MAPCLOSE closed=%d page=%d", closed ? 1 : 0, static_cast<int>(gui2.GetActivePage()));
+    Format(line, "MAPCLOSE closed=%d page=%d", closed ? 1 : 0, static_cast<int>(gui2.GetActivePage()));
     log(line);
 }
 }

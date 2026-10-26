@@ -282,11 +282,11 @@ void TraceCopies()
         char point[48];
         if (!e.GetInstance()) {
             if (t < 300) continue;  // a fresh copy only shows up a frame later
-            sprintf_s(point, "%lu:gone,", t);
+            Format(point, "%lu:gone,", t);
             c.done = true;
         } else {
             const bCVector d = e.GetPosition() - c.start;
-            sprintf_s(point, "%lu:%.0f_%.0f_%.0f,", t, d.GetX(), d.GetY(), d.GetZ());
+            Format(point, "%lu:%.0f_%.0f_%.0f,", t, d.GetX(), d.GetY(), d.GetZ());
         }
         strncat_s(c.path, point, _TRUNCATE);
     }
@@ -387,7 +387,7 @@ void __fastcall HookTouch(void* projectile, void* edx, eCEntity* touched, eCCont
     const Entity owner = arrow.GetInstance() ? arrow.Interaction.GetOwner() : Entity();
     const int type = contact ? static_cast<int>(contact->GetCollisionType()) : -1;  // 14 shapes, 100 bones (Animation)
     char const* bone = type == 100 ? contact->GetBone(0).GetText() : "-";
-    sprintf_s(touchLines[touchCount++ % MaxTouchLines], "TOUCH t=%lu arrow=%s owner=%s owner_puppet_of=%d armed=%d touched=%s npc=%d type=%d bone=%s",
+    Format(touchLines[touchCount++ % MaxTouchLines], "TOUCH t=%lu arrow=%s owner=%s owner_puppet_of=%d armed=%d touched=%s npc=%d type=%d bone=%s",
               GetTickCount(), NameOf(arrow), NameOf(owner), owner.GetInstance() ? remote::PuppetOwner(owner.GetInstance()) : 0, armed ? 1 : 0,
               touched ? Entity(touched).GetName().GetText() : "-", touched && touched->GetPropertySet(eEPropertySetType_NPC) ? 1 : 0, type,
               bone && *bone ? bone : "-");
@@ -425,7 +425,7 @@ void Tick()
 void Report(LogFn log)
 {
     char line[600];
-    sprintf_s(line, "SHOTSTATE installed=%d hooked=%d magic=%d mirror=%d copy_owner=%d shots=%u announced=%u unresolved=%u received=%u copies=%u "
+    Format(line, "SHOTSTATE installed=%d hooked=%d magic=%d mirror=%d copy_owner=%d shots=%u announced=%u unresolved=%u received=%u copies=%u "
                     "no_puppet=%u bad_template=%u no_spell=%u",
               installed, originalShoot != nullptr, magicInstalled, mirror, copyOwner, shots, announced, unresolved, received, copies, noPuppet,
               badTemplate, noSpell);
@@ -433,7 +433,7 @@ void Report(LogFn log)
     for (Copy const& c : recent) {
         Entity e = ByGuid(c.guid);
         const Entity owner = e.GetInstance() ? e.Interaction.GetOwner() : Entity();
-        sprintf_s(line, "SHOTCOPY net=%08X from=%u alive=%d flying=%d group=%d owner=%s owner_puppet_of=%d path=%s", c.netId, c.from,
+        Format(line, "SHOTCOPY net=%08X from=%u alive=%d flying=%d group=%d owner=%s owner_puppet_of=%d path=%s", c.netId, c.from,
                   e.GetInstance() ? 1 : 0, e.GetInstance() && e.Projectile.IsFlying() ? 1 : 0,
                   e.GetInstance() ? static_cast<int>(e.GetInstance()->GetCollisionGroup()) : -1, NameOf(owner),
                   owner.GetInstance() ? remote::PuppetOwner(owner.GetInstance()) : 0, c.path);

@@ -7,6 +7,7 @@
 #include "fightmem.h"
 #include "infocmd.h"
 
+#include "ai.h"
 #include "body.h"
 #include "downed.h"
 #include "guide.h"
@@ -36,6 +37,8 @@ bool sharing = true;  // QA negative control
 // re/findings/info-commands.md); every other machine runs the same reward for its own hero (world state kind 11).
 bool sharingXp = true;  // QA negative control `dialogxpoff`
 bool givebackPlace = true;  // QA negative control `givebackposoff`
+bool keepCompanions = true;  // QA negative control `storycompanionoff`: a story move takes this machine's companion too
+unsigned companionsKept = 0;
 unsigned xpSent = 0, xpApplied = 0;
 constexpr uint8_t DialogXp = 11;
 
@@ -48,7 +51,7 @@ char const* const StateCommands[] = {"SetClass", "SetPAL", "SetTeachEnabled", "S
                                      "JoinNPC", "JoinPlayer"};
 constexpr uint32_t ReadAfter = 700;
 
-struct Pending { uint8_t guid[16]; std::string sector; uint32_t due; bool moved = false; bool follow = false; };
+struct Pending { uint8_t guid[16]; std::string sector; uint32_t due; bool moved = false; bool follow = false; bool story = false; };
 std::vector<Pending> pending;
 
 // Host: fights that dialogs on clients started with the host's NPCs, waiting until the dialog hold ends.
@@ -243,6 +246,15 @@ void Apply(net::WorldState const& s, uint8_t from)
         enclave->AccessStatus() = static_cast<gEEnclaveStatus>(s.enclaveStatus);
     }
     const bool mirrored = npcs::IsMirrored(instance);  // its body follows the host's snapshots anyway
+    // Review 26.10. (point 8): a story move of this machine's own companion (Gorn following the client while the host,
+    // far from freed Ardea, moves him to GothaPrison) is not taken here. It left him in the client's party but standing in
+    // Gotha. He stays with this player, as the host shows him (its copy mirrors ours); the host's copy already has the new
+    // routine and goes there once this player lets him go. The shared quest (Gorn_ShowReddock) closes as before.
+    if (s.moved == 2 && keepCompanions && npcs::Claimed(instance)) {
+        ++companionsKept;
+        Logf("infocmd: the story moved %s on the host; our companion stays with us", e.GetName().GetText());
+        return;
+    }
     // Positions only after a MoveTo command: an NPC's position belongs to whoever simulates it. Taking every
     // snapshot's position let a client 60 m away (with a stale copy) put the host's walking NPCs back to old
     // places (soak test; the host crashed in its navigation code 25 s later, cause not proven).
@@ -254,7 +266,9 @@ void Apply(net::WorldState const& s, uint8_t from)
     }
     const bCVector& p = instance->GetWorldPosition();
     const float here[3] = {p.GetX(), p.GetY(), p.GetZ()};
-    if (s.moved && !mirrored && body::Distance(here, s.position) > 200.0f) e.MoveTo(body::Pose(*instance, s.position, s.rotation));
+    // 2: a story move (OnEnclaveSectorRefresh on the host, below): a copy this machine mirrors moves too, its owner is far.
+    if (s.moved == 2 && body::Distance(here, s.position) > 200.0f) npcs::StoryMoved(s.guid, s.position, s.rotation);
+    else if (s.moved && !mirrored && body::Distance(here, s.position) > 200.0f) e.MoveTo(body::Pose(*instance, s.position, s.rotation));
     ++snapshotsApplied;
     Logf("infocmd: applied the state of %s (routine %s)", e.GetName().GetText(), s.routine);
 }
@@ -308,6 +322,82 @@ bool Join(eCEntity* target, bool join, bool follow = true)
 }
 }
 
+// OnEnclaveSectorRefresh (Script_Game 0x100b16f0, called by the game itself, not by name): the story moves people after a
+// town changed hands once this machine's player is far from it (Ardea freed, over 420 m: Diego to Braga, Gorn to
+// GothaPrison, Milten to the monastery, Lester; Montera, Ben Erai, the big mine; re/out/basis-rest-20261026-b.c), with
+// SetRoutine and MoveTo. Nobody else heard of it: stageSectorRefresh 26.10. found the host's Diego in Braga and the
+// client's 1748 m away at Ardea. The host passes on whom it moved (routine and place, kind 1 with moved 2: a mirror moves
+// too). A client's own run moves only its copies of the host's NPCs; the host's word counts.
+char const* const StoryMovers[] = {"Diego", "Gorn", "Milten", "Lester", "Jorn", "Lisk", "Mort", "Thorald", "Otis", "Mason", "Daryl",
+                                   "Lukar", "G3_Varant_01_Braga_NPC_01", "G3_Varant_01_Braga_NPC_02"};
+gFScript originalRefresh = nullptr;
+bool refreshTried = false;
+bool refreshSync = true;  // QA negative control: storymoveoff
+unsigned refreshCalls = 0, refreshSent = 0;
+
+GEInt GE_STDCALL SectorRefresh(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid other, GEInt args)
+{
+    struct Before { eCEntity* entity; std::string routine; bCVector position; bCQuaternion rotation; uint8_t companionOf; };
+    std::vector<Before> before;
+    const bool passOn = refreshSync && sharing && net::IsHost() && net::Connected();
+    if (passOn) {
+        for (char const* name : StoryMovers) {
+            Entity e = Entity::GetEntity(bCString(name));
+            eCEntity* instance = e.GetInstance();
+            auto* nav = instance ? static_cast<gCNavigation_PS*>(instance->GetPropertySet(eEPropertySetType_Navigation)) : nullptr;
+            if (nav) before.push_back({instance, nav->AccessRoutine().GetText(), instance->GetWorldPosition(), instance->GetWorldRotation(),
+                                       keepCompanions ? npcs::ClaimedBy(instance) : uint8_t(0)});
+        }
+    }
+    const GEInt result = originalRefresh(spu, self, other, args);
+    ++refreshCalls;
+    for (Before const& b : before) {
+        auto* nav = static_cast<gCNavigation_PS*>(b.entity->GetPropertySet(eEPropertySetType_Navigation));
+        const bCVector& p = b.entity->GetWorldPosition();
+        const float here[3] = {p.GetX(), p.GetY(), p.GetZ()}, was[3] = {b.position.GetX(), b.position.GetY(), b.position.GetZ()};
+        const bool moved = body::Distance(here, was) > 200.0f;
+        if (moved && b.companionOf) {
+            // Review 26.10. (point 8): a client's companion (its copy here mirrors the client's) is not moved by the story:
+            // it stays with that player, here as there. Its new routine stays; it goes there once the player lets it go.
+            const float rotation[4] = {b.rotation.GetX(), b.rotation.GetY(), b.rotation.GetZ(), b.rotation.GetW()};
+            Entity(b.entity).MoveTo(body::Pose(*b.entity, was, rotation));
+            ++companionsKept;
+            Logf("infocmd: the story moved %s, the companion of player %u; it stays with that player", b.entity->GetName().GetText(),
+                 b.companionOf);
+            continue;
+        }
+        if (!moved && (!nav || b.routine == nav->AccessRoutine().GetText())) continue;
+        Pending pend{{}, {}, net::Now() + ReadAfter};
+        GuidOf(b.entity, pend.guid);
+        pend.moved = moved;
+        pend.story = moved;
+        pending.push_back(pend);
+        ++refreshSent;
+        Logf("infocmd: the story moved %s (routine %s, %.0f m); passed on", b.entity->GetName().GetText(),
+             nav ? nav->AccessRoutine().GetText() : "-", body::Distance(here, was) / 100.0f);
+    }
+    return result;
+}
+
+void HookSectorRefresh()
+{
+    if (refreshTried || !gCSession::GetInstance().IsGameRunning()) return;
+    refreshTried = true;
+    gSScript* script = nullptr;
+    if (!GetScriptAdminExt().GetScripts().GetAt(bCString("OnEnclaveSectorRefresh"), script) || !script || !script->m_funcScript) {
+        Logf("infocmd: OnEnclaveSectorRefresh not found; story moves stay local");
+        return;
+    }
+    auto* code = reinterpret_cast<unsigned char*>(script->m_funcScript);
+    static const unsigned char prologue[] = {0x55, 0x8b, 0xec, 0x83, 0xe4, 0xf8};
+    if (std::memcmp(code, prologue, sizeof(prologue))) {
+        Logf("infocmd: OnEnclaveSectorRefresh has another prologue; story moves stay local");
+        return;
+    }
+    originalRefresh = reinterpret_cast<gFScript>(ai::JumpTo(code, reinterpret_cast<void*>(&SectorRefresh)));
+    Logf("infocmd: OnEnclaveSectorRefresh %s", originalRefresh ? "wrapped (the host passes on story moves)" : "could not be wrapped");
+}
+
 void Start() { net::SetWorldStateHandler(&OnWorldState); }
 
 void Observe(gCScriptProcessingUnit* spu)
@@ -322,7 +412,7 @@ void Observe(gCScriptProcessingUnit* spu)
     if (!command.IsValid()) return;
     const Entity e1 = command.GetEntity1(), e2 = command.GetEntity2();
     char key[400];
-    sprintf_s(key, "%s|%s|%s|%s|%s", command.GetCommand().GetText(), e1.GetInstance() ? e1.GetName().GetText() : "-",
+    Format(key, "%s|%s|%s|%s|%s", command.GetCommand().GetText(), e1.GetInstance() ? e1.GetName().GetText() : "-",
               e2.GetInstance() ? e2.GetName().GetText() : "-", command.GetID1().GetText(), command.GetID2().GetText());
     if (lastKey == key) return;
     lastKey = key;
@@ -384,6 +474,7 @@ void Changed(eCEntity* entity)
 
 void Tick()
 {
+    HookSectorRefresh();
     if (!fights.empty()) StartFights();
     if (pending.empty()) return;
     const uint32_t now = net::Now();
@@ -407,7 +498,7 @@ void Tick()
                 Logf("infocmd: %s follows this player", e.GetName().GetText());
             } else if (e.GetInstance()) {
                 Snapshot(e, s);
-                s.moved = it->moved ? 1 : 0;
+                s.moved = it->story ? 2 : it->moved ? 1 : 0;
                 ++snapshotsSent;
                 Send(s);
                 Logf("infocmd: sent the state of %s after a dialog command", e.GetName().GetText());
@@ -421,6 +512,28 @@ void Off(LogFn log)
 {
     sharing = false;
     log("INFOCMDOFF ok=1");
+}
+
+void StoryMoveOff(LogFn log)
+{
+    refreshSync = false;
+    char line[120];
+    Format(line, "STORYMOVEOFF ok=1 calls=%u sent=%u", refreshCalls, refreshSent);
+    log(line);
+}
+
+void StoryMoves(LogFn log)
+{
+    char line[120];
+    Format(line, "STORYMOVES hooked=%d calls=%u sent=%u sync=%d companions_kept=%u keep=%d", originalRefresh ? 1 : 0, refreshCalls,
+           refreshSent, refreshSync ? 1 : 0, companionsKept, keepCompanions ? 1 : 0);
+    log(line);
+}
+
+void StoryCompanionOff(LogFn log)
+{
+    keepCompanions = false;
+    log("STORYCOMPANIONOFF ok=1");
 }
 
 void GivebackPlaceOff(LogFn log)
@@ -438,7 +551,7 @@ void DialogXpOff(LogFn log)
 void Report(LogFn log)
 {
     char line[600];
-    sprintf_s(line, "INFOCMD xp_sent=%u xp_applied=%u observed=%u distinct=%u sent=%u applied=%u sectors_sent=%u sectors_applied=%u fights_sent=%u fights_started=%u last=%s", xpSent, xpApplied, observed, distinct,
+    Format(line, "INFOCMD xp_sent=%u xp_applied=%u observed=%u distinct=%u sent=%u applied=%u sectors_sent=%u sectors_applied=%u fights_sent=%u fights_started=%u last=%s", xpSent, xpApplied, observed, distinct,
               snapshotsSent, snapshotsApplied, sectorsSent, sectorsApplied, fightsSent, fightsStarted, lastText.c_str());
     log(line);
 }
@@ -457,7 +570,7 @@ void JoinQa(char const* argument, LogFn log)
     Entity npc = Entity::GetEntity(bCString(arg.substr(0, cut).c_str()));
     const bool join = arg.substr(cut + 1) == "1";
     const bool changed = npc.GetInstance() && Join(npc.GetInstance(), join);
-    sprintf_s(line, "JOIN name=%s join=%d found=%d changed=%d", arg.substr(0, cut).c_str(), join ? 1 : 0, npc.GetInstance() ? 1 : 0, changed ? 1 : 0);
+    Format(line, "JOIN name=%s join=%d found=%d changed=%d", arg.substr(0, cut).c_str(), join ? 1 : 0, npc.GetInstance() ? 1 : 0, changed ? 1 : 0);
     log(line);
 }
 }
@@ -476,7 +589,7 @@ void PartyEnableQa(char const* argument, LogFn log)
     if (mob) npc.Dialog.MobEnabled = GETrue;
     else npc.Dialog.PartyEnabled = GETrue;
     Changed(npc.GetInstance());
-    sprintf_s(line, "PARTYENABLE name=%s party_enabled=%d mob_enabled=%d", name.c_str(), npc.Dialog.PartyEnabled ? 1 : 0,
+    Format(line, "PARTYENABLE name=%s party_enabled=%d mob_enabled=%d", name.c_str(), npc.Dialog.PartyEnabled ? 1 : 0,
               npc.Dialog.MobEnabled ? 1 : 0);
     log(line);
 }

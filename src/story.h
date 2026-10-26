@@ -12,12 +12,14 @@
 namespace g3t::story {
 void Start();
 void Tick();
+void OnWorldChange();  // client: a load or a new world; what it knew of the host's values was about the world before
 using LogFn = void (*)(char const*);
 void Event(char const* action, char const* name, LogFn log);  // QA: event | setevent | clearevent <name>
 void Report(LogFn log);   // QA: one STORY line per kind, then "STORY end"
 void Disable(LogFn log);  // QA negative control: stop sending and applying story state
 void ChapterOff(LogFn log);  // QA negative control: chaptersyncoff, the hero's chapter is not shared
 void ZerosOff(LogFn log); // QA negative control (host, stage W4): the full state without the values cleared since
+void ReloadOff(LogFn log);  // QA negative control (client, stageStoryReload): known values outlive a load, as before 26.10.
 void Info(char const* name, bool give, LogFn log);  // QA: show (or mark as told) one dialog option
 void InfoCandidates(LogFn log);                      // QA: dialog options not told yet, then "INFOS end"
 void Talk(char const* npcName, LogFn log);  // QA diagnostic: start a dialog between the hero and this NPC

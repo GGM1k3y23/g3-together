@@ -39,7 +39,7 @@ std::string Hex(bCPropertyID const& id)
 {
     char out[33];
     auto const* bytes = reinterpret_cast<unsigned char const*>(&id.GetCore());
-    for (int i = 0; i < 16; ++i) sprintf_s(out + 2 * i, 3, "%02x", bytes[i]);
+    for (int i = 0; i < 16; ++i) Format(out + 2 * i, 3, "%02x", bytes[i]);
     return out;
 }
 
@@ -272,24 +272,24 @@ void Dump(LogFn log)
     Entity self(hero);
     std::string text;
     char part[160];
-    sprintf_s(part, "level=%u xp=%d lp=%d/%d", static_cast<unsigned>(self.NPC.Level), static_cast<int>(self.PlayerMemory.XP),
+    Format(part, "level=%u xp=%d lp=%d/%d", static_cast<unsigned>(self.NPC.Level), static_cast<int>(self.PlayerMemory.XP),
               static_cast<int>(self.PlayerMemory.LPAttribs), static_cast<int>(self.PlayerMemory.LPPerks));
     text += part;
     for (char const* tag : Tags) {
-        sprintf_s(part, " %s=%d/%d", tag, self.PlayerMemory.GetBaseValue(bCString(tag)), self.PlayerMemory.GetMaximum(bCString(tag)));
+        Format(part, " %s=%d/%d", tag, self.PlayerMemory.GetBaseValue(bCString(tag)), self.PlayerMemory.GetMaximum(bCString(tag)));
         text += part;
     }
-    sprintf_s(part, " named=STR%d,DEX%d,INT%d,HP%d/%d", self.PlayerMemory.GetStrength(), self.PlayerMemory.GetDexterity(),
+    Format(part, " named=STR%d,DEX%d,INT%d,HP%d/%d", self.PlayerMemory.GetStrength(), self.PlayerMemory.GetDexterity(),
               self.PlayerMemory.GetIntelligence(), self.PlayerMemory.GetHitPoints(), self.PlayerMemory.GetHitPointsMax());
     text += part;
     unsigned long long hash = 1469598103934665603ull;
     int count = 0;
     for (Stack const& s : Stacks(self)) {
-        sprintf_s(part, "%s:%d:%u:%d:%d;", s.id.c_str(), s.amount, s.quality, s.slot, s.learned);
+        Format(part, "%s:%d:%u:%d:%d;", s.id.c_str(), s.amount, s.quality, s.slot, s.learned);
         for (char const* c = part; *c; ++c) { hash ^= static_cast<unsigned char>(*c); hash *= 1099511628211ull; }
         ++count;
     }
-    sprintf_s(part, " stacks=%d inventory=%016llx", count, hash);
+    Format(part, " stacks=%d inventory=%016llx", count, hash);
     text += part;
     log(("HERODUMP " + text).c_str());
 }
@@ -307,7 +307,7 @@ void SaveCommand(char const* name, LogFn log)
 {
     char line[300];
     const std::string path = RecordPath(name);
-    sprintf_s(line, "HEROSAVE name=%s ok=%d", name, SaveRecord(path.c_str()) ? 1 : 0);
+    Format(line, "HEROSAVE name=%s ok=%d", name, SaveRecord(path.c_str()) ? 1 : 0);
     log(line);
 }
 
@@ -315,7 +315,7 @@ void LoadCommand(char const* name, LogFn log)
 {
     char line[300];
     const std::string path = RecordPath(name);
-    sprintf_s(line, "HEROLOAD name=%s ok=%d restoring=%d", name, LoadRecord(path.c_str()) ? 1 : 0, restoring ? 1 : 0);
+    Format(line, "HEROLOAD name=%s ok=%d restoring=%d", name, LoadRecord(path.c_str()) ? 1 : 0, restoring ? 1 : 0);
     log(line);
 }
 
@@ -350,7 +350,7 @@ void CutCommand(char const* argument, LogFn log)
         ok = fclose(file) == 0;
     }
     char line[300];
-    sprintf_s(line, "HEROCUT name=%s ok=%d kept=%zu of=%zu", name.substr(0, 64).c_str(), ok ? 1 : 0, keep, lines.size());
+    Format(line, "HEROCUT name=%s ok=%d kept=%zu of=%zu", name.substr(0, 64).c_str(), ok ? 1 : 0, keep, lines.size());
     log(line);
 }
 
@@ -385,7 +385,7 @@ void SkillDiag(LogFn log)
         const Template skillTemplate = skill.GetInstance() ? skill.GetTemplate() : Template();
         bCPropertyID const& stackId = stack;
         bCPropertyID const& skillId = skillTemplate;
-        sprintf_s(line, "SKILLDIAG stack=%d name=%s item=%s skill=%s same=%d learned_stack=%d learned_skill=%d active_stack=%d active_skill=%d activations=%u",
+        Format(line, "SKILLDIAG stack=%d name=%s item=%s skill=%s same=%d learned_stack=%d learned_skill=%d active_stack=%d active_skill=%d activations=%u",
                   i, self.Inventory.GetName(i).GetText(), item.GetInstance() ? item.GetName().GetText() : "-",
                   skill.GetInstance() ? skill.GetName().GetText() : "-", Hex(stackId) == Hex(skillId) ? 1 : 0,
                   self.Inventory.HasLearnedSkill(stack) ? 1 : 0, skill.GetInstance() && self.Inventory.HasLearnedSkill(skillTemplate) ? 1 : 0,
@@ -425,7 +425,7 @@ void SkillTry(LogFn log)
             if (static_cast<int>(self.Inventory.GetCategory(i)) == gEItemCategory_Skill && skillOf(i).IsValid() &&
                 (self.Inventory.HasLearnedSkill(skillOf(i)) ? 1 : 0) == want)
                 index = i;
-        if (index < 0) { sprintf_s(line, "SKILLTRY case=%s none", want ? "learned" : "unlearned"); log(line); continue; }
+        if (index < 0) { Format(line, "SKILLTRY case=%s none", want ? "learned" : "unlearned"); log(line); continue; }
         const Template stack = self.Inventory.GetTemplate(index);
         const Template skill = skillOf(index);
         const bCString name = self.Inventory.GetName(index);
@@ -439,7 +439,7 @@ void SkillTry(LogFn log)
         const int afterCreate = learned();
         const int teach2 = self.Inventory.TeachSkill(skill) ? 1 : 0;
         const int afterTeach2 = learned();
-        sprintf_s(line, "SKILLTRY case=%s name=%s before=%d teach1=%d after_teach1=%d deleted=%d after_delete=%d created=%d after_create=%d teach2=%d after_teach2=%d",
+        Format(line, "SKILLTRY case=%s name=%s before=%d teach1=%d after_teach1=%d deleted=%d after_delete=%d created=%d after_create=%d teach2=%d after_teach2=%d",
                   want ? "learned" : "unlearned", name.GetText(), before, teach1, afterTeach1, deleted, afterDelete, created, afterCreate, teach2,
                   afterTeach2);
         log(line);
@@ -470,7 +470,7 @@ void HasSkill(char const* id, LogFn log)
     }
     const int index = FindSkillStack(self, hex);
     const Template skill = index >= 0 ? SkillOf(self, index) : Template();
-    sprintf_s(line, "HEROSKILL id=%s has=%d learned=%d known=%d stacks=%d", hex.c_str(), index >= 0 ? 1 : 0,
+    Format(line, "HEROSKILL id=%s has=%d learned=%d known=%d stacks=%d", hex.c_str(), index >= 0 ? 1 : 0,
               skill.IsValid() && self.Inventory.HasLearnedSkill(skill) ? 1 : 0, known, stacks);
     log(line);
 }

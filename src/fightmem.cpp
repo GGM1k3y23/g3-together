@@ -23,11 +23,12 @@ namespace {
 constexpr uint8_t Kind = 18;  // net::WorldState kind (17: the epilogue, ending.cpp): guard = the player it is about, npc = LastFightAgainstPlayer
 bool on = true;               // QA negative control: fightmemoff
 bool apart = true;            // QA negative control (grudgeoff): the NPC keeps what it remembers of another player, no grudge
+bool forget = true;           // QA negative control (grudgeloadoff): the grudges outlive a load
 bool installed = false;
 DWORD lastTry = 0;
 unsigned sounds = 0, defeats = 0, watched = 0, ends = 0, stateRuns = 0, sent = 0, applied = 0;
 unsigned defeatsSeen = 0, defeatsYes = 0;  // QA: every AssessDefeat here and those that reacted (helped, attacked, fled)
-unsigned upsetAsked = 0, upsets = 0;
+unsigned upsetAsked = 0, upsets = 0, forgotten = 0;
 
 using Script = GEInt(GE_STDCALL*)(gCScriptProcessingUnit*, GELPVoid, GELPVoid, GEInt);
 using Callback = GEBool(GE_STDCALL*)(gCScriptProcessingUnit*);
@@ -277,6 +278,18 @@ void OnState(uint8_t from, net::WorldState const& s)
     Logf("fightmem: %s remembers our fight (from player %u): %d -> %d", e.GetName().GetText(), from, before, static_cast<int>(s.npc));
 }
 
+// A loaded save holds only what its NPCs remembered then (review 26.10.: a fight given up against the client, then the host
+// loaded an older save, and the NPC held it against the client on sight). Not saved: after a restart a grudge against the
+// other player is gone, where the game keeps its own player's in the save.
+void OnWorldChange()
+{
+    frames.clear();
+    if (!forget || grudges.empty()) return;
+    forgotten += static_cast<unsigned>(grudges.size());
+    Logf("fightmem: %u grudge(s) of the world before forgotten", static_cast<unsigned>(grudges.size()));
+    grudges.clear();
+}
+
 // The game's grudge on sight (AssessActivePerception, its player's slot): an NPC that gave up a fight with its player
 // (CancelAttack: Cancel and the time) takes it up again when it sees that player within a while, by the reason it fought
 // for (IsUpset 0x115d0), with AssessTarget(self, player, LastPlayerAR). Here for another player whose fight this machine
@@ -316,7 +329,7 @@ std::string Kept(eCEntity* npc)
         auto it = grudges.find(Key(npc, id));
         if (it == grudges.end()) continue;
         char part[64];
-        sprintf_s(part, "%s%d:%d:%.1f:%d", out.empty() ? "" : ",", id, it->second.value, it->second.at, it->second.reason);
+        Format(part, "%s%d:%d:%.1f:%d", out.empty() ? "" : ",", id, it->second.value, it->second.at, it->second.reason);
         out += part;
     }
     return out.empty() ? "-" : out;
@@ -324,13 +337,14 @@ std::string Kept(eCEntity* npc)
 
 void Report(LogFn log)
 {
-    char line[360];
-    sprintf_s(line, "FIGHTMEM on=%d installed=%d sound=%d defeated=%d defeat=%d cancel=%d watch=%d sounds=%u defeats=%u watched=%u ends=%u state_runs=%u sent=%u applied=%u defeats_seen=%u defeats_yes=%u",
+    char line[420];
+    Format(line, "FIGHTMEM on=%d installed=%d sound=%d defeated=%d defeat=%d cancel=%d watch=%d sounds=%u defeats=%u watched=%u ends=%u state_runs=%u sent=%u applied=%u defeats_seen=%u defeats_yes=%u",
               on ? 1 : 0, installed ? 1 : 0, originalSound != nullptr, originalDefeated != nullptr, originalDefeat != nullptr,
               originalCancel != nullptr, originalWatch != nullptr, sounds, defeats, watched, ends, stateRuns, sent, applied, defeatsSeen,
               defeatsYes);
-    char more[80];
-    sprintf_s(more, " apart=%d kept=%u upset_asked=%u upsets=%u", apart ? 1 : 0, static_cast<unsigned>(grudges.size()), upsetAsked, upsets);
+    char more[100];
+    Format(more, " apart=%d kept=%u upset_asked=%u upsets=%u forget=%d forgotten=%u", apart ? 1 : 0, static_cast<unsigned>(grudges.size()),
+              upsetAsked, upsets, forget ? 1 : 0, forgotten);
     strcat_s(line, more);
     log(line);
 }
@@ -345,5 +359,11 @@ void ApartOff(LogFn log)
 {
     apart = false;
     log("GRUDGEOFF ok=1");
+}
+
+void KeepOff(LogFn log)
+{
+    forget = false;
+    log("GRUDGELOADOFF ok=1");
 }
 }

@@ -512,7 +512,7 @@ void Tick()
 void Report(LogFn log)
 {
     char line[600];
-    sprintf_s(line,
+    Format(line,
               "DIALOGAUDIO hooked=%d sent_starts=%u sent_ends=%u third_speakers=%u received=%u played=%u playing=%zu finished=%u "
               "stopped_far=%u dropped_far=%u dropped_own_dialog=%u dropped_no_speaker=%u dropped_failed=%u subtitles=%u subtitles_missing=%u "
               "subtitle_on=%d options_sent=%u options_shown=%u last=%s last_subtitle=%s last_options=%s",
@@ -548,7 +548,7 @@ void MuteGame(char const* on, LogFn log)
     const bool mute = on && *on == '1';
     if (master) master->SetVolume(mute ? 0.0f : 1.0f);
     char line[80];
-    sprintf_s(line, "MUTEGAME ok=%d muted=%d", master ? 1 : 0, mute ? 1 : 0);
+    Format(line, "MUTEGAME ok=%d muted=%d", master ? 1 : 0, mute ? 1 : 0);
     log(line);
 }
 }

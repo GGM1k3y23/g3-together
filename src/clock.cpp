@@ -156,7 +156,7 @@ void Report(LogFn log)
     char line[200];
     if (!Ready()) { log("CLOCK none"); return; }
     Entity world = Entity::GetWorldEntity();
-    sprintf_s(line, "CLOCK timestamp=%u day=%d hour=%d minute=%d corrections=%u received=%u difference=%d following=%d requests=%u granted=%u waits=%u",
+    Format(line, "CLOCK timestamp=%u day=%d hour=%d minute=%d corrections=%u received=%u difference=%d following=%d requests=%u granted=%u waits=%u",
               world.Clock.GetTimeStampInSeconds(), world.Clock.GetDay(), world.Clock.GetHour(), world.Clock.GetMinute(), corrections,
               received, lastDifference, following ? 1 : 0, requests, granted, waits);
     log(line);

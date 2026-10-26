@@ -126,7 +126,7 @@ void FormatGuid(uint8_t const guid[16], char* out, size_t size)
 {
     bCPropertyID::bSCore core;
     std::memcpy(&core, guid, 16);
-    sprintf_s(out, size, "%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", core.Data1, core.Data2, core.Data3, core.Data4[0],
+    Format(out, size, "%08X-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", core.Data1, core.Data2, core.Data3, core.Data4[0],
               core.Data4[1], core.Data4[2], core.Data4[3], core.Data4[4], core.Data4[5], core.Data4[6], core.Data4[7]);
 }
 
@@ -489,7 +489,7 @@ bool Lies(eCEntity* entity, char* shows, size_t size, char* slots, size_t slotsS
             body::MotionName(animation, slot, name, sizeof(name));
             const bool runs = animation->GetActor() && animation->GetActor()->IsMotionRunning(static_cast<eCWrapper_emfx2Actor::eEMotionType>(slot));
             still = still && !runs;
-            sprintf_s(slots + strlen(slots), slotsSize - strlen(slots), "%s%d:%s:%s", slot > 1 ? "|" : "", slot, runs ? "run" : "off", *name ? name : "-");
+            Format(slots + strlen(slots), slotsSize - strlen(slots), "%s%d:%s:%s", slot > 1 ? "|" : "", slot, runs ? "run" : "off", *name ? name : "-");
         }
     return std::strstr(shows, "_Lie") && body::MotionRunning(entity) && still;  // LieDead, or a knock-out's LieKnockDown
 }
@@ -551,7 +551,7 @@ void LayDown(Mirror& m, uint32_t now)
     }
     char motion[128];
     if (!m.laid) {
-        sprintf_s(motion, "%s_Stand_None_None_P0_LieDead_Begin_N_Back_00_%%_00_P0_200", m.skeleton);
+        Format(motion, "%s_Stand_None_None_P0_LieDead_Begin_N_Back_00_%%_00_P0_200", m.skeleton);
         m.laid = true;
         m.lieCheckAt = now + 2000;  // the start motion takes ~2 s (owner's trace)
         ++corpsesLaid;
@@ -559,7 +559,7 @@ void LayDown(Mirror& m, uint32_t now)
         // The loop belongs to the lying-dead stance: it plays only once the body has that stance (body.cpp: motions of
         // another stance do not play), and like the game's own ZS_Dead_Loop as a play-ani instruction (deaddiag: started
         // with StartPlayAni it showed on slot 0 but did not run, and 2 of 4 corpses stood).
-        sprintf_s(motion, "%s_LieDead_None_None_P0_Ambient_Loop_N_Back_00_%%_00_P0_0", m.skeleton);
+        Format(motion, "%s_LieDead_None_None_P0_Ambient_Loop_N_Back_00_%%_00_P0_0", m.skeleton);
         m.entity.Routine.AniState = gEAniState_LieDead;
         ++corpseLoops;
         ++m.lieTries;
@@ -775,7 +775,7 @@ void ClaimRecord(char const* text, LogFn log)
     record.hitPoints = copy.GetInstance() ? copy.DamageReceiver.HitPoints : 100;
     net::SendNpcs(&record, 1);
     char line[120];
-    sprintf_s(line, "CLAIMRECORD sent=1 known_here=%d", copy.GetInstance() ? 1 : 0);
+    Format(line, "CLAIMRECORD sent=1 known_here=%d", copy.GetInstance() ? 1 : 0);
     log(line);
 }
 
@@ -950,6 +950,19 @@ void PlaceGivenBack(uint8_t const guid[16], float const position[3], float const
     Logf("npcs: %s given back %.0f m from its copy here; moved to where the player left it", e.GetName().GetText(), off / 100.0f);
 }
 
+void StoryMoved(uint8_t const guid[16], float const position[3], float const rotation[4])
+{
+    // OnEnclaveSectorRefresh on the host moved this NPC far (infocmd.cpp, kind 1 with moved 2). A mirror here was put back
+    // to the host's last snapshot by its body driver (stageSectorRefresh 26.10.: Diego stayed at Ardea on the client, 1751 m
+    // from the host's in Braga). The mirror ends; the copy goes where the host's stands, until the host sends it again.
+    DropMirror(Key(guid));
+    Entity e = Resolve(guid);
+    eCEntity* instance = e.GetInstance();
+    if (!IsNpc(instance) || e.IsDead()) return;
+    e.MoveTo(body::Pose(*instance, position, rotation));
+    Logf("npcs: the story moved %s on the host; moved here too", e.GetName().GetText());
+}
+
 bool HostTake(eCEntity* entity)
 {
     if (!entity || !net::IsHost()) return false;
@@ -1003,6 +1016,15 @@ void OwnOff(LogFn log)
     log("OWNOFF ok=1");
 }
 
+uint8_t ClaimedBy(eCEntity const* entity)
+{
+    if (!entity || !net::IsHost()) return 0;
+    uint8_t guid[16];
+    Guid(const_cast<eCEntity*>(entity), guid);
+    const auto it = claimedBy.find(Key(guid));
+    return it == claimedBy.end() ? 0 : it->second;
+}
+
 uint8_t OwnerOf(eCEntity const* entity)
 {
     if (!entity) return 0;
@@ -1053,7 +1075,7 @@ void Report(LogFn log)
         char text[48];
         FormatGuid(guid, text, sizeof(text));
         auto mirror = mirrors.find(Key(guid));
-        sprintf_s(line, "NPC guid=%s name=%s pos=%.1f,%.1f,%.1f hp=%d dead=%d mirrored=%d task=%s repacified=%u last_foreign=%s owner=%u", text,
+        Format(line, "NPC guid=%s name=%s pos=%.1f,%.1f,%.1f hp=%d dead=%d mirrored=%d task=%s repacified=%u last_foreign=%s owner=%u", text,
                   npc.GetName().GetText(), at[0], at[1], at[2], static_cast<int>(npc.DamageReceiver.HitPoints), npc.IsDead(),
                   mirror != mirrors.end() && mirror->second.body.pacified, npc.Routine.GetCurrentTask().GetText(),
                   mirror != mirrors.end() ? mirror->second.body.repacified : 0,
@@ -1061,7 +1083,7 @@ void Report(LogFn log)
                   mirror != mirrors.end() ? mirror->second.owner : 0);
         log(line);
     }
-    sprintf_s(line, "NPCSYNC claims_refused=%u host_wins=%u host_wins_rule=%d join_refused=%u join_grace=%d contested_refused=%u contested=%zu contest_rule=%d",
+    Format(line, "NPCSYNC claims_refused=%u host_wins=%u host_wins_rule=%d join_refused=%u join_grace=%d contested_refused=%u contested=%zu contest_rule=%d",
               claimsRefused, hostWins, hostWinsRule ? 1 : 0, joinRefused, joinGraceRule ? 1 : 0, contestedRefused, contested.size(), contestRule ? 1 : 0);
     log(line);
 }
@@ -1086,7 +1108,7 @@ void EdgeReport(LogFn log)
         char text[48];
         FormatGuid(guid, text, sizeof(text));
         const auto note = sendNotes.find(Key(guid));
-        sprintf_s(line, "EDGENPC guid=%s name=%s nearest_m=%.1f reason=%s age_ms=%d mirror=%d", text, npc.GetName().GetText(), nearest / 100.0f,
+        Format(line, "EDGENPC guid=%s name=%s nearest_m=%.1f reason=%s age_ms=%d mirror=%d", text, npc.GetName().GetText(), nearest / 100.0f,
                   note != sendNotes.end() ? note->second.reason : "never", note != sendNotes.end() ? static_cast<int>(net::Now() - note->second.at) : -1,
                   mirrors.count(Key(guid)) ? 1 : 0);
         log(line);
@@ -1121,7 +1143,7 @@ void SendInfo(char const* name, LogFn log)
     const auto back = givenBack.find(key);
     char text[48];
     FormatGuid(guid, text, sizeof(text));
-    sprintf_s(line, "NPCSEND name=%s guid=%s reason=%s age_ms=%d myclaim=%d mirror=%d givenback_ms=%d", name, text,
+    Format(line, "NPCSEND name=%s guid=%s reason=%s age_ms=%d myclaim=%d mirror=%d givenback_ms=%d", name, text,
               note != sendNotes.end() ? note->second.reason : "never",
               note != sendNotes.end() ? static_cast<int>(net::Now() - note->second.at) : -1, myClaims.count(key) ? 1 : 0,
               mirrors.count(key) ? 1 : 0, back != givenBack.end() ? static_cast<int>(back->second - net::Now()) : 0);
@@ -1239,7 +1261,7 @@ void MirrorStats(LogFn log)
     for (auto const& entry : mirrors)
         if (entry.second.resolved && (entry.second.missing || !entry.second.entity.GetInstance())) ++missing;
     char line[200];
-    sprintf_s(line, "MIRRORSTATS mirrors=%zu missing=%u found_later=%u expired=%u lookups=%u retry=%d", mirrors.size(), missing,
+    Format(line, "MIRRORSTATS mirrors=%zu missing=%u found_later=%u expired=%u lookups=%u retry=%d", mirrors.size(), missing,
               mirrorsFoundLater, mirrorsExpired, mirrorLookups, retryMissing ? 1 : 0);
     log(line);
 }
@@ -1278,7 +1300,7 @@ void DeadPoseReport(LogFn log)
     auto report = [&](Mirror& m, char const* kind) {
         char shows[128], slots[400];
         Lies(m.entity.GetInstance(), shows, sizeof(shows), slots, sizeof(slots));
-        sprintf_s(line, "DEADPOSE mirror=%s killed=%d running=%d height=%.0f ani=%d motion=%s slots=%s kind=%s", m.entity.GetName().GetText(),
+        Format(line, "DEADPOSE mirror=%s killed=%d running=%d height=%.0f ani=%d motion=%s slots=%s kind=%s", m.entity.GetName().GetText(),
                   m.killed ? 1 : 0, body::MotionRunning(m.entity.GetInstance()) ? 1 : 0, body::BoundaryHeight(m.entity.GetInstance()),
                   static_cast<int>(m.entity.Routine.AniState), *shows ? shows : "-", slots, kind);
         log(line);
@@ -1293,7 +1315,7 @@ void DeadPoseReport(LogFn log)
         c.entity = Resolve(c.latest.guid);
         if (c.entity.GetInstance()) report(c, "journal");
     }
-    sprintf_s(line, "DEADPOSE enabled=%d laid=%u loops=%u slots_stopped=%u", deadPose ? 1 : 0, corpsesLaid, corpseLoops, slotsStopped);
+    Format(line, "DEADPOSE enabled=%d laid=%u loops=%u slots_stopped=%u", deadPose ? 1 : 0, corpsesLaid, corpseLoops, slotsStopped);
     log(line);
 }
 }

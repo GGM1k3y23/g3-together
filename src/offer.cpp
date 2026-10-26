@@ -195,7 +195,7 @@ void Apply(LogFn log)
     // Checked first, then applied; a step that still fails undoes the ones before (owner 23.10.: whole or not at all).
     if (char const* missing = checking ? Missing(self) : nullptr) {
         ++unavailable;
-        sprintf_s(line, "offer: %u from player %u not possible: %s is not there any more", incoming.serial, incoming.buyer, missing);
+        Format(line, "offer: %u from player %u not possible: %s is not there any more", incoming.serial, incoming.buyer, missing);
         log(line);
         const std::wstring name = std::strcmp(missing, "gold") ? Wide(missing) : std::wstring(L"Gold");
         SellerMessage(i18n::OfferUnavailableSeller, name.c_str());
@@ -223,14 +223,14 @@ void Apply(LogFn log)
     if (!ok) {
         if (checking) Undo(self, steps);
         ++unavailable;
-        sprintf_s(line, "offer: %u from player %u failed while applied; %s", incoming.serial, incoming.buyer, checking ? "undone" : "NOT undone (QA)");
+        Format(line, "offer: %u from player %u failed while applied; %s", incoming.serial, incoming.buyer, checking ? "undone" : "NOT undone (QA)");
         log(line);
         SellerMessage(i18n::OfferUnavailableSeller, Summary(incoming, true).c_str());
         Answer(net::OfferUnavailable);
         return;
     }
     ++applied;
-    sprintf_s(line, "offer: %u from player %u accepted and applied (%u entries, gold %d to the buyer)", incoming.serial, incoming.buyer,
+    Format(line, "offer: %u from player %u accepted and applied (%u entries, gold %d to the buyer)", incoming.serial, incoming.buyer,
               incoming.count, incoming.gold);
     log(line);
     SellerMessage(i18n::OfferDoneSeller);
@@ -488,14 +488,14 @@ void SendCommand(char const* argument, LogFn log)
     for (auto const& n : names) raw.push_back(n.c_str());
     const uint32_t serial = SendNamed(static_cast<uint8_t>(seller), deltas.data(), raw.data(), static_cast<int>(deltas.size()), gold);
     char line[120];
-    sprintf_s(line, "OFFERSENT serial=%u seller=%d entries=%zu gold=%d", serial, seller, deltas.size(), gold);
+    Format(line, "OFFERSENT serial=%u seller=%d entries=%zu gold=%d", serial, seller, deltas.size(), gold);
     log(line);
 }
 
 void Report(LogFn log)
 {
     char line[400];
-    sprintf_s(line, "OFFERSTATE pending=%d serial=%u buyer=%u open_sent=%zu sent=%u received=%u applied=%u declined=%u expired=%u unavailable=%u busy=%u rolled_back=%u checking=%d",
+    Format(line, "OFFERSTATE pending=%d serial=%u buyer=%u open_sent=%zu sent=%u received=%u applied=%u declined=%u expired=%u unavailable=%u busy=%u rolled_back=%u checking=%d",
               pending ? 1 : 0, pending ? incoming.serial : 0u, pending ? incoming.buyer : 0u, sent.size(), offersSent, offersReceived, applied,
               declined, expired, unavailable, busy, rolledBack, checking ? 1 : 0);
     log(line);
@@ -518,7 +518,7 @@ void AddCommand(char const* argument, LogFn log)
     Entity self(hero);
     const int index = self.Inventory.CreateItems(item, 0, amount);
     char line[160];
-    sprintf_s(line, "HEROADD name=%s amount=%d stack=%d", arg.substr(0, cut).c_str(), amount, index);
+    Format(line, "HEROADD name=%s amount=%d stack=%d", arg.substr(0, cut).c_str(), amount, index);
     log(line);
 }
 
@@ -532,7 +532,7 @@ void CountCommand(char const* name, LogFn log)
     for (int i = 0; i < self.Inventory.GetStackCount(); ++i)
         if (Same(self, i, item)) total += self.Inventory.GetAmount(i);
     char line[160];
-    sprintf_s(line, "HEROCOUNT name=%s total=%d tradable=%d", name, total, TradableAmount(self, item));
+    Format(line, "HEROCOUNT name=%s total=%d tradable=%d", name, total, TradableAmount(self, item));
     log(line);
 }
 }

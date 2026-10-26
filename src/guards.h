@@ -37,7 +37,11 @@ void Report(LogFn log);  // QA: GUARDS line
 void Off(LogFn log);     // QA negative control (trespassoff): no checks against puppets
 void ZoneFixOff(LogFn log);    // QA negative control (zonefixoff): puppets keep whatever zone their navigation has
 void FightsOff(LogFn log);     // QA negative control (fightsoff): the intent to kill a puppet as before 25.10. night
+void ChapterCopyOff(LogFn log);  // QA negative control (chaptercopyoff): a puppet standing for the player keeps chapter 0
 void SneakCheckOn(LogFn log);  // QA negative control (sneakcheckon): sneaking is checked against puppets again
+void EnterZoneOn(LogFn log);   // QA negative control (enterzoneon): a puppet entering a zone is sent to the NPCs again
+void AnimalWakeOff(LogFn log); // QA negative control (animalwakeoff): a sleeping animal wakes only for this machine's hero
+void FreeDestOff(LogFn log);   // QA negative control (freedestoff): an NPC waits for its destination only for this machine's hero
 void Sneak(char const* on, LogFn log);  // QA: "1" the local hero sneaks, "0" it runs again
 void Homes(char const* argument, LogFn log);  // QA: HOME lines, NPCs near the hero away from (or with "all" at) their home zone
 }

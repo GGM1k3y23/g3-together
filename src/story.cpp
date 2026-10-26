@@ -49,6 +49,8 @@ struct Domain {
 
 bool disabled = false;
 bool fullZeros = true;  // QA negative control (host, stage W4): storyzerosoff (the full state without zeros, as before 23.10.)
+bool reloadReset = true;  // QA negative control (client, stageStoryReload): storyreloadoff
+unsigned reloads = 0;
 DWORD lastPoll = 0;
 
 void Track(Domain& d, std::string const& name, uint8_t value)
@@ -263,6 +265,22 @@ void Poll(Domain& d)
 
 void Start() { net::SetStateHandler(&OnStates); }
 
+// The client's known values were the host's as far as it knew them in the world before. After a load (the host's save,
+// or its own) the first poll took every difference to the loaded save for its own player's changes and sent them; the
+// host applied them, and what it changed during the client's load went back to the save's value (review 26.10.: a quest
+// back to running, a told dialog option offered again). Primed anew, the client takes the loaded state as it is, as at
+// its first join, and asks for the host's full state.
+void OnWorldChange()
+{
+    if (!reloadReset || net::IsHost()) return;
+    for (Domain& d : domains) {
+        d.known.clear();
+        d.primed = false;
+        d.wasConnected = false;
+    }
+    ++reloads;
+}
+
 void Tick()
 {
     if (disabled) return;
@@ -281,7 +299,7 @@ void Event(char const* action, char const* name, LogFn log)
     const bCString event(name);
     if (!std::strcmp(action, "setevent")) hero.PlayerMemory.SetGameEvent(event);
     else if (!std::strcmp(action, "clearevent")) hero.PlayerMemory.ClearGameEvent(event);
-    sprintf_s(line, "EVENT name=%s known=%d", name, hero.PlayerMemory.IsSetGameEvent(event) ? 1 : 0);
+    Format(line, "EVENT name=%s known=%d", name, hero.PlayerMemory.IsSetGameEvent(event) ? 1 : 0);
     log(line);
 }
 
@@ -291,9 +309,9 @@ void Report(LogFn log)
     for (Domain const& d : domains) {
         size_t longest = 0;
         for (auto const& entry : d.known) longest = entry.first.size() > longest ? entry.first.size() : longest;
-        sprintf_s(line, "STORY kind=%s longest=%zu disabled=%d primed=%d known=%zu sent=%u received=%u applied=%u forced=%u claims=%u requests=%u skipped=%u zeroed=%zu",
+        Format(line, "STORY kind=%s longest=%zu disabled=%d primed=%d known=%zu sent=%u received=%u applied=%u forced=%u claims=%u requests=%u skipped=%u zeroed=%zu reloads=%u",
                   d.label, longest, disabled, d.primed, d.known.size(), d.sent, d.received, d.applied, d.forced, d.claims, d.requests, d.skipped,
-                  d.zeroed.size());
+                  d.zeroed.size(), reloads);
         log(line);
     }
     log("STORY end");
@@ -317,14 +335,20 @@ void ZerosOff(LogFn log)
     log("STORYZEROSOFF ok=1 (the full state leaves out what was cleared)");
 }
 
+void ReloadOff(LogFn log)
+{
+    reloadReset = false;
+    log("STORYRELOADOFF ok=1");
+}
+
 void Info(char const* name, bool give, LogFn log)
 {
     char line[260];
     gCInfoManager_PS* manager = Infos();
     gCInfo_PS* info = manager ? manager->GetInfo(bCString(name)) : nullptr;
-    if (!info) { sprintf_s(line, "INFO name=%s missing=1", name); log(line); return; }
+    if (!info) { Format(line, "INFO name=%s missing=1", name); log(line); return; }
     if (give) info->AccessInfoGiven() = true;
-    sprintf_s(line, "INFO name=%s given=%d permanent=%d owner=%s", name, info->AccessInfoGiven() ? 1 : 0,
+    Format(line, "INFO name=%s given=%d permanent=%d owner=%s", name, info->AccessInfoGiven() ? 1 : 0,
               info->AccessPermanent() ? 1 : 0, info->AccessOwner().GetText());
     log(line);
 }
@@ -344,11 +368,11 @@ void InfoCandidates(LogFn log)
             bool plain = std::strlen(name) < sizeof(net::StateEntry::name);
             for (char const* c = name; *c && plain; ++c) plain = isalnum(static_cast<unsigned char>(*c)) || *c == '_' || *c == '-';
             if (!plain) continue;
-            sprintf_s(line, "INFOS name=%s owner=%s", name, info->AccessOwner().GetText());
+            Format(line, "INFOS name=%s owner=%s", name, info->AccessOwner().GetText());
             log(line);
             ++found;
         }
-        sprintf_s(line, "INFOS total=%d", all.GetCount());
+        Format(line, "INFOS total=%d", all.GetCount());
         log(line);
     }
     log("INFOS end");
@@ -376,7 +400,7 @@ void Talk(char const* npcName, LogFn log)
         offered += std::string(offered.empty() ? "" : ",") + info->AccessName().GetText() + (xp ? ":xp" : "");
     }
     char line[900];
-    sprintf_s(line, "TALK npc=%s started=%d running=%d available=%d npc_task=%s infos=%s", npcName, started ? 1 : 0,
+    Format(line, "TALK npc=%s started=%d running=%d available=%d npc_task=%s infos=%s", npcName, started ? 1 : 0,
               manager->AccessIsRunning() ? 1 : 0, manager->GetAvailableInfoCount(), npc.Routine.GetCurrentTask().GetText(),
               offered.empty() ? "-" : offered.c_str());
     log(line);
@@ -389,7 +413,7 @@ void TalkState(LogFn log)
     if (!manager) { log("REFUSED talkstate: no game"); return; }
     gCInfo_PS* current = manager->GetCurrentInfo();
     gCEntity* partner = manager->GetDialogPartnerNPC();
-    sprintf_s(line, "TALKSTATE running=%d available=%d current=%s partner=%s waiting=%d", manager->AccessIsRunning() ? 1 : 0,
+    Format(line, "TALKSTATE running=%d available=%d current=%s partner=%s waiting=%d", manager->AccessIsRunning() ? 1 : 0,
               manager->GetAvailableInfoCount(), current ? current->AccessName().GetText() : "-",
               partner ? partner->GetName().GetText() : "-", manager->AccessWaitForScript() ? 1 : 0);
     log(line);
@@ -413,7 +437,7 @@ void AssessTalk(char const* npcName, LogFn log)
     Entity npc = Named(npcName);
     if (!hero || !npc.GetInstance()) { log("REFUSED assesstalk: no hero or NPC"); return; }
     const GEInt result = GetScriptAdminExt().CallScript(bCString("AssessTalk"), npc.GetInstance(), hero, 0);
-    sprintf_s(line, "ASSESSTALK npc=%s result=%d npc_task=%s npc_aimode=%d hero_task=%s has_info=%d frozen=%d npc_talking=%d npc_talked_to=%d",
+    Format(line, "ASSESSTALK npc=%s result=%d npc_task=%s npc_aimode=%d hero_task=%s has_info=%d frozen=%d npc_talking=%d npc_talked_to=%d",
               npcName, result, npc.Routine.GetCurrentTask().GetText(), body::AIModeOf(npc.GetInstance()),
               Entity(hero).Routine.GetCurrentTask().GetText(), npc.HasInfo(Entity(hero)) ? 1 : 0, npc.NPC.IsFrozen() ? 1 : 0,
               npc.Dialog.IsTalking() ? 1 : 0, npc.Dialog.IsBeingTalkedTo() ? 1 : 0);
@@ -438,7 +462,7 @@ void KillRaiders(LogFn log)
         // from outside (crashed in Script.dll mid-fight): a lethal hit, judged by the game.
         if (combat::LethalHit(npc.GetInstance())) ++killed;
     }
-    sprintf_s(line, "KILLRAIDERS killed=%d", killed);
+    Format(line, "KILLRAIDERS killed=%d", killed);
     log(line);
 }
 }
@@ -462,7 +486,7 @@ void Approach(char const* npcName, LogFn log)
     Entity(hero).MoveTo(body::Pose(*hero, position, rotation));
     const bCVector& p = hero->GetWorldPosition();
     const float now[3] = {p.GetX(), p.GetY(), p.GetZ()};
-    sprintf_s(line, "APPROACH npc=%s before_cm=%.0f after_cm=%.0f", npcName, before, body::Distance(target, now));
+    Format(line, "APPROACH npc=%s before_cm=%.0f after_cm=%.0f", npcName, before, body::Distance(target, now));
     log(line);
 }
 }
@@ -486,7 +510,7 @@ void Important(char const* radius, LogFn log)
         const float at[3] = {n.GetX(), n.GetY(), n.GetZ()};
         const float distance = body::Distance(at, from);
         if (distance > within || !npc.HasImportantInfo(Entity(hero))) continue;
-        sprintf_s(line, "IMPORTANT npc=%s distance=%.0f mirrored=%d task=%s", npc.GetName().GetText(), distance,
+        Format(line, "IMPORTANT npc=%s distance=%.0f mirrored=%d task=%s", npc.GetName().GetText(), distance,
                   npcs::IsMirrored(npc.GetInstance()) ? 1 : 0, npc.Routine.GetCurrentTask().GetText());
         log(line);
     }

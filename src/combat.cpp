@@ -47,6 +47,7 @@ unsigned claimsSent = 0, claimsApplied = 0, playerHitsSent = 0, playerHitsTaken 
 unsigned npcHitsSent = 0, npcHitsApplied = 0, npcKills = 0, npcHitsUnresolved = 0, partyKills = 0;
 bool partyXp = true;  // QA negative control: PartyXpOff
 bool reactHits = true;  // QA negative control: ReactHitsOff
+bool agressor = true;   // QA negative control: agressoroff (the struck NPC judges its attacker with AssessTarget, as before 26.10.)
 unsigned reactionsStarted = 0;  // host: client hits that made the NPC judge its attacker (AssessTarget)
 bool npcHits = true;  // QA negative control: NpcHitsOff
 unsigned forwardedJudged = 0, forwardedBare = 0;  // client: forwarded hits judged here / applied as bare hit points
@@ -136,6 +137,30 @@ int Pending(Entity& entity) { return HasDamageReceiver(entity.GetInstance()) ? s
 GEInt CallScript(char const* name, eCEntity* self, eCEntity* other, GEInt args)
 {
     return GetScriptAdminExt().CallScript(bCString(name), self, other, args);
+}
+
+// How a struck NPC takes a player's blow, as the game's AssessAgressor (0x24490, re/out/aggressor-b.c) does for its own
+// player: in its routine an NPC friendly to the attacker complains first (ZS_ReactToDamage) and fights back at the next
+// blow, any other fights back (AssessTarget, ReactToDamage); a fleeing one flees on; in a fight it picks its target.
+// AssessTarget alone made a friend fight back at the first blow (aggressordiag 26.10.: Hamlar, struck by the host's hero,
+// complained for 6 s; struck by the client, he attacked). Not with the puppet as the game's player: its friendliness is
+// the host hero's (ai.cpp answers GetAttitude about a puppet as about the hero, which then is no player and no friend).
+// Not again while it already fights the attacker.
+void React(Entity& target, eCEntity* attacker)
+{
+    if (target.NPC.GetCurrentTarget().GetInstance() == attacker && target.Routine.AIMode == gEAIMode_Combat) return;
+    if (agressor) {
+        const int mode = static_cast<int>(static_cast<gEAIMode>(target.Routine.AIMode));
+        CallScript("AssessAgressor", target.GetInstance(), attacker, 0);
+        if (reactionsStarted < 20)
+            Logf("combat: %s took a blow of player %d (AI mode %d): task %s", target.GetName().GetText(), remote::PuppetOwner(attacker), mode,
+                 target.Routine.GetCurrentTask().GetText());
+    } else if (target.NPC.GetCurrentTarget().GetInstance() != attacker) {
+        CallScript("AssessTarget", target.GetInstance(), attacker, gEAttackReason_ReactToDamage);
+    } else {
+        return;
+    }
+    ++reactionsStarted;
 }
 
 // What the game's hit judgement (AssessHit, before AddHitPoints) decided for the victim: the task it set.
@@ -399,10 +424,7 @@ void OnHitNpc(uint8_t from, uint8_t const guid[16], int32_t delta, uint8_t const
              target.IsInFOV(Entity(attacker)) ? 1 : 0);
     if (npcBlocks && attacker && !target.IsDown() && !target.IsDead() && Blocks(target, attacker)) {
         Block(target, attacker, delta);
-        if (reactHits && target.NPC.GetCurrentTarget().GetInstance() != attacker) {
-            CallScript("AssessTarget", target.GetInstance(), attacker, gEAttackReason_ReactToDamage);
-            ++reactionsStarted;
-        }
+        if (reactHits) React(target, attacker);
         witness::HitSeen(target.GetInstance(), attacker);
         return;
     }
@@ -425,12 +447,8 @@ void OnHitNpc(uint8_t from, uint8_t const guid[16], int32_t delta, uint8_t const
         CallScript("AddHitPoints", target.GetInstance(), attacker, delta);
         // The game's hit path (DoLogicalDamage) also decides how the NPC reacts; AddHitPoints alone left a friendly NPC
         // talking on while the client struck it (friendlydiag 20.10.). Let it judge the attacker as the game does when an
-        // NPC takes damage (AssessAttack -> AssessTarget with reason ReactToDamage): fight back, flee or call for help.
-        // Not again while it already has the puppet as its target.
-        if (reactHits && attacker && target.NPC.GetCurrentTarget().GetInstance() != attacker && !target.IsDead() && !target.IsDown()) {
-            CallScript("AssessTarget", target.GetInstance(), attacker, gEAttackReason_ReactToDamage);
-            ++reactionsStarted;
-        }
+        // NPC takes damage: fight back, complain, flee or call for help (React).
+        if (reactHits && attacker && !target.IsDead() && !target.IsDown()) React(target, attacker);
         witness::HitSeen(target.GetInstance(), attacker);  // and those around hear the fight (P7)
         return;
     }
@@ -625,7 +643,7 @@ void HitNpc(char const* guid, LogFn log)
     const unsigned sentBefore = claimsSent, callsBefore = filterCalls;
     int pending = 0;
     const GEInt result = GameHit(target, source, &pending);
-    sprintf_s(line, "HITNPC guid=%s name=%s source=%s:%s owner=%s result=%#x filtered=%u pending=%d task=%s before=%d after=%d dead=%d claim_sent=%d outcome=%u sp_before=%d sp_after=%d", guid,
+    Format(line, "HITNPC guid=%s name=%s source=%s:%s owner=%s result=%#x filtered=%u pending=%d task=%s before=%d after=%d dead=%d claim_sent=%d outcome=%u sp_before=%d sp_after=%d", guid,
               target.GetName().GetText(), kind, Entity(source).GetName().GetText(), Entity(source).Interaction.GetOwner().GetName().GetText(),
               result, filterCalls - callsBefore, pending, target.Routine.GetCurrentTask().GetText(), before, HitPoints(target),
               target.IsDead() ? 1 : 0, claimsSent != sentBefore, claimsSent != sentBefore ? lastOutcome : 0u, spBefore,
@@ -652,7 +670,7 @@ void HitNpcBurst(char const* argument, LogFn log)
     for (int i = 0; i < count; ++i) net::SendHitNpc(1, bytes, -100000, none, nullptr, net::HitDeath);  // hits the game judged deaths
     claimsSent += count;
     char line[160];
-    sprintf_s(line, "HITNPCBURST guid=%s sent=%d", guid, count);
+    Format(line, "HITNPCBURST guid=%s sent=%d", guid, count);
     log(line);
 }
 
@@ -671,7 +689,7 @@ void KillConfirmOff(LogFn log)
 void KillReport(LogFn log)
 {
     char line[200];
-    sprintf_s(line, "KILLONCE killed=%zu rewarded=%zu repeated_kills=%u repeated_rewards=%u xp_awarded=%u kills=%u undone=%u",
+    Format(line, "KILLONCE killed=%zu rewarded=%zu repeated_kills=%u repeated_rewards=%u xp_awarded=%u kills=%u undone=%u",
               killedHere.size(), rewarded.size(), killsRepeated, rewardsRepeated, xpAwarded, kills, killsUndone);
     log(line);
 }
@@ -683,6 +701,7 @@ void OnWorldChange()
     unconfirmed.clear();
     rewarded.clear();
     knockedAt.clear();
+    npcParades.clear();  // QA npcguard: its entities are gone with the world
 }
 
 // QA: the local hero hits another player's puppet through the game's hit path (judgement and stumble included).
@@ -698,7 +717,7 @@ void HitPuppet(char const* id, LogFn log)
     int pending = 0;
     const unsigned sentBefore = playerHitsSent;
     const GEInt result = GameHit(target, source, &pending);
-    sprintf_s(line, "HITPUPPET id=%s result=%#x task=%s sent=%d", id, result, target.Routine.GetCurrentTask().GetText(),
+    Format(line, "HITPUPPET id=%s result=%#x task=%s sent=%d", id, result, target.Routine.GetCurrentTask().GetText(),
               playerHitsSent != sentBefore);
     log(line);
 }
@@ -718,7 +737,7 @@ void GameString(char const* rvaText, LogFn log)
             strcpy_s(text, "<fault>");
         }
     }
-    sprintf_s(line, "GAMESTR rva=%#lx text=%s", static_cast<unsigned long>(rva), text);
+    Format(line, "GAMESTR rva=%#lx text=%s", static_cast<unsigned long>(rva), text);
     log(line);
 }
 
@@ -735,7 +754,7 @@ void HitPuppet(int playerId, LogFn log)
     const int before = HitPoints(victim);
     int pending = 0;
     const GEInt result = GameHit(victim, source, &pending);
-    sprintf_s(line, "HITPUPPET id=%d source=%s:%s result=%#x pending=%d before=%d after=%d sent=%d", playerId, kind,
+    Format(line, "HITPUPPET id=%d source=%s:%s result=%#x pending=%d before=%d after=%d sent=%d", playerId, kind,
               Entity(source).GetName().GetText(), result, pending, before, HitPoints(victim), playerHitsSent != sentBefore);
     log(line);
 }
@@ -750,7 +769,7 @@ void Arm(char const* item, LogFn log)
     const GEInt stack = self.Inventory.FindStackIndex(Template(item));
     const GEBool held = stack >= 0 ? self.Inventory.HoldStacks(-1, stack) : GEFalse;
     Entity inHand = self.Inventory.GetItemFromSlot(gESlot_RightHand);
-    sprintf_s(line, "ARM item=%s created=%d stack=%d held=%d right_hand=%s", item, created, stack, held ? 1 : 0,
+    Format(line, "ARM item=%s created=%d stack=%d held=%d right_hand=%s", item, created, stack, held ? 1 : 0,
               inHand.GetInstance() ? inHand.GetName().GetText() : "none");
     log(line);
 }
@@ -767,7 +786,7 @@ void Report(LogFn log)
     char line[400];
     eCDynamicEntity* hero = gCSession::GetInstance().GetHero();
     Entity self(hero);
-    sprintf_s(line, "HP hero=%d max=%d installed=%d bypass=%d filter_calls=%u dropped=%u kills=%u xp_awarded=%u xp=%d claims_sent=%u claims_applied=%u player_hits_sent=%u player_hits_taken=%u forwarded_judged=%u forwarded_bare=%u npc_hits_sent=%u npc_hits_applied=%u npc_kills=%u npc_hits_unresolved=%u party_kills=%u reactions=%u knocked_out=%u finish_refused=%u knockouts=%d",
+    Format(line, "HP hero=%d max=%d installed=%d bypass=%d filter_calls=%u dropped=%u kills=%u xp_awarded=%u xp=%d claims_sent=%u claims_applied=%u player_hits_sent=%u player_hits_taken=%u forwarded_judged=%u forwarded_bare=%u npc_hits_sent=%u npc_hits_applied=%u npc_kills=%u npc_hits_unresolved=%u party_kills=%u reactions=%u knocked_out=%u finish_refused=%u knockouts=%d",
               hero ? self.PlayerMemory.GetHitPoints() : -1, hero ? self.PlayerMemory.GetHitPointsMax() : -1, installed, bypass,
               filterCalls, dropped, kills, xpAwarded, hero ? static_cast<int>(self.PlayerMemory.XP) : -1, claimsSent, claimsApplied, playerHitsSent, playerHitsTaken,
               forwardedJudged, forwardedBare, npcHitsSent, npcHitsApplied, npcKills, npcHitsUnresolved, partyKills, reactionsStarted,
@@ -784,7 +803,7 @@ void PuppetParadeOff(LogFn log)
 void ParadeReport(LogFn log)
 {
     char line[200];
-    sprintf_s(line, "PARADE wrapped=%d,%d passed_on=%u on=%d mirror_passed_on=%u npc_blocks=%u npc_blocks_on=%d", judge[0] ? 1 : 0,
+    Format(line, "PARADE wrapped=%d,%d passed_on=%u on=%d mirror_passed_on=%u npc_blocks=%u npc_blocks_on=%d", judge[0] ? 1 : 0,
               judge[1] ? 1 : 0, paradesPassedOn, puppetParade ? 1 : 0, mirrorParadesPassedOn, npcBlocksApplied, npcBlocks ? 1 : 0);
     log(line);
 }
@@ -842,7 +861,7 @@ void GiveXp(char const* guid, LogFn log)
     Entity self(hero);
     const int before = static_cast<int>(self.PlayerMemory.XP);
     const GEInt result = CallScript("GiveXP", victim.GetInstance(), hero, -1);  // like the death script: self = the NPC, other = who earns it
-    sprintf_s(line, "GIVEXP name=%s result=%d xp_before=%d xp_after=%d level=%u dead=%d", victim.GetName().GetText(), result, before,
+    Format(line, "GIVEXP name=%s result=%d xp_before=%d xp_after=%d level=%u dead=%d", victim.GetName().GetText(), result, before,
               static_cast<int>(self.PlayerMemory.XP), static_cast<unsigned>(victim.NPC.Level), victim.IsDead() ? 1 : 0);
     log(line);
 }
@@ -856,7 +875,7 @@ void HeroState(LogFn log)
     if (!hero) { log("HERO none"); return; }
     Entity self(hero);
     gCGUIManager* gui = session.GetGUIManager();
-    sprintf_s(line, "HERO hp=%d max=%d dead=%d down=%d task=%s state=%s ani_state=%d ai_mode=%d paused=%d running=%d page=%d sp=%d action=%d",
+    Format(line, "HERO hp=%d max=%d dead=%d down=%d task=%s state=%s ani_state=%d ai_mode=%d paused=%d running=%d page=%d sp=%d action=%d",
               self.PlayerMemory.GetHitPoints(), self.PlayerMemory.GetHitPointsMax(), self.IsDead() ? 1 : 0, self.IsDown() ? 1 : 0,
               self.Routine.GetCurrentTask().GetText(), self.Routine.GetCurrentState().GetText(),
               static_cast<int>(self.Routine.AniState), static_cast<int>(self.Routine.AIMode), session.IsPaused() ? 1 : 0,
@@ -883,7 +902,7 @@ void HurtHero(char const* guid, LogFn log)
     forwarded = true;
     const GEInt result = GameHit(self, source, &pending);
     forwarded = false;
-    sprintf_s(line, "HURTHERO attacker=%s source=%s:%s result=%#x pending=%d before=%d after=%d dead=%d down=%d task=%s sp_before=%d sp_after=%d",
+    Format(line, "HURTHERO attacker=%s source=%s:%s result=%#x pending=%d before=%d after=%d dead=%d down=%d task=%s sp_before=%d sp_after=%d",
               attacker.GetName().GetText(), kind, Entity(source).GetName().GetText(), result, pending, before,
               self.PlayerMemory.GetHitPoints(), self.IsDead() ? 1 : 0, self.IsDown() ? 1 : 0, self.Routine.GetCurrentTask().GetText(),
               spBefore, self.PlayerMemory.GetStaminaPoints());
@@ -901,7 +920,7 @@ void KillHero(char const* guid, LogFn log)
     if (!killer.GetInstance()) { log("REFUSED killhero: no such NPC"); return; }
     const GEInt result = CallScript("OnCheatKill", killer.GetInstance(), hero, 0);
     Entity self(hero);
-    sprintf_s(line, "KILLHERO killer=%s result=%d hp=%d dead=%d down=%d task=%s", killer.GetName().GetText(), result,
+    Format(line, "KILLHERO killer=%s result=%d hp=%d dead=%d down=%d task=%s", killer.GetName().GetText(), result,
               self.PlayerMemory.GetHitPoints(), self.IsDead() ? 1 : 0, self.IsDown() ? 1 : 0, self.Routine.GetCurrentTask().GetText());
     log(line);
 }
@@ -919,7 +938,7 @@ void Swing(char const* state, LogFn log)
     self.Routine.SetState(bCString(state && *state ? state : "PS_Melee_Attack"));
     char motion[128] = "-";
     body::CurrentMotion(hero, motion, sizeof(motion));
-    sprintf_s(line, "SWING task_before=%s task=%s state=%s motion=%s", before.GetText(), self.Routine.GetCurrentTask().GetText(),
+    Format(line, "SWING task_before=%s task=%s state=%s motion=%s", before.GetText(), self.Routine.GetCurrentTask().GetText(),
               self.Routine.GetCurrentState().GetText(), motion);
     log(line);
 }
@@ -946,7 +965,7 @@ void Guard(char const* shield, LogFn log)
     guarded = true;
     self.PlayerMemory.SetStaminaPoints(self.PlayerMemory.GetStaminaPointsMax());
     Entity inLeft = self.Inventory.GetItemFromSlot(gESlot_LeftHand);
-    sprintf_s(line, "GUARD shield=%s stack=%d held=%d left_hand=%s task=%s state=%s action=%d shield_2=%d sp=%d hp=%d",
+    Format(line, "GUARD shield=%s stack=%d held=%d left_hand=%s task=%s state=%s action=%d shield_2=%d sp=%d hp=%d",
               shield ? shield : "-", left, held ? 1 : 0, inLeft.GetInstance() ? inLeft.GetName().GetText() : "none",
               self.Routine.GetCurrentTask().GetText(), self.Routine.GetCurrentState().GetText(), static_cast<int>(self.Routine.Action),
               self.Inventory.IsSkillActive(Template("Perk_Shield_2")) ? 1 : 0, self.PlayerMemory.GetStaminaPoints(),
@@ -975,7 +994,7 @@ void NpcGuard(char const* argument, LogFn log)
     npc.DamageReceiver.StaminaPoints = npc.DamageReceiver.StaminaPointsMax;
     npc.Routine.AniState = gEAniState_Parade;
     npcParades.emplace_back(npc.GetInstance(), GetTickCount() + 15000);
-    sprintf_s(line, "NPCGUARD name=%s facing=%s fov=%d parade_mode=%d sp=%d hp=%d mirrored=%d", npc.GetName().GetText(), Entity(who).GetName().GetText(),
+    Format(line, "NPCGUARD name=%s facing=%s fov=%d parade_mode=%d sp=%d hp=%d mirrored=%d", npc.GetName().GetText(), Entity(who).GetName().GetText(),
               npc.IsInFOV(Entity(who)) ? 1 : 0, CallScript("IsInParadeMode", npc.GetInstance(), nullptr, 0),
               static_cast<int>(npc.DamageReceiver.StaminaPoints), HitPoints(npc), npcs::IsMirrored(npc.GetInstance()) ? 1 : 0);
     log(line);
@@ -993,7 +1012,7 @@ void NpcStill(char const* guid, LogFn log)
     npc.Routine.FullStop();
     npc.NPC.SetCurrentTarget(Entity());
     npc.Routine.SetTask(bCString(body::IdleTask()));
-    sprintf_s(line, "NPCSTILL name=%s task=%s", npc.GetName().GetText(), npc.Routine.GetCurrentTask().GetText());
+    Format(line, "NPCSTILL name=%s task=%s", npc.GetName().GetText(), npc.Routine.GetCurrentTask().GetText());
     log(line);
 }
 
@@ -1007,7 +1026,7 @@ void PuppetParade(char const* guid, LogFn log)
     Entity npc = Entity(bCPropertyID(bCGuid(raw)));
     if (!npc.GetInstance()) { log("REFUSED puppetparade: no such NPC"); return; }
     Entity victim(puppet);
-    sprintf_s(line, "PUPPETPARADE parade=%d fov=%d ani_state=%d", CallScript("IsInParadeMode", puppet, nullptr, 0),
+    Format(line, "PUPPETPARADE parade=%d fov=%d ani_state=%d", CallScript("IsInParadeMode", puppet, nullptr, 0),
               victim.IsInFOV(npc) ? 1 : 0, static_cast<int>(victim.Routine.AniState));
     log(line);
 }
@@ -1021,20 +1040,21 @@ void PuppetState(LogFn log)
     Entity body(puppet);
     char motion[160] = "-";
     body::CurrentMotion(puppet, motion, sizeof(motion));
-    sprintf_s(line, "PUPPETSTATE ani_state=%d task=%s motion=%s", static_cast<int>(body.Routine.AniState),
+    Format(line, "PUPPETSTATE ani_state=%d task=%s motion=%s", static_cast<int>(body.Routine.AniState),
               body.Routine.GetCurrentTask().GetText(), motion);
     log(line);
 }
 
-// QA: an NPC's state as the judgement reads it here: NPCSTATE name task ani_state parade_mode sp hp.
-void NpcState(char const* guid, LogFn log)
+// QA: an NPC's state as the judgement reads it here: NPCPARADE name task ani_state parade_mode sp hp (not npcstate,
+// which is the dialog flags of stage H2).
+void NpcParade(char const* guid, LogFn log)
 {
     char line[300];
     _GUID raw;
-    if (!ParseGuid(guid, raw)) { log("REFUSED npcstate: bad GUID"); return; }
+    if (!ParseGuid(guid, raw)) { log("REFUSED npcparade: bad GUID"); return; }
     Entity npc = Entity(bCPropertyID(bCGuid(raw)));
-    if (!npc.GetInstance() || !HasDamageReceiver(npc.GetInstance())) { log("REFUSED npcstate: no such NPC"); return; }
-    sprintf_s(line, "NPCSTATE name=%s task=%s ani_state=%d parade_mode=%d sp=%d hp=%d", npc.GetName().GetText(),
+    if (!npc.GetInstance() || !HasDamageReceiver(npc.GetInstance())) { log("REFUSED npcparade: no such NPC"); return; }
+    Format(line, "NPCPARADE name=%s task=%s ani_state=%d parade_mode=%d sp=%d hp=%d", npc.GetName().GetText(),
               npc.Routine.GetCurrentTask().GetText(), static_cast<int>(npc.Routine.AniState),
               CallScript("IsInParadeMode", npc.GetInstance(), nullptr, 0), static_cast<int>(npc.DamageReceiver.StaminaPoints), HitPoints(npc));
     log(line);
@@ -1056,7 +1076,7 @@ void HitProbe(char const* guid, LogFn log)
     Entity self(hero);
     Entity weapon(source);
     if (paradeUntil && static_cast<int32_t>(GetTickCount() - paradeUntil) < 0) self.Routine.AniState = gEAniState_Parade;
-    sprintf_s(line, "HITPROBE attacker=%s source=%s parade_mode=%d can_parade=%d strength=%d level=%d current_level=%d hero_level=%d "
+    Format(line, "HITPROBE attacker=%s source=%s parade_mode=%d can_parade=%d strength=%d level=%d current_level=%d hero_level=%d "
               "protection=%d hero_strength=%d ani_state=%d action=%d attacker_action=%d damage=%d type=%d fov=%d",
               attacker.GetName().GetText(), kind, CallScript("IsInParadeMode", hero, nullptr, 0),
               CallScript("CanParadeMoveOf", hero, attacker.GetInstance(), 0), CallScript("GetStrength", attacker.GetInstance(), nullptr, 0),
@@ -1096,7 +1116,7 @@ void HitPuppetBy(char const* argument, LogFn log)
     body::CurrentMotion(puppet, motion, sizeof(motion));
     int pending = 0;
     const GEInt result = GameHit(victim, source, &pending);
-    sprintf_s(line, "HITPUPPETBY attacker=%s source=%s:%s result=%#x pending=%d sent=%d puppet_parade=%d puppet_fov=%d puppet_ani_state=%d motion=%s",
+    Format(line, "HITPUPPETBY attacker=%s source=%s:%s result=%#x pending=%d sent=%d puppet_parade=%d puppet_fov=%d puppet_ani_state=%d motion=%s",
               attacker.GetName().GetText(), kind, Entity(source).GetName().GetText(), result, pending, playerHitsSent != sentBefore,
               parrying, fov ? 1 : 0, aniState, motion);
     log(line);
@@ -1117,7 +1137,7 @@ void FleeFrom(char const* guid, LogFn log)
     npc.Routine.AIMode = gEAIMode_Flee;
     npc.Routine.SetTask(bCString("ZS_Flee"));
     const GEInt attitude = CallScript("GetAttitude", npc.GetInstance(), puppet, 0);
-    sprintf_s(line, "FLEE name=%s attitude=%d aimode=%d task=%s", npc.GetName().GetText(), attitude,
+    Format(line, "FLEE name=%s attitude=%d aimode=%d task=%s", npc.GetName().GetText(), attitude,
               static_cast<int>(npc.Routine.AIMode), npc.Routine.GetCurrentTask().GetText());
     log(line);
 }
@@ -1136,6 +1156,12 @@ void ReactHitsOff(LogFn log)
     log("REACTHITSOFF ok=1");
 }
 
+void AgressorOff(LogFn log)
+{
+    agressor = false;
+    log("AGRESSOROFF ok=1");
+}
+
 void ArenaRuleOff(LogFn log)
 {
     arenaRule = false;
@@ -1152,7 +1178,7 @@ void NpcHp(char const* argument, LogFn log)
     if (!npc.GetInstance() || !HasDamageReceiver(npc.GetInstance())) { log("REFUSED npchp: Name_HP of an NPC"); return; }
     const int before = HitPoints(npc);
     npc.DamageReceiver.HitPoints = std::atoi(arg.substr(cut + 1).c_str());
-    sprintf_s(line, "NPCHP name=%s before=%d after=%d", arg.substr(0, cut).c_str(), before, HitPoints(npc));
+    Format(line, "NPCHP name=%s before=%d after=%d", arg.substr(0, cut).c_str(), before, HitPoints(npc));
     log(line);
 }
 
@@ -1165,7 +1191,7 @@ void ArenaReport(char const* name, LogFn log)
     // The player the target belongs to: this machine's hero, another player's puppet, or 0 (an NPC, nobody).
     const int player = !target.GetInstance() ? 0 : target.GetInstance() == gCSession::GetInstance().GetHero() ? net::LocalId()
                                                                                                            : remote::PuppetOwner(target.GetInstance());
-    sprintf_s(line, "ARENA npc=%s reason=%d in_bout=%d target=%s target_player=%d hp=%d down=%d dead=%d refused=%u knockouts=%u rule=%d", name,
+    Format(line, "ARENA npc=%s reason=%d in_bout=%d target=%s target_player=%d hp=%d down=%d dead=%d refused=%u knockouts=%u rule=%d", name,
               static_cast<int>(static_cast<gEAttackReason>(npc.NPC.AttackReason)), InBout(npc) ? 1 : 0,
               target.GetInstance() ? target.GetName().GetText() : "-", player, HitPoints(npc), npc.IsDown() ? 1 : 0, npc.IsDead() ? 1 : 0,
               duelHitsRefused, duelKnockouts, arenaRule ? 1 : 0);

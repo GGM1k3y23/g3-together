@@ -4,7 +4,9 @@
 #include <Windows.h>
 #include <cstdarg>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <string>
 
 namespace g3t {
 namespace {
@@ -39,7 +41,7 @@ void Log(const char* text)
     // A long text is cut off: sprintf_s and vsprintf_s end the game when the buffer is too small (stage E2 22.10.: a
     // trader's contents in one container line closed the client with 0xC0000409, no line written).
     char line[1024];
-    int length = sprintf_s(line, "%02u:%02u:%02u.%03u ", now.wHour, now.wMinute, now.wSecond, now.wMilliseconds);
+    int length = Format(line, "%02u:%02u:%02u.%03u ", now.wHour, now.wMinute, now.wSecond, now.wMilliseconds);
     if (length > 0) {
         _snprintf_s(line + length, sizeof(line) - length - 2, _TRUNCATE, "%s", text);
         length = static_cast<int>(std::strlen(line));
@@ -60,5 +62,43 @@ void Logf(const char* format, ...)
     _vsnprintf_s(text, sizeof(text), _TRUNCATE, format, args);
     va_end(args);
     Log(text);
+}
+
+namespace {
+bool strict = false;  // QA negative control: formatstrict
+}
+
+int FormatV(char* out, size_t size, const char* format, va_list args)
+{
+    if (!out || !size) return 0;
+    if (strict) return vsprintf_s(out, size, format, args);
+    const int length = _vsnprintf_s(out, size, _TRUNCATE, format, args);
+    return length >= 0 ? length : static_cast<int>(std::strlen(out));
+}
+
+int Format(char* out, size_t size, const char* format, ...)
+{
+    va_list args;
+    va_start(args, format);
+    const int length = FormatV(out, size, format, args);
+    va_end(args);
+    return length;
+}
+
+void FormatProbe(char const* argument, FormatLogFn log)
+{
+    const int wanted = std::atoi(argument);
+    std::string text(wanted > 0 && wanted < 4096 ? wanted : 0, 'x');
+    char line[64];
+    const int length = Format(line, "FORMATPROBE %s", text.c_str());
+    char report[120];
+    Format(report, "FORMATPROBE wanted=%d written=%d strict=%d ok=1", wanted, length, strict ? 1 : 0);
+    log(report);
+}
+
+void FormatStrict(FormatLogFn log)
+{
+    strict = true;
+    log("FORMATSTRICT ok=1 (lines too long for their buffer end the game, as before 26.10.)");
 }
 }

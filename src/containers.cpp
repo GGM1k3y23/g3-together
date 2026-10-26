@@ -734,14 +734,14 @@ void QuickLoot(LogFn log)
     char const* refused = !base ? "no_script_game" : !hero.GetInstance() ? "no_hero" : !setting ? "quick_loot_off"
                           : std::strcmp(task, "PS_Normal") && std::strcmp(task, "PS_Normal_Loop") ? "not_ps_normal" : count != 0 ? "actions_pending" : nullptr;
     if (refused) {
-        sprintf_s(line, "QUICKLOOT queued=0 reason=%s task=%s actions=%d quick_loot=%d", refused, task, count, setting);
+        Format(line, "QUICKLOOT queued=0 reason=%s task=%s actions=%d quick_loot=%d", refused, task, count, setting);
         log(line);
         return;
     }
     QuickAction entry{0x90, 0, Entity()};
     AppendAction(base + ActionList, &entry, base + ActionAppend);
     Entity focus = hero.Focus.GetFocusEntity();
-    sprintf_s(line, "QUICKLOOT queued=1 task=%s actions_before=%d actions_after=%d focus=%s", task, count,
+    Format(line, "QUICKLOOT queued=1 task=%s actions_before=%d actions_after=%d focus=%s", task, count,
               *reinterpret_cast<int*>(base + ActionList + 4), NameOf(focus).c_str());
     log(line);
 }
@@ -750,7 +750,7 @@ void QuickLootActions(LogFn log)
 {
     auto* base = reinterpret_cast<uint8_t*>(GetModuleHandleA("Script_Game.dll"));
     char line[80];
-    sprintf_s(line, "QUICKACTIONS count=%d", base ? *reinterpret_cast<int*>(base + ActionList + 4) : -1);
+    Format(line, "QUICKACTIONS count=%d", base ? *reinterpret_cast<int*>(base + ActionList + 4) : -1);
     log(line);
 }
 
@@ -817,7 +817,7 @@ void Open(char const* guid, LogFn log)
     Entity(hero).MoveTo(body::Pose(*hero, position, rotation));
     const GEInt result = GetScriptAdminExt().CallScript(bCString("PlayerOpenLoot"), hero, container.GetInstance(), 0);
     char line[160];
-    sprintf_s(line, "LOOTOPEN guid=%s result=%d active=%d", guid, result, !active.empty());
+    Format(line, "LOOTOPEN guid=%s result=%d active=%d", guid, result, !active.empty());
     log(line);
 }
 
@@ -839,7 +839,7 @@ void Take(char const* argument, LogFn log)
         Entity self(hero);
         const GEBool ok = container.Inventory.TransferAmountTo(i, amount, self);
         char line[200];
-        sprintf_s(line, "LOOTTAKE guid=%s name=%s amount=%d ok=%d", guid, item.GetInstance() ? item.GetName().GetText() : "-", amount, ok ? 1 : 0);
+        Format(line, "LOOTTAKE guid=%s name=%s amount=%d ok=%d", guid, item.GetInstance() ? item.GetName().GetText() : "-", amount, ok ? 1 : 0);
         log(line);
         return;
     }
@@ -849,7 +849,7 @@ void Take(char const* argument, LogFn log)
 void Report(LogFn log)
 {
     char line[700];
-    sprintf_s(line, "CONTAINERSYNC hooked=%d quick_hooked=%d quick_takes=%u quick_refused=%u active=%d known=%zu pending=%zu contents_sent=%u contents_received=%u rewrites=%u tx_sent=%u tx_applied=%u tx_refused=%u tx_mismatch=%u tx_denied=%u reverted=%u hands_released=%u",
+    Format(line, "CONTAINERSYNC hooked=%d quick_hooked=%d quick_takes=%u quick_refused=%u active=%d known=%zu pending=%zu contents_sent=%u contents_received=%u rewrites=%u tx_sent=%u tx_applied=%u tx_refused=%u tx_mismatch=%u tx_denied=%u reverted=%u hands_released=%u",
               hooked, quickHooked, quickTakes, quickRefused, !active.empty(), known.size(), pending.size(), contentsSent, contentsReceived, rewrites, txSent, txApplied,
               txRefused, txMismatch, txDenied, reverted, handsReleased);
     log(line);
@@ -898,7 +898,7 @@ void Silent(char const* argument, LogFn log)
         Entity item = container.Inventory.GetTemplateItem(i);
         if (wanted && std::strcmp(item.GetName().GetText(), wanted) != 0) continue;
         char line[200];
-        sprintf_s(line, "LOOTSILENT guid=%s name=%s amount=%d", guid, item.GetInstance() ? item.GetName().GetText() : "-",
+        Format(line, "LOOTSILENT guid=%s name=%s amount=%d", guid, item.GetInstance() ? item.GetName().GetText() : "-",
                   container.Inventory.GetAmount(i));
         container.Inventory.DeleteStack(i);
         lastSent[Key(raw)] = Read(container);
@@ -966,7 +966,7 @@ void TradeOpen(char const* argument, LogFn log)
     Entity(hero).MoveTo(body::Pose(*hero, position, rotation));
     const GEInt result = GetScriptAdminExt().CallScript(bCString("PlayerOpenTrade"), hero, trader.GetInstance(), 0);
     char line[200];
-    sprintf_s(line, "TRADEOPEN trader=%s result=%d active=%d", trader.GetName().GetText(), result, !active.empty());
+    Format(line, "TRADEOPEN trader=%s result=%d active=%d", trader.GetName().GetText(), result, !active.empty());
     log(line);
 }
 
@@ -992,7 +992,7 @@ void TradeBuy(char const* argument, LogFn log)
     const GEBool got = trader.Inventory.TransferAmountTo(stack, 1, self);
     const GEBool paid = self.Inventory.TransferAmountTo(StackOf(self, "It_Gold", false), price, trader);
     char line[200];
-    sprintf_s(line, "TRADEBUY trader=%s name=%s price=%d got=%d paid=%d quality=%u", trader.GetName().GetText(), name.c_str(), price, got ? 1 : 0,
+    Format(line, "TRADEBUY trader=%s name=%s price=%d got=%d paid=%d quality=%u", trader.GetName().GetText(), name.c_str(), price, got ? 1 : 0,
               paid ? 1 : 0, stackQuality);
     log(line);
 }
@@ -1018,7 +1018,7 @@ void TradeSell(char const* argument, LogFn log)
     const GEBool gave = self.Inventory.TransferAmountTo(stack, 1, trader);
     const GEBool paid = trader.Inventory.TransferAmountTo(StackOf(trader, "It_Gold", false), price, self);
     char line[200];
-    sprintf_s(line, "TRADESELL trader=%s name=%s price=%d gave=%d paid=%d quality=%u", trader.GetName().GetText(), name.c_str(), price, gave ? 1 : 0,
+    Format(line, "TRADESELL trader=%s name=%s price=%d gave=%d paid=%d quality=%u", trader.GetName().GetText(), name.c_str(), price, gave ? 1 : 0,
               paid ? 1 : 0, stackQuality);
     log(line);
 }
@@ -1043,7 +1043,7 @@ void Stock(char const* argument, LogFn log)
     if (!entity.GetInstance() || !wanted || !HasInventory(entity.GetInstance())) { log("REFUSED stock: need GUID_Template"); return; }
     const GEInt stack = entity.Inventory.CreateItems(Template(wanted), 0, 1);
     char line[160];
-    sprintf_s(line, "STOCK name=%s stack=%d", wanted, stack);
+    Format(line, "STOCK name=%s stack=%d", wanted, stack);
     log(line);
 }
 }
@@ -1058,7 +1058,7 @@ std::string InvStateOf(Entity& entity)
     for (Entity const& set : all)
         if (set.GetInstance()) sets += (sets.empty() ? "" : ",") + std::string(set.GetName().GetText());
     char flags[80];
-    sprintf_s(flags, " gen_plunder=%d gen_trade=%d generated_stacks=%d", entity.Inventory.IsGeneratedPlunder() ? 1 : 0,
+    Format(flags, " gen_plunder=%d gen_trade=%d generated_stacks=%d", entity.Inventory.IsGeneratedPlunder() ? 1 : 0,
               entity.Inventory.IsGeneratedTrade() ? 1 : 0, entity.Inventory.GetGeneratedStackCount());
     const int locked = entity.GetInstance()->GetPropertySet(eEPropertySetType_Lock) ? (entity.Lock.IsLocked() ? 1 : 0) : -1;
     return std::string(" name=") + entity.GetName().GetText() + flags + " locked=" + std::to_string(locked) + " sets=" + (sets.empty() ? "-" : sets) +
@@ -1085,12 +1085,12 @@ void Stacks(char const* argument, LogFn log)
     const int count = entity.Inventory.GetStackCount();
     const bool npc = entity.GetInstance()->GetPropertySet(eEPropertySetType_NPC) != nullptr;
     char line[300];
-    sprintf_s(line, "STACKS guid=%.36s name=%s corpse=%d hp=%d aimode=%d count=%d", argument, entity.GetName().GetText(), Corpse(entity) ? 1 : 0,
+    Format(line, "STACKS guid=%.36s name=%s corpse=%d hp=%d aimode=%d count=%d", argument, entity.GetName().GetText(), Corpse(entity) ? 1 : 0,
               npc ? static_cast<int>(entity.DamageReceiver.HitPoints) : -1, npc ? static_cast<int>(entity.Routine.AIMode) : -1, count);
     log(line);
     for (int i = 0; i < count; ++i) {
         Entity item = entity.Inventory.GetTemplateItem(i);
-        sprintf_s(line, "STACK %d name=%s amount=%d slot=%d category=%d quality=%u counted=%d", i,
+        Format(line, "STACK %d name=%s amount=%d slot=%d category=%d quality=%u counted=%d", i,
                   item.GetInstance() ? item.GetName().GetText() : "-", entity.Inventory.GetAmount(i),
                   static_cast<int>(entity.Inventory.GetSlotFromStack(i)), static_cast<int>(entity.Inventory.GetCategory(i)),
                   entity.Inventory.GetQuality(i), Counted(entity, i) ? 1 : 0);
@@ -1109,7 +1109,7 @@ void HoldItem(char const* argument, LogFn log)
     const bool held = stack >= 0 && entity.Inventory.HoldStacks(-1, stack);
     const Entity right = entity.Inventory.GetItemFromSlot(gESlot_RightHand);
     char line[200];
-    sprintf_s(line, "HOLDITEM name=%s stack=%d held=%d right=%s", wanted, stack, held ? 1 : 0, right.GetInstance() ? right.GetName().GetText() : "-");
+    Format(line, "HOLDITEM name=%s stack=%d held=%d right=%s", wanted, stack, held ? 1 : 0, right.GetInstance() ? right.GetName().GetText() : "-");
     log(line);
 }
 
@@ -1132,10 +1132,10 @@ void Chests(LogFn log)
         const eCEntityProxy proxy(instance);
         _GUID raw;
         std::memcpy(&raw, &proxy.GetEntityID().GetCore(), 16);
-        sprintf_s(guid, "%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", raw.Data1, raw.Data2, raw.Data3, raw.Data4[0], raw.Data4[1],
+        Format(guid, "%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X", raw.Data1, raw.Data2, raw.Data3, raw.Data4[0], raw.Data4[1],
                   raw.Data4[2], raw.Data4[3], raw.Data4[4], raw.Data4[5], raw.Data4[6], raw.Data4[7]);
         char dist[32];
-        sprintf_s(dist, " distance_cm=%d", static_cast<int>(distance));
+        Format(dist, " distance_cm=%d", static_cast<int>(distance));
         found.emplace(distance, std::string("CHEST guid=") + guid + dist + InvStateOf(entity));
     }
     for (auto const& [distance, line] : found) log(line.c_str());

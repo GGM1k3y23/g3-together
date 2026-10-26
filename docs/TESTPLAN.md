@@ -15,7 +15,7 @@ Ein Ablauf für den ersten Abend zu zweit (ein Host, ein Mitspieler): Beitritt, 
 - [ ] Vorher den Gothic-3-Spielstandordner beider Personen sichern. Während des Abends einen klar benannten Test-Spielstand verwenden.
 - [ ] Verbindung wählen: gleiches LAN oder privates VPN. Host-IP/VPN-Adresse und Firewall-Regel nur dem Mitspieler geben. Der Host braucht eingehendes UDP auf Port 34567. Die Verbindung über echtes Internet gilt noch nicht als von Menschen getestet.
 - [ ] Beide notieren ihre Rolle und lokale Uhrzeit/Zeitzone für spätere Fehlerberichte.
-- [ ] Optional: statt von Hand mit `Einrichten.cmd` aus dem Paket einrichten und notieren, was dabei schiefging. Es ist bisher
+- [ ] Optional: statt von Hand mit `Einrichten.cmd` (Polnisch: `Instalacja.cmd`) aus dem Paket einrichten und notieren, was dabei schiefging. Es ist bisher
   nur an Testordnern ausprobiert.
 
 ### INI und Kompatibilität
@@ -43,8 +43,9 @@ language = de
 
 `puppet_template` ist optional; Standardwert ist `PC_Hero`. Ebenfalls optional ist `look = <Charaktervorlage>` (zum Beispiel `look = Diego`): So sieht der andere Spieler dich. `offer_accept_key` und `offer_decline_key` (Standard Einfg und Entf) beantworten ein Handelsangebot. Fehlt die INI, startet der Code im Host-Modus. Deshalb vor dem Start auf dem Mitspieler-PC `role = client` kontrollieren.
 
-Die Beispiel-INIs verwenden `language = de`, passend zu den unten zitierten Meldungen. Standard ist
-`language = en`. Jeder Spieler kann die Sprache unabhängig wählen; sie ändert nur die Mod-Meldungen.
+Die Beispiel-INIs verwenden `language = de`, passend zu den unten zitierten Meldungen. Ohne die Zeile sind die
+Meldungen englisch; `language = pl` gibt polnische, `language = auto` (schreibt das Einrichten) folgt der Textsprache
+des Spiels. Jeder Spieler kann die Sprache unabhängig wählen; sie ändert nur die Mod-Meldungen.
 
 - [ ] Beide verwenden dieselbe Mod-DLL und dieselben Installationsdateien. Der Host prüft Game.dll, Script.dll, Engine.dll, DLLs im `scripts`-Ordner, Regelarchive, Namen/Größen anderer Data-Archive sowie Optionen und den gesamten `[Game]`-Abschnitt aus `Ini\ge3.ini`. Lose Dateien in Data-Unterordnern und eigene Schwierigkeitsschieber deckt diese Prüfung laut README nicht ab.
 - [ ] Schwierigkeit, alternatives Balancing, alternative KI, minimale Trefferdauer, XP-Faktor und Quick Loot abgleichen. Bei Join-Ablehnung den Grund in `g3together.log` ansehen.
@@ -111,6 +112,16 @@ Wenn nur 60 Minuten verfügbar sind: zuerst Beitritt, Kampf, Aufhelfen, Gefolgsm
 | Kapitel | Einer gibt die Artefakte an einem Götterschrein ab: Das Kapitel wechselt für beide (andere NPCs sprechen mit beiden wie im neuen Kapitel). |
 | Das Ende | Einer startet den Epilog: Der andere sieht dieselben Bilder zur selben Zeit, bis zum Spielende. Notieren, was danach mit der Verbindung passiert. |
 | Schwimmen | Der Mitspieler schwimmt im Meer vorwärts: Der Host sieht ihn schwimmen, nicht gleiten. |
+
+### Optional: die Neuheiten von 0.6.0
+
+| Abschnitt | Schritte und Beobachtungen |
+|---|---|
+| Polnisch | Ein Spieler mit polnischen Untertiteln (Optionsmenü) sieht die Meldungen der Mod auf Polnisch, etwa wenn er sich vom Host entfernt. |
+| Das Ende, beschäftigt | Einer startet den Epilog, während der andere im Dialog ist: Der andere sieht eine Meldung, sein Epilog beginnt nach dem Dialog. |
+| Story-Umzüge | Nach der Befreiung von Ardea gehen beide weit weg: Diego, Gorn und Milten stehen bei beiden am selben neuen Ort. Folgt Diego dem Mitspieler, bleibt er bei ihm. |
+| Befreite Stadt | Der Mitspieler befreit bei gemeinsamem Ruf eine Stadt: Die Rebellen sprechen den Host darauf an wie den Mitspieler. |
+| Schlafendes Tier | Der Mitspieler geht zu einem schlafenden Tier: Es wacht auf wie beim Host. |
 
 ## Bei einem Fehler
 

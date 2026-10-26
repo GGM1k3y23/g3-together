@@ -20,8 +20,16 @@ void Chapter(LogFn log);                    // QA (main story): CHAPTER line, th
 void Sector(char const* name, LogFn log);   // QA (main story): SECTOR line, whether that world sector is on
 void QuickUse(char const* item, LogFn log); // QA (P2): QUICKUSE line, that item on quick slot 1 used as its key does (OnPlayerUseQuickSlot)
 void ScriptWatch(char const* name, LogFn log);  // QA: count calls of a script (name) or report them all (empty)
+void NativeWatch(char const* name, LogFn log);  // QA: count every call of a script at its code (name), "reset", or report (empty)
+void Sleepers(char const* argument, LogFn log);  // QA: SLEEPER lines, animals with a sleeping point ("all": every animal)
+void WaitFree(char const* argument, LogFn log);  // QA: "NAME": that NPC waits for its destination (ZS_WaitForFreeDestination)
+void AnimalSleep(char const* argument, LogFn log);  // QA: "GUID": that animal sleeps as ZS_AnimalSleep ends (OnAnimalSleep)
 void ZoneAttitude(char const* name, LogFn log);  // QA (P7): ZONEATT line, zone attitude and attitude to the player for hero and puppet 2
+void SetChapter(char const* value, LogFn log);  // QA setchapter <n>: SETCHAPTER line
+void AttitudeChain(char const* name, LogFn log);  // QA attchain <npc>: ATTCHAIN line, the parts of GetAttitude for hero and puppet 2
 void MoveMode(LogFn log);                   // QA (P2, PS_Swim): MOVEMODE line, the movement mode of the hero and of the puppets
+void SwimGoal(char const* argument, LogFn log);  // QA (P2, PS_Swim): the hero swims toward DX_DZ for MS ms by its movement goal
+void SwimTick();                                 // QA: every frame, holds that goal
 void NpcRoutine(char const* name, LogFn log);  // QA (followdiag): FullStop and ContinueRoutine, as at a dialog's end    // kill a named NPC wherever it is (hit points 0, OnCheatKill)
 void FarMove(char const* argument, LogFn log);  // "X_Y_Z_<name>": move a named entity wherever it is
 void TeleportTo(char const* name, LogFn log);  // the game's own teleport to a named entity
@@ -40,4 +48,7 @@ void InfoDescribe(char const* name, LogFn log);  // QA: a dialog option's condit
 void XpInfos(LogFn log);  // QA: XPINFO lines, dialog options that give experience under simple conditions
 void NativeSave(char const* name, LogFn log);  // the game's own save (gCHUDFileManager::SaveGame)
 void NativeLoad(char const* name, LogFn log);  // the game's own load (gCHUDFileManager::LoadGame)
+void PolMem(char const* argument, LogFn log);  // QA polmem [pal_crime_suspect_fame]: POLMEM, the hero's political memory
+void EnclaveFame(char const* argument, LogFn log);  // QA enclavefame Name[-fame]: ENCLAVEFAME, read/set an enclave's PlayerFame
+void EnclaveStatus(char const* argument, LogFn log);  // QA enclavestatus Name-status: the game's ChangeEnclaveStatus here
 }
