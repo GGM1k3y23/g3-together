@@ -8,7 +8,7 @@
 namespace g3t::emote {
 using LogFn = void (*)(char const*);
 void Tick();                                    // once per frame: the key, the pending choice, a running loop
-void Command(char const* argument, LogFn log);  // QA: "emote <key|index>[:spu|:entity|:overlay]" plays one now (EMOTE line)
-void Raw(char const* argument, LogFn log);      // QA: "emoteraw <motion>[:method]", any motion (without "Hero_": standing)
+void Command(char const* argument, LogFn log);  // QA: "emote <key|index>[-spu|-entity|-overlay]" plays one now (EMOTE line)
+void Raw(char const* argument, LogFn log);      // QA: "emoteraw <motion>[-method]", any motion (no "Hero_": standing; _x_ = _%_)
 void State(LogFn log);                          // QA: EMOTESTATE, what the hero plays now and the last emote's result
 }

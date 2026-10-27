@@ -22,7 +22,8 @@ namespace {
 // Motion names exactly as the game's _compiledAnimation.pak has them for the hero's skeleton (human NPCs share it), without
 // .xmot. The game's own name composer (gCScriptProcessingUnit::GetAniName) gave only a stem without direction and
 // variant (..._Cheer_Begin_N__00_), which played nothing (stageEmote 27.10. 16:38). Only standing motions: sitting or
-// kneeling change the hero's stance, and getting up again is a stance change of its own.
+// kneeling change the hero's stance, and getting up again is a stance change of its own. The upper-body _O_ motions
+// (Cheer, Applaud) did not start as a play-ani instruction (stageEmote 27.10. 16:51); cheering is SuperCheer.
 #define HERO_STAND "Hero_Stand_None_None_P0_"
 struct Emote
 {
@@ -33,8 +34,6 @@ struct Emote
 };
 const Emote Emotes[] = {
     {"cheer", {L"Cheer", L"Jubeln", L"Wiwatowanie"}, HERO_STAND "SuperCheer_Begin_N_Fwd_00_%_01_P0_0", nullptr},
-    {"applaud", {L"Applaud", L"Klatschen", L"Oklaski"}, HERO_STAND "Applaud_Begin_O_Fwd_00_%_00_P0_0",
-     HERO_STAND "Applaud_Loop_O_Fwd_00_%_00_P0_0"},
     {"dance", {L"Dance", L"Tanzen", L"Taniec"}, HERO_STAND "Dance_Begin_N_Fwd_00_%_00_P0_0", HERO_STAND "Dance_Loop_N_Fwd_00_%_01_P0_0"},
     {"arms", {L"Cross arms", L"Arme verschränken", L"Skrzyżowane ręce"}, HERO_STAND "ArmsCrossed_Begin_N_Fwd_00_%_00_P0_0",
      HERO_STAND "ArmsCrossed_Loop_N_Fwd_00_%_01_P0_0"},
@@ -61,7 +60,7 @@ struct Running
     char begin[96] = {}, loop[96] = {};
     bool inLoop = false;
     float start[3] = {};
-    uint32_t nextLook = 0, checkAt = 0;
+    uint32_t nextLook = 0, checkAt = 0, startedAt = 0;
     int method = Auto;
     bool active = false;
 };
@@ -124,6 +123,7 @@ bool Start(int index, char const* begin, char const* loop, int method, char cons
     const uint32_t now = GetTickCount();
     next.nextLook = now + 300;
     next.checkAt = now + 150;
+    next.startedAt = now;
     next.active = true;
     running = next;
     ++played;
@@ -169,12 +169,12 @@ int MethodOf(char const* how)
     return !_stricmp(how, "spu") ? Spu : !_stricmp(how, "entity") ? Ent : !_stricmp(how, "overlay") ? Overlay : Auto;
 }
 
-// "<word>[:spu|:entity|:overlay]" from the QA bot's one-word argument
+// "<word>[-spu|-entity|-overlay]" from the QA bot's one-word argument (only [A-Za-z0-9_-] passes)
 void Split(char const* argument, char* word, size_t size, char* how, size_t howSize)
 {
     strncpy_s(word, size, argument ? argument : "", _TRUNCATE);
     *how = '\0';
-    if (char* colon = std::strrchr(word, ':')) {
+    if (char* colon = std::strrchr(word, '-')) {
         strncpy_s(how, howSize, colon + 1, _TRUNCATE);
         *colon = '\0';
     }
@@ -234,10 +234,12 @@ void Command(char const* argument, LogFn log)
 
 void Raw(char const* argument, LogFn log)
 {
-    // The argument is at most 63 characters: a name without "Hero_" is taken as a standing motion of the hero's skeleton.
+    // The argument is at most 63 characters of [A-Za-z0-9_-]: a name without "Hero_" is taken as a standing motion of the
+    // hero's skeleton, and "_x_" stands for the names' "_%_".
     char word[64], how[16], name[96];
     Split(argument, word, sizeof(word), how, sizeof(how));
     Format(name, "%s%s", std::strncmp(word, "Hero_", 5) ? HERO_STAND : "", word);
+    if (char* x = std::strstr(name, "_x_")) x[1] = '%';
     char const* reason = "";
     const bool ok = *word && Start(-1, name, nullptr, MethodOf(how), &reason);
     char line[300];
@@ -251,8 +253,9 @@ void State(LogFn log)
     char shows[128] = "-";
     if (hero) body::CurrentMotion(hero, shows, sizeof(shows));
     char line[500];
-    Format(line, "EMOTESTATE running=%s loop=%d shows=%s run0=%d played=%u refused=%u loops=%u last=%s",
-           !running.active ? "-" : running.index >= 0 ? Emotes[running.index].key : "raw", running.inLoop ? 1 : 0,
+    Format(line, "EMOTESTATE running=%s ms=%u loop=%d shows=%s run0=%d played=%u refused=%u loops=%u last=%s",
+           !running.active ? "-" : running.index >= 0 ? Emotes[running.index].key : "raw",
+           running.active ? static_cast<unsigned>(GetTickCount() - running.startedAt) : 0u, running.inLoop ? 1 : 0,
            *shows ? shows : "-", hero && body::MotionRunning(hero) ? 1 : 0, played, refused, loopRestarts, lastResult);
     log(line);
 }
