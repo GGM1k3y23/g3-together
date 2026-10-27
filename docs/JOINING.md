@@ -57,6 +57,10 @@ If your game cannot reach the host at all, the top line of the main menu says so
 and port from your INI (in the game: a message every 30 seconds). Check that the host's game is running, the address and port,
 and the host's firewall. The mod keeps trying; once it reaches the host, the line is back to normal.
 
+**Over Steam** (`transport = steam`, experimental, see [PLAYING.md](PLAYING.md#over-steam-experimental)): you need no
+address. Your game looks for the host among your Steam friends; until it finds one, the top line of the main menu says so
+after about 15 seconds. The host must be on your Steam friends list and have Steam and its game running.
+
 ## While playing
 
 - If you are downed, wait for your partner. A connected player in the same world can help you up by

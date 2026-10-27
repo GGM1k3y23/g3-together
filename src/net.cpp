@@ -5,6 +5,7 @@
 
 #include "log.h"
 #include "parity.h"
+#include "steam.h"
 
 #include <cmath>
 #include <cstdio>
@@ -68,6 +69,7 @@ uint32_t lastConnectAttempt = 0;
 uint32_t startedAt = 0;      // client: when it began to connect (enet_time_get)
 bool everConnected = false;  // client: an ENet connection to the host came up once (owner 24.10.: "host not reachable")
 bool isHost = false;
+bool overSteam = false;      // transport = steam and Steam started: datagrams also pass steam.cpp's relay
 uint8_t localId = 0;
 bool connected = false;
 uint32_t welcomes = 0;  // client side: welcomes so far (WelcomeSerial), never sent
@@ -1007,9 +1009,10 @@ void Stop()
         enet_peer_disconnect_now(server, 0);
     }
     enet_host_flush(host);
+    if (overSteam) steam::Stop();  // passes the goodbyes on first
 }
 
-bool Start(bool asHost, char const* address, unsigned short port, char const* name)
+bool Start(bool asHost, char const* address, unsigned short port, char const* name, bool steamTransport)
 {
     if (enet_initialize() != 0) { Log("net: enet_initialize failed"); return false; }
     isHost = asHost;
@@ -1023,22 +1026,35 @@ bool Start(bool asHost, char const* address, unsigned short port, char const* na
         localId = 1;
         connected = true;
         Logf("net: hosting on UDP %u: %s", port, host ? "ok" : "FAILED");
+        // Friends over Steam reach the same ENet port through steam.cpp's relay; the UDP port stays open for addresses.
+        overSteam = host && steamTransport && steam::Start(true, port);
+        if (steamTransport) Logf("net: Steam %s", overSteam ? "on: friends can join over Steam" : steam::Error());
     } else {
         host = enet_host_create(nullptr, 1, ChannelCount, 0, 0);
         if (host) host->mtu = Mtu;  // before connecting: the connect proposes it, both sides keep the smaller
-        enet_address_set_host(&target, address);
-        target.port = port;
+        // Over Steam ENet connects to the relay on 127.0.0.1, which passes everything to the host found among the Steam
+        // friends. Without Steam (not running, no steam_api.dll) the address from the INI is the fallback.
+        overSteam = host && steamTransport && steam::Start(false, 0);
+        if (overSteam) {
+            enet_address_set_host(&target, "127.0.0.1");
+            target.port = steam::RelayPort();
+        } else {
+            if (steamTransport) Logf("net: Steam not available (%s); connecting to the address instead", steam::Error());
+            enet_address_set_host(&target, address);
+            target.port = port;
+        }
         server = host ? enet_host_connect(host, &target, ChannelCount, 0) : nullptr;
         lastConnectAttempt = enet_time_get();
         startedAt = enet_time_get();
-        Logf("net: connecting to %s:%u: %s", address, port, server ? "pending" : "FAILED");
+        if (overSteam) Logf("net: connecting over Steam (relay 127.0.0.1:%u): %s", target.port, server ? "pending" : "FAILED");
+        else Logf("net: connecting to %s:%u: %s", address, port, server ? "pending" : "FAILED");
     }
     return host != nullptr;
 }
 
-void Tick(PlayerState const& local, bool haveLocal)
+namespace {
+void Service(PlayerState const& local, bool haveLocal)
 {
-    if (!host) return;
     ENetEvent event;
     // At most 512 events a frame: a flood must not stall the game (Fable's review 22.10. 1.9); the rest waits for the next.
     for (int events = 0; events < 512 && enet_host_service(host, &event, 0) > 0; ++events) {
@@ -1102,6 +1118,15 @@ void Tick(PlayerState const& local, bool haveLocal)
         Send(server, &message, sizeof(message), ChannelState, false);
     }
     enet_host_flush(host);
+}
+}
+
+void Tick(PlayerState const& local, bool haveLocal)
+{
+    if (!host) return;
+    if (overSteam) steam::Pump();  // Steam -> ENet before the service
+    Service(local, haveLocal);
+    if (overSteam) steam::Pump();  // what ENet sent in this frame goes out now, not a frame later
 }
 
 // QA, client (stage W1): leave the host and connect again at once, as a player whose connection dropped and came back.

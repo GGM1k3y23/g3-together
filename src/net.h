@@ -59,7 +59,8 @@ struct Remote
     bool connected = false;
 };
 
-bool Start(bool host, char const* address, unsigned short port, char const* name);
+// steam: transport = steam (steam.cpp); a client without Steam connects to address instead.
+bool Start(bool host, char const* address, unsigned short port, char const* name, bool steam);
 void Stop();  // at shutdown: disconnect now so the others notice at once
 void Reconnect(void (*log)(char const*));  // QA, client (stage W1): leave the host and connect again at once
 // Service the socket and, at most every 50 ms, send the local state. Call once per frame.

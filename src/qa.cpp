@@ -43,6 +43,7 @@
 #include "clock.h"
 #include "guide.h"
 #include "arena.h"
+#include "steam.h"
 #include "ending.h"
 #include "infocmd.h"
 #include "remote.h"
@@ -672,6 +673,8 @@ bool RunLaterAction(const char* action)
         g3t::clock::WaitOff(&Log);
     } else if (!std::strcmp(action, "reconnect")) {
         g3t::net::Reconnect(&Log);
+    } else if (!std::strcmp(action, "steamstatus")) {
+        g3t::steam::Status(&Log);
     } else if (!std::strcmp(action, "generationoff")) {
         g3t::persist::GenerationOff(&Log);
     } else if (!std::strcmp(action, "persistpause")) {

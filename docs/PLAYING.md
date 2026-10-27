@@ -72,6 +72,26 @@ The mod connects directly over UDP port 34567. A private virtual network, such a
 service on both PCs and use the host's virtual-network address as `address`.
 Alternatively, the host can forward UDP port 34567 on their router to their PC.
 
+### Over Steam (experimental)
+
+With `transport = steam` in both INIs, the joining player's game finds the host among their Steam friends, and all traffic
+goes through Steam, relayed by Valve where needed: no address, no port forwarding, no Hamachi.
+
+- Both players need Steam running and logged in, and must be Steam friends. A GOG copy of Gothic 3 works too; only a
+  Steam account is needed.
+- The mod needs Valve's 32-bit `steam_api.dll` in `<Gothic 3>\G3Together\`. The setup puts it there (from the package, or
+  downloaded from the Steamworks.NET release 2025.164.1 after asking, checked by its SHA-256).
+- The mod runs as Valve's free sample app "Spacewar" (AppID 480), so Steam shows both players as playing Spacewar.
+  Nothing has to be bought.
+- With several friends hosting at once, the joining player sets `steam_host = <the host's Steam name>`. The host's
+  `g3together.log` also names its lobby number; `steam_lobby = <number>` joins exactly that one.
+- Without Steam (not running, no `steam_api.dll`) the joining player's game connects to `address` instead and says so in
+  the game. The host's UDP port stays open over Steam too, so a player with an address can join the same game.
+- The Steam overlay's invite may not open in Gothic 3. It is not needed: the joining player's game finds the host by
+  itself, and "Join game" in the Steam friends list works as well while their game is running.
+
+This connection was tested with a stand-in for Steam on one PC; play between two real Steam accounts is still unverified.
+
 ### Using Hamachi
 
 1. Both players install Hamachi and join the **same** Hamachi network.

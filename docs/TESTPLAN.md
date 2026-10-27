@@ -123,6 +123,18 @@ Wenn nur 60 Minuten verfügbar sind: zuerst Beitritt, Kampf, Aufhelfen, Gefolgsm
 | Befreite Stadt | Der Mitspieler befreit bei gemeinsamem Ruf eine Stadt: Die Rebellen sprechen den Host darauf an wie den Mitspieler. |
 | Schlafendes Tier | Der Mitspieler geht zu einem schlafenden Tier: Es wacht auf wie beim Host. |
 
+### Optional: über Steam (experimentell)
+
+Beide stellen `transport = steam` ein (oder wählen im Setup Steam) und sind Steam-Freunde; siehe [SPIELEN.md](SPIELEN.md#über-steam-experimentell).
+
+| Abschnitt | Schritte und Beobachtungen |
+|---|---|
+| Host finden | Der Host startet zuerst, dann der Mitspieler ohne Adresse: Er tritt nach wenigen Sekunden bei (Dauer notieren). Steam zeigt beide als „spielt Spacewar“. |
+| Verschiedene Netze | Von zwei verschiedenen Wohnungen aus spielen (kein LAN, kein VPN): Beitritt, Übertragung des Spielstands und eine Stunde Spiel klappen. Ruckler im Vergleich zu Hamachi notieren. |
+| Spiel beitreten | Das Spiel des Mitspielers läuft schon; dann in der Steam-Freundesliste beim Host „Spiel beitreten“: Er tritt bei. |
+| Verlassen | Der Mitspieler beendet sein Spiel: Der Host sieht ihn sofort weg. Er startet neu und tritt wieder bei. |
+| Ohne Steam | Der Mitspieler beendet Steam und startet das Spiel: Eine Meldung sagt, dass Steam nicht nutzbar ist; mit Adresse in der INI verbindet er sich über die Adresse. |
+
 ## Bei einem Fehler
 
 Jeder Spieler legt für jeden Fehler einen eigenen Eintrag an:

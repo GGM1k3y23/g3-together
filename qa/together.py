@@ -47,6 +47,10 @@ CHAOS_PROFILE = os.environ.get('G3_CHAOS', '')
 CHAOS = None  # the running chaos.relay.Relay
 NETLINK = None  # the running NetSim
 RELAY_PORT = PORT + 10
+# The Steam transport over its stand-in (tools/fakesteam/README.md): G3_FAKESTEAM=<fake_steam_api.dll> together with
+# G3_INI_EXTRA="transport = steam". Each copy gets its own Steam id and the pair its own lobby folder, so pairs never see
+# each other's lobbies; real Steam is never touched.
+FAKESTEAM = os.environ.get('G3_FAKESTEAM', '')
 RECEIPT = WORKSPACE/'runtime/myrtana-deployment.json'
 OURS = 'scripts/Script_G3Together.dll'
 PUPPET_TEMPLATE = 'PC_Hero'
@@ -239,7 +243,14 @@ class Copy:
             for name in ('g3together.log', 'qa-engine.log', 'g3trace.log'):
                 (self.root/name).unlink(missing_ok=True)
             (self.root/'qa-command.txt').write_text('1 state\n')
-            self.process = subprocess.Popen([str(self.root/'Gothic3.exe')], cwd=self.root)
+            env = None
+            if FAKESTEAM:
+                lobbies = Path(os.environ.get('TEMP', str(WORKSPACE)))/f'g3t-fakesteam-{PAIR}'
+                if self.tag == 'host':
+                    shutil.rmtree(lobbies, ignore_errors=True)  # lobbies of an earlier run
+                env = dict(os.environ, G3T_STEAM_DLL=FAKESTEAM, G3T_FAKESTEAM_DIR=str(lobbies), G3T_FAKESTEAM_NAME=self.tag,
+                           G3T_FAKESTEAM_ID=str(int(PAIR) * 10 + (1 if self.tag == 'host' else 2)))
+            self.process = subprocess.Popen([str(self.root/'Gothic3.exe')], cwd=self.root, env=env)
             until = time.monotonic() + 120
             ready = False
             while time.monotonic() < until and self.process.poll() is None:

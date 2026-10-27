@@ -63,6 +63,12 @@ Config const& LoadConfig()
         else if (!_stricmp(key, "address")) strncpy_s(config.address, value, _TRUNCATE);
         else if (!_stricmp(key, "port")) config.port = static_cast<unsigned short>(std::atoi(value));
         else if (!_stricmp(key, "name")) strncpy_s(config.name, value, _TRUNCATE);
+        else if (!_stricmp(key, "transport")) {
+            config.steam = !_stricmp(value, "steam");
+            if (!config.steam && _stricmp(value, "udp")) Logf("config: unknown transport '%s', using udp", value);
+        }
+        else if (!_stricmp(key, "steam_lobby")) strncpy_s(config.steamLobby, value, _TRUNCATE);
+        else if (!_stricmp(key, "steam_host")) strncpy_s(config.steamHost, value, _TRUNCATE);
         else if (!_stricmp(key, "language")) {
             if (!_stricmp(value, "de")) strcpy_s(config.language, "de");
             else if (!_stricmp(value, "pl")) strcpy_s(config.language, "pl");
@@ -85,6 +91,9 @@ Config const& LoadConfig()
     fclose(file);
     Logf("config: role=%s address=%s port=%u name=%s puppet_template=%s look=%s language=%s", config.host ? "host" : "client",
          config.address, config.port, config.name, config.puppetTemplate, *config.look ? config.look : "-", config.language);
+    if (config.steam)
+        Logf("config: transport=steam steam_lobby=%s steam_host=%s", *config.steamLobby ? config.steamLobby : "-",
+             *config.steamHost ? config.steamHost : "-");
     return config;
 }
 }

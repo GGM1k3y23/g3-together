@@ -14,6 +14,7 @@
 #include "log.h"
 #include "remote.h"
 #include "explore.h"
+#include "steam.h"
 
 #include <Game.h>
 #include <Windows.h>
@@ -755,11 +756,29 @@ void StatusHints()
     Config const& config = GetConfig();
     const bool hintsOff = qa::Enabled() && !_stricmp(config.qaHostHint, "off");
     const bool refusalOff = hintsOff || (qa::Enabled() && !_stricmp(config.qaHostHint, "norefusal"));
+    // transport = steam without Steam (not running, no steam_api.dll): said once in the game; the log has the details.
+    static bool steamToldOff = false;
+    if (config.steam && !steam::Ready() && *steam::Error() && running && !steamToldOff) {
+        steamToldOff = true;
+        wchar_t text[400], reason[200] = {};
+        MultiByteToWideChar(CP_UTF8, 0, steam::Error(), -1, reason, 199);
+        _snwprintf_s(text, _TRUNCATE, i18n::Text(config.host ? i18n::SteamUnavailableHost : i18n::SteamUnavailableClient), reason);
+        hud::Message(hud::Warning, text);
+    }
     if (!hintsOff && trying >= 15000 && refusal.empty()) {
         wchar_t text[400], address[80] = {};
-        MultiByteToWideChar(CP_UTF8, 0, config.address, -1, address, 79);
-        _snwprintf_s(text, _TRUNCATE, i18n::Text(i18n::HostUnreachable), address, config.port, trying / 1000, config.port);
-        if (!unreachableHinted) Logf("net: host %s:%u not reachable for %u s; still trying (said in the menu and the game)", config.address, config.port, trying / 1000);
+        if (steam::Ready()) {  // over Steam there is no address to check: say whom it looks for or waits on
+            MultiByteToWideChar(CP_UTF8, 0, steam::HostName(), -1, address, 79);
+            if (*address) _snwprintf_s(text, _TRUNCATE, i18n::Text(i18n::SteamConnecting), address, trying / 1000);
+            else _snwprintf_s(text, _TRUNCATE, i18n::Text(i18n::SteamSearching), trying / 1000);
+        } else {
+            MultiByteToWideChar(CP_UTF8, 0, config.address, -1, address, 79);
+            _snwprintf_s(text, _TRUNCATE, i18n::Text(i18n::HostUnreachable), address, config.port, trying / 1000, config.port);
+        }
+        if (!unreachableHinted && steam::Ready())
+            Logf("net: no host over Steam for %u s (%s); still trying (said in the menu and the game)", trying / 1000,
+                 *steam::HostName() ? steam::HostName() : "no friend hosting");
+        else if (!unreachableHinted) Logf("net: host %s:%u not reachable for %u s; still trying (said in the menu and the game)", config.address, config.port, trying / 1000);
         unreachableHinted = true;
         if (!running && hud::MenuLine(text)) menuSet = true;
         if (running && (!hintedAt || now - hintedAt >= 30000)) {

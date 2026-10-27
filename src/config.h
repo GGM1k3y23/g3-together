@@ -7,6 +7,11 @@ struct Config
     bool host = true;               // role = host | client
     char address[64] = "127.0.0.1"; // host address for clients
     unsigned short port = 34567;
+    // transport = udp | steam (steam.cpp, 27.10.): steam finds the host among the Steam friends and carries the traffic
+    // over Steam; the host's UDP port stays open for players with an address. A client without Steam falls back to address.
+    bool steam = false;
+    char steamLobby[24] = "";             // client, steam: join this lobby (its number from the host's log) instead of searching
+    char steamHost[64] = "";              // client, steam: only this friend's game (its Steam name), when several friends host
     char name[24] = "Player";
     char language[5] = "en";       // local HUD language: en | de | pl | auto (the game's text language); not a network setting
     char puppetTemplate[64] = "PC_Hero";  // template used to show other players (the hero himself) who chose no look

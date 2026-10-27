@@ -120,6 +120,18 @@ constexpr Translation Messages[] = {
     {L"The other player has started the epilogue. It starts here once your dialog, fight or menu is over.",
      L"Der Mitspieler hat den Epilog begonnen. Er beginnt hier, sobald dein Dialog, Kampf oder Menü vorbei ist.",
      L"Drugi gracz rozpoczął epilog. Rozpocznie się on tutaj po zakończeniu twojej rozmowy, walki lub menu."},
+    {L"G3 Together: looking for the host among your Steam friends for %u s. The host must be your Steam friend and run its game with transport = steam.",
+     L"G3 Together: Suche den Host seit %u s unter deinen Steam-Freunden. Er muss dein Steam-Freund sein und sein Spiel mit transport = steam laufen.",
+     L"G3 Together: od %u s szukam hosta wśród znajomych na Steam. Host musi być twoim znajomym na Steam i mieć uruchomioną grę z transport = steam."},
+    {L"G3 Together: connecting to %s over Steam for %u s. Is its game still loading?",
+     L"G3 Together: Verbindung zu %s über Steam seit %u s. Lädt sein Spiel noch?",
+     L"G3 Together: łączenie z graczem %s przez Steam od %u s. Czy jego gra nadal się wczytuje?"},
+    {L"G3 Together: Steam cannot be used (%s). Connecting to the address in g3together.ini instead.",
+     L"G3 Together: Steam ist nicht nutzbar (%s). Verbinde stattdessen mit der Adresse aus g3together.ini.",
+     L"G3 Together: nie można użyć Steam (%s). Zamiast tego łączenie z adresem z g3together.ini."},
+    {L"G3 Together: friends cannot join over Steam (%s). Joining by address still works.",
+     L"G3 Together: Freunde können nicht über Steam beitreten (%s). Beitreten über die Adresse geht weiterhin.",
+     L"G3 Together: znajomi nie mogą dołączyć przez Steam (%s). Dołączanie przez adres nadal działa."},
 };
 static_assert(sizeof(Messages) / sizeof(Messages[0]) == MessageCount, "Missing HUD translation");
 

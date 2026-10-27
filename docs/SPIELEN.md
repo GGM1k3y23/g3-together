@@ -69,6 +69,29 @@ virtuelles privates Netz, das alle Spieler installieren, zum Beispiel **Tailscal
 Als `address` trägt man dann die Tailscale- bzw. ZeroTier-Adresse des Hosts ein.
 Alternativ leitet der Host UDP-Port 34567 in seinem Router auf seinen PC weiter.
 
+### Über Steam (experimentell)
+
+Mit `transport = steam` in beiden INIs findet das Spiel des Mitspielers den Host unter seinen Steam-Freunden, und der ganze
+Verkehr läuft über Steam, wo nötig über Valves Relay: keine Adresse, keine Portfreigabe, kein Hamachi.
+
+- Beide brauchen ein laufendes, angemeldetes Steam und müssen Steam-Freunde sein. Ein Gothic 3 von GOG geht auch; nötig
+  ist nur ein Steam-Konto.
+- Die Mod braucht Valves 32-Bit-`steam_api.dll` in `<Gothic 3>\G3Together\`. Das Setup legt sie dort ab (aus dem Paket oder
+  nach Rückfrage aus dem Steamworks.NET-Release 2025.164.1 heruntergeladen, per SHA-256 geprüft).
+- Die Mod läuft als Valves kostenlose Beispiel-App „Spacewar“ (AppID 480); Steam zeigt beide als „spielt Spacewar“.
+  Kaufen muss man nichts.
+- Hosten mehrere Freunde gleichzeitig, trägt der Mitspieler `steam_host = <Steam-Name des Hosts>` ein. Die
+  `g3together.log` des Hosts nennt auch die Lobby-Nummer; `steam_lobby = <Nummer>` tritt genau dieser bei.
+- Ohne Steam (läuft nicht, keine `steam_api.dll`) verbindet das Spiel des Mitspielers stattdessen mit `address` und sagt
+  das im Spiel. Der UDP-Port des Hosts bleibt auch über Steam offen, ein Spieler mit Adresse kann also demselben Spiel
+  beitreten.
+- Die Einladung über das Steam-Overlay geht in Gothic 3 vielleicht nicht auf. Sie ist nicht nötig: Das Spiel des
+  Mitspielers findet den Host von selbst, und „Spiel beitreten“ in der Steam-Freundesliste geht auch, solange sein Spiel
+  läuft.
+
+Getestet ist diese Verbindung mit einem Steam-Ersatz auf einem PC; zwischen zwei echten Steam-Konten ist sie noch nicht
+geprüft.
+
 ### Über Hamachi
 
 1. Beide Spieler installieren Hamachi und treten **demselben** Hamachi-Netz bei.

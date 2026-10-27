@@ -47,6 +47,11 @@ Erreicht dein Spiel den Host gar nicht, sagt das nach etwa 15 Sekunden die obers
 deiner INI (im Spiel: alle 30 Sekunden eine Meldung). Prüfe, ob das Spiel des Hosts läuft, Adresse und Port und die Firewall beim
 Host. Die Mod versucht es weiter; sobald sie den Host erreicht, ist die Zeile wieder wie vorher.
 
+**Über Steam** (`transport = steam`, experimentell, siehe [SPIELEN.md](SPIELEN.md#über-steam-experimentell)): Du brauchst
+keine Adresse. Dein Spiel sucht den Host unter deinen Steam-Freunden; solange es keinen findet, sagt das nach etwa 15
+Sekunden die oberste Zeile des Hauptmenüs. Der Host muss in deiner Steam-Freundesliste sein und Steam und sein Spiel laufen
+haben.
+
 ## Im Spiel
 
 - Wirst du tödlich getroffen, bleib liegen: Ein verbundener Mitspieler in derselben Welt kann dir aufhelfen: Er spricht dich an und wählt „Ich werde dir helfen.“. Das kostet ihn einen Heiltrank; ohne Trank bleibst du liegen, bis er einen hat. Liegen alle am Boden oder bist du allein, stirbst du wie im Einzelspiel (Game Over, Spielstand laden).

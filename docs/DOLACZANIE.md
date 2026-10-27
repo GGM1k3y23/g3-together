@@ -56,6 +56,10 @@ Jeśli twoja gra w ogóle nie może połączyć się z hostem, po około 15 seku
 z adresem i portem z twojego INI (w grze: komunikat co 30 sekund). Sprawdź, czy gra hosta działa, adres i port oraz zaporę
 u hosta. Mod próbuje dalej; gdy połączy się z hostem, wiersz wraca do normy.
 
+**Przez Steam** (`transport = steam`, eksperymentalnie, zob. [GRANIE.md](GRANIE.md#przez-steam-eksperymentalnie)): adres
+nie jest potrzebny. Twoja gra szuka hosta wśród twoich znajomych na Steam; dopóki go nie znajdzie, po około 15 sekundach
+mówi o tym górny wiersz menu głównego. Host musi być na twojej liście znajomych na Steam i mieć uruchomiony Steam i grę.
+
 ## Podczas gry
 
 - Gdy leżysz powalony, poczekaj na drugiego gracza. Połączony gracz w tym samym świecie może pomóc ci wstać: rozmawia

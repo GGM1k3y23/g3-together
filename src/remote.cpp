@@ -408,7 +408,7 @@ void Start()
     }
     Config const& config = GetConfig();
     parity::Compute();
-    started = net::Start(config.host, config.address, config.port, config.name);
+    started = net::Start(config.host, config.address, config.port, config.name, config.steam);
 }
 
 void OnWorldDeactivate()

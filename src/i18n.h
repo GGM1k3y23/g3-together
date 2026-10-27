@@ -59,6 +59,10 @@ enum Message
     PlaceInUse,
     NpcTalking,
     EpilogueWaits,
+    SteamSearching,
+    SteamConnecting,
+    SteamUnavailableClient,
+    SteamUnavailableHost,
     MessageCount
 };
 

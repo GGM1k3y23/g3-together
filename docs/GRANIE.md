@@ -72,6 +72,27 @@ Mod łączy się bezpośrednio przez UDP, port 34567. Prywatna sieć wirtualna, 
 graczom połączyć się bez przekierowania portu na routerze. Zainstaluj wybraną usługę na obu komputerach i wpisz jako
 `address` adres hosta w sieci wirtualnej. Host może też przekierować na routerze port UDP 34567 na swój komputer.
 
+### Przez Steam (eksperymentalnie)
+
+Z `transport = steam` w obu plikach INI gra dołączającego gracza sama znajduje hosta wśród jego znajomych na Steam, a cały
+ruch idzie przez Steam, w razie potrzeby przez przekaźniki Valve: bez adresu, bez przekierowania portów, bez Hamachi.
+
+- Obaj gracze potrzebują uruchomionego i zalogowanego Steam i muszą być znajomymi na Steam. Gothic 3 z GOG też działa;
+  potrzebne jest tylko konto Steam.
+- Mod potrzebuje 32-bitowego pliku `steam_api.dll` od Valve w `<Gothic 3>\G3Together\`. Instalator umieszcza go tam (z
+  paczki albo, po pytaniu, pobrany z wydania Steamworks.NET 2025.164.1 i sprawdzony sumą SHA-256).
+- Mod działa jako darmowa przykładowa aplikacja Valve „Spacewar” (AppID 480), więc Steam pokazuje obu graczy jako grających
+  w Spacewar. Nic nie trzeba kupować.
+- Gdy hostuje kilku znajomych naraz, dołączający gracz wpisuje `steam_host = <nazwa hosta na Steam>`. Plik
+  `g3together.log` hosta podaje też numer lobby; `steam_lobby = <numer>` dołącza dokładnie do niego.
+- Bez Steam (nie działa, brak `steam_api.dll`) gra dołączającego gracza łączy się zamiast tego z `address` i mówi o tym w
+  grze. Port UDP hosta pozostaje otwarty także przy Steam, więc gracz z adresem może dołączyć do tej samej gry.
+- Zaproszenie przez nakładkę Steam może się w Gothic 3 nie otworzyć. Nie jest potrzebne: gra dołączającego gracza sama
+  znajduje hosta, a „Dołącz do gry” na liście znajomych Steam też działa, gdy jego gra jest uruchomiona.
+
+To połączenie przetestowano z zastępnikiem Steam na jednym komputerze; gra między dwoma prawdziwymi kontami Steam nie została
+jeszcze sprawdzona.
+
 ### Hamachi
 
 1. Obaj gracze instalują Hamachi i dołączają do **tej samej** sieci Hamachi.

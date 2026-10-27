@@ -40,6 +40,8 @@ Choose one **host** and one **joining player**, enter names and the host's addre
 
 The default is **UDP port 34567**. Allow Gothic 3 through the host's firewall and use a reachable host address. See the [network guide](docs/PLAYING.md#connecting-over-the-internet) for VPN and port-forwarding options.
 
+Experimental: choose **Steam** in the setup (`transport = steam`) and the joining player's game finds the host among its Steam friends, with no address or port forwarding. See [over Steam](docs/PLAYING.md#over-steam-experimental).
+
 | Host starts first… | Joining player… |
 | --- | --- |
 | Load a saved campaign. | **Wait in the main menu**; the campaign transfers and loads automatically. |

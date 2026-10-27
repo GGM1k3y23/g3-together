@@ -137,6 +137,18 @@ and saving on the host. Test separate regions and rejoining in a follow-up sessi
 | Freed town | The joining player frees a town with shared reputation: the rebels speak to the host about it as to the joining player. |
 | Sleeping animal | The joining player walks up to a sleeping animal: it wakes up as it would for the host. |
 
+### Optional: over Steam (experimental)
+
+Both set `transport = steam` (or choose Steam in the setup) and are Steam friends; see [PLAYING.md](PLAYING.md#over-steam-experimental).
+
+| Stage | Steps and observations |
+|---|---|
+| Finding the host | The host starts first, then the joining player without an address: within a few seconds it joins (note how long). Steam shows both as playing Spacewar. |
+| Different networks | Play from two different homes (no LAN, no VPN): joining, the save transfer and an hour of play work. Note stutters compared with Hamachi. |
+| Join game | The joining player's game runs first; then "Join game" on the host in the Steam friends list: it joins. |
+| Leaving | The joining player quits: the host sees it gone at once. It starts again and rejoins. |
+| Without Steam | The joining player closes Steam and starts the game: a message says Steam cannot be used, and with an address in the INI it connects by address. |
+
 ## Recording a bug
 
 Each player records a separate entry for each problem:
