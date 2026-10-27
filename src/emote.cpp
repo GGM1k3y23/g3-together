@@ -110,6 +110,18 @@ bool Busy(eCEntity* hero, char const** reason)
     return false;
 }
 
+// The hero's standing idle as slot 0 shows it now, if it shows one. Noted whenever no emote runs, so a gesture can hand
+// slot 0 back to it.
+void NoteIdle(eCEntity* hero)
+{
+    char shows[128] = "";
+    if (!hero || !body::CurrentMotion(hero, shows, sizeof(shows)) || std::strncmp(shows, HERO_STAND, std::strlen(HERO_STAND)) ||
+        !std::strstr(shows, "_Ambient_") || !body::MotionRunning(hero))
+        return;
+    if (char* extension = std::strstr(shows, ".xmot")) *extension = '\0';
+    strncpy_s(idle, shows, _TRUNCATE);
+}
+
 bool Start(int index, char const* begin, char const* loop, int method, char const** reason)
 {
     eCEntity* hero = remote::ControlledBody();
@@ -120,14 +132,9 @@ bool Start(int index, char const* begin, char const* loop, int method, char cons
     next.method = method;
     strncpy_s(next.begin, begin, _TRUNCATE);
     if (loop) strncpy_s(next.loop, loop, _TRUNCATE);
+    if (!running.active) NoteIdle(hero);  // before the emote takes slot 0 (27.10. 17:22: read after it, idle stayed empty)
     char const* how = StartMotion(hero, next.begin, method);
     if (!how) { *reason = "not started"; return false; }
-    char before[128] = "";
-    if (body::CurrentMotion(hero, before, sizeof(before)) && !std::strncmp(before, HERO_STAND, std::strlen(HERO_STAND)) &&
-        std::strstr(before, "_Ambient_")) {
-        strncpy_s(idle, before, _TRUNCATE);
-        if (char* extension = std::strstr(idle, ".xmot")) *extension = '\0';
-    }
     const bCVector& p = hero->GetWorldPosition();
     next.start[0] = p.GetX(); next.start[1] = p.GetY(); next.start[2] = p.GetZ();
     const uint32_t now = GetTickCount();
@@ -183,7 +190,13 @@ void End(eCEntity* hero, char const* why, bool ours, bool toIdle)
 
 void Follow(uint32_t now)
 {
-    if (!running.active) return;
+    if (!running.active) {
+        if (static_cast<int32_t>(now - running.nextLook) >= 0) {
+            running.nextLook = now + 1000;
+            if (gCSession::GetInstance().IsGameRunning()) NoteIdle(remote::ControlledBody());
+        }
+        return;
+    }
     eCEntity* hero = remote::ControlledBody();
     char const* reason = "";
     if (!hero || !gCSession::GetInstance().IsGameRunning()) { End(nullptr, "no game", false, false); return; }
