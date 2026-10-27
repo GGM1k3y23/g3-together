@@ -629,6 +629,8 @@ bool RunHitAction(const char* action)
         g3t::combat::Guard(argument, &Log);
     } else if (!std::strcmp(action, "storycompanionoff")) {  // here: RunLaterAction is at C1061 again (review 26.10.)
         g3t::infocmd::StoryCompanionOff(&Log);
+    } else if (!std::strcmp(action, "steamstatus")) {  // here too: RunLaterAction reached C1061 with it (MSVC, 27.10.)
+        g3t::steam::Status(&Log);
     } else {
         return false;
     }
@@ -673,8 +675,6 @@ bool RunLaterAction(const char* action)
         g3t::clock::WaitOff(&Log);
     } else if (!std::strcmp(action, "reconnect")) {
         g3t::net::Reconnect(&Log);
-    } else if (!std::strcmp(action, "steamstatus")) {
-        g3t::steam::Status(&Log);
     } else if (!std::strcmp(action, "generationoff")) {
         g3t::persist::GenerationOff(&Log);
     } else if (!std::strcmp(action, "persistpause")) {

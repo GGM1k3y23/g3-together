@@ -5,8 +5,8 @@ with `fake_steam_api.c`, a stand-in for `steam_api.dll` that passes the same fla
 files in a folder, every other copy's lobby counts as a friend's). It keeps the real 32-bit layouts (the sender identity
 at offset 12, GetSteamID64 answering 0 for a wrong offset), so a reader at the wrong offset fails here as with Steam.
 
-Both are built with the mod (`fake_steam_api.dll` and `g3t_relaytest.exe` in `artifacts/fakesteam`); neither goes into
-the player package.
+Both are built with the mod (`fake_steam_api.dll` and `g3t_relaytest.exe` in `artifacts/fakesteam/Release` with the
+Visual Studio generator); neither goes into the player package.
 
 ## The transport alone: g3t_relaytest
 
@@ -15,14 +15,15 @@ exchanges player states; the client must find the host among its friends, be wel
 (CRC), then quit; the host must see it gone at once.
 
 ```bat
-set G3T_STEAM_DLL=%CD%\artifacts\fakesteam\fake_steam_api.dll
+set G3T_STEAM_DLL=%CD%\artifacts\fakesteam\Release\fake_steam_api.dll
 set G3T_FAKESTEAM_DIR=%TEMP%\g3t-relaytest
 rmdir /s /q %G3T_FAKESTEAM_DIR%
-start "host" cmd /c "set G3T_FAKESTEAM_ID=1&& set G3T_FAKESTEAM_NAME=Host&& artifacts\fakesteam\g3t_relaytest host 34600 60"
-set G3T_FAKESTEAM_ID=2&& artifacts\fakesteam\g3t_relaytest client 34600 60
+start "host" cmd /c "set G3T_FAKESTEAM_ID=1&& set G3T_FAKESTEAM_NAME=Host&& artifacts\fakesteam\Release\g3t_relaytest host 34600 60"
+set G3T_FAKESTEAM_ID=2&& artifacts\fakesteam\Release\g3t_relaytest client 34600 60
 ```
 
-Each prints `RESULT: PASS` or `RESULT: FAIL (...)`. Checked on 27.10. (mingw build under Wine, the same sources):
+Each prints `RESULT: PASS` or `RESULT: FAIL (...)`. Checked on 27.10. with a mingw build under Wine; the same runs (plain,
+`steam_host`, invite, both negatives) also passed natively with the MSVC build on the owner's PC:
 
 | Run | Client | Expected | Result |
 |---|---|---|---|
@@ -38,9 +39,9 @@ Each prints `RESULT: PASS` or `RESULT: FAIL (...)`. Checked on 27.10. (mingw bui
 Any stage over the stand-in:
 
 ```bat
-set G3_FAKESTEAM=%CD%\artifacts\fakesteam\fake_steam_api.dll
+set G3_FAKESTEAM=%CD%\artifacts\fakesteam\Release\fake_steam_api.dll
 set G3_INI_EXTRA=transport = steam
-python qa\together.py stage2
+python qa\together.py --suite stage2
 ```
 
 Each copy gets its own Steam id (pair × 10 + 1 for the host, + 2 for the client) and each pair its own lobby folder

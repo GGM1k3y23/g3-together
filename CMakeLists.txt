@@ -41,8 +41,10 @@ target_compile_definitions(fake_steam_api PRIVATE _CRT_SECURE_NO_WARNINGS _WINSO
 target_link_libraries(fake_steam_api PRIVATE ws2_32)
 add_executable(g3t_relaytest tools/fakesteam/relaytest.cpp src/net.cpp src/steam.cpp)
 target_include_directories(g3t_relaytest PRIVATE src)
+# The mod gets C++17 and /EHsc through the SDK's script options; this target needs them itself (nested namespaces).
+target_compile_features(g3t_relaytest PRIVATE cxx_std_17)
 # /Gz like the ENet library it links; main stays __cdecl.
-target_compile_options(g3t_relaytest PRIVATE /Gz /utf-8)
+target_compile_options(g3t_relaytest PRIVATE /Gz /utf-8 /EHsc)
 target_compile_definitions(g3t_relaytest PRIVATE _CRT_SECURE_NO_WARNINGS)
 target_link_libraries(g3t_relaytest PRIVATE enet)
 set_target_properties(fake_steam_api g3t_relaytest PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/artifacts/fakesteam")
