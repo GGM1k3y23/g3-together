@@ -13927,11 +13927,13 @@ def stageEmote(copies, report, negative=False):
     motions on the local hero; nothing new travels, the motion goes to the puppet with the PlayerState. The client plays
     each of G3_EMOTE (comma list, default cheer; an emote's key as QA emote, the same function as the key, or
     raw:<motion>[-method] for any motion with emoteraw, _x_ for _%_; "all" in the list: every emote) and stands still;
-    the client's hero shows the emote's motion and the host's puppet of the client shows the same motion, running. The
+    the client's hero shows the emote's motion and the host's puppet of the client shows the same motion, running; a gesture
+    (no loop) is off the hero again after 5 s. The
     host looks at the puppet from 4 m, so that the screenshots at 1, 3 and 5 s show it. Negative control: no emote, the
     puppet shows none of these motions."""
     actions = {'cheer': 'SuperCheer', 'dance': 'Dance', 'arms': 'ArmsCrossed', 'hips': 'HandsOnHips',
                'think': 'Think', 'approve': 'Say_Approve', 'point': 'Say_Point', 'threaten': 'Say_Threaten', 'pee': 'Pee'}
+    gestures = ('cheer', 'approve', 'point', 'threaten')  # no loop
     keys = os.environ.get('G3_EMOTE', 'cheer')
     keys = [k for key in keys.split(',') for k in (list(actions) if key == 'all' else [key])]
     host, client = join_both(copies)
@@ -13958,7 +13960,7 @@ def stageEmote(copies, report, negative=False):
         motion = motion[1] if motion else None
         samples = []
         for i in range(12):
-            time.sleep(0.5)
+            time.sleep(0.15 if i == 0 else 0.5)  # a gesture is short: Say_Point was over at 0.5 s (27.10. 17:11)
             samples.append((report_line(client.bot, 'emotestate', 'EMOTESTATE '), puppet_pose(host.bot, 2)))
             if i in (1, 5, 9):
                 snap(host, f'emote-host-{word[:20]}-{(i + 1) // 2}s', report)
@@ -13968,11 +13970,16 @@ def stageEmote(copies, report, negative=False):
         hero = [h for h, _ in samples if motion and '_' + action + '_' in h.split(' shows=')[-1].split(' ')[0]]
         entry['puppet_seen'], entry['hero_seen'] = len(seen), len(hero)
         entry['loop_seen'] = sum(' loop=1 ' in h for h, _ in samples)
+        entry['end'] = samples[-1][0].split(' end=')[-1]
+        # A gesture hands slot 0 back: its name stayed on it with nothing playing after the end (27.10. 17:11).
+        stuck = [h for h, _ in samples[-3:] if word in gestures and '_' + action + '_' in h.split(' shows=')[-1].split(' ')[0]]
         if negative:
             if seen:
                 failed.append(f'{key}: the puppet showed {action} without an emote')
         elif not hero or not seen:
             failed.append(f'{key}: hero {len(hero)}/12, puppet {len(seen)}/12')
+        elif stuck:
+            failed.append(f'{key}: the gesture still on the hero after 5 s: {stuck[-1]}')
         time.sleep(2)  # a loop goes on until the hero walks off; the next emote replaces it
         if negative:
             break
