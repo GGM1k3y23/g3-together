@@ -199,6 +199,10 @@ these guides used two game copies on one PC; play over the real internet remains
   including a downed partner you want to help. There is a five-second cooldown. Staying together
   is preferable, but you can separate and regroup. To change the key, use `partner_key = F9` in
   the INI (F1–F24, PAGEUP, HOME, END, INSERT, DELETE or a letter; Insert and Delete are the trade keys below).
+- **Emotes:** **Home** shows an emote at the top of the screen, each further press the next one: cheer, applaud,
+  dance, sit down, kneel, cross arms, think, threaten. One second without a press and your hero plays it; your partner
+  sees it on your character. Sitting, dancing and the like go on until you walk off. They are motions the game's NPCs
+  already have. To change the key, use `emote_key = END` in the INI (the same names as for `partner_key`).
 - **Map and compass:** your partner is marked on your map, with their name, and on the compass in their direction from
   where you look.
 - **Your look:** the other player sees the armor and helmet you wear. To be seen as another character, set

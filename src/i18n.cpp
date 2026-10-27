@@ -120,6 +120,8 @@ constexpr Translation Messages[] = {
     {L"The other player has started the epilogue. It starts here once your dialog, fight or menu is over.",
      L"Der Mitspieler hat den Epilog begonnen. Er beginnt hier, sobald dein Dialog, Kampf oder Menü vorbei ist.",
      L"Drugi gracz rozpoczął epilog. Rozpocznie się on tutaj po zakończeniu twojej rozmowy, walki lub menu."},
+    {L"Emote: %s (%s: next)", L"Emote: %s (%s: nächstes)", L"Emotka: %s (%s: następna)"},
+    {L"No emote right now.", L"Gerade kein Emote möglich.", L"Teraz nie można użyć emotki."},
 };
 static_assert(sizeof(Messages) / sizeof(Messages[0]) == MessageCount, "Missing HUD translation");
 

@@ -14,6 +14,7 @@ struct Config
     char partnerKey[16] = "PAGEDOWN";     // key that jumps to the other player (partner.cpp)
     char offerAcceptKey[16] = "INSERT";   // keys that accept / decline another player's trade offer (offer.cpp)
     char offerDeclineKey[16] = "DELETE";
+    char emoteKey[16] = "HOME";           // key that picks and plays an emote (emote.cpp)
     char qaHostHint[16] = "";             // QA negative controls, only with the QA bot: off (no menu hints), norefusal (no refusal there)
     bool qaKeyCheckOff = false;           // QA negative control (qa_keycheck = off, only with the QA bot): no key clash check
     char trace[8] = "off";                // off | on | all: runtime trace to g3trace.log (trace.cpp)

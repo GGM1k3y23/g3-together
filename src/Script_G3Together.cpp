@@ -18,6 +18,7 @@
 #include "ending.h"
 #include "infocmd.h"
 #include "partner.h"
+#include "emote.h"
 #include "items.h"
 #include "containers.h"
 #include "trade.h"
@@ -190,6 +191,7 @@ class Module : public eCEngineComponentBase
         g3t::downed::Tick();
         g3t::range::Tick();
         g3t::partner::Tick();
+        g3t::emote::Tick();
         g3t::doors::Tick();
         g3t::enclaves::Tick();
         g3t::journal::Tick();

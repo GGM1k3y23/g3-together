@@ -14,6 +14,7 @@
 #include "p7probe.h"
 #include "fightmem.h"
 #include "partner.h"
+#include "emote.h"
 #include "talk.h"
 #include "items.h"
 #include "containers.h"
@@ -778,6 +779,12 @@ bool RunLaterAction(const char* action)
         g3t::trace::Command(argument, &Log);
     } else if (!std::strcmp(action, "partnerjump")) {
         g3t::partner::JumpQa(&Log);
+    } else if (!std::strcmp(action, "emote")) {
+        g3t::emote::Command(argument, &Log);
+    } else if (!std::strcmp(action, "emotenames")) {
+        g3t::emote::Names(&Log);
+    } else if (!std::strcmp(action, "emotestate")) {
+        g3t::emote::State(&Log);
     } else if (!std::strcmp(action, "partyxpoff")) {
         g3t::combat::PartyXpOff(&Log);
     } else if (!std::strcmp(action, "npcrecvon")) {

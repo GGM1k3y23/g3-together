@@ -329,7 +329,7 @@ uint32_t Send(uint8_t seller, Delta const* deltas, int count, int32_t gold) { re
 void SetResultHandler(ResultFn handler) { resultHandler = handler; }
 
 namespace {
-// The trade keys and the jump key are all INI choices, and two the same do both at one press (B 23.10.: partner_key =
+// The trade keys, the jump key and the emote key are all INI choices, and two the same do both at one press (B 23.10.: partner_key =
 // INSERT also accepts an offer). Warned once in the log at the start and once on the screen when the game runs.
 struct Clash { std::string key, settings; };
 std::vector<Clash> clashes;
@@ -340,14 +340,15 @@ void CheckKeys()
 {
     Config const& config = GetConfig();
     struct Use { char const* setting; int code; };
-    const Use uses[3] = {{"partner_key", partner::KeyFromName(config.partnerKey, VK_NEXT)},
+    const Use uses[4] = {{"partner_key", partner::KeyFromName(config.partnerKey, VK_NEXT)},
                          {"offer_accept_key", partner::KeyFromName(config.offerAcceptKey, VK_INSERT)},
-                         {"offer_decline_key", partner::KeyFromName(config.offerDeclineKey, VK_DELETE)}};
-    bool listed[3] = {};
-    for (int i = 0; i < 3; ++i) {
+                         {"offer_decline_key", partner::KeyFromName(config.offerDeclineKey, VK_DELETE)},
+                         {"emote_key", partner::KeyFromName(config.emoteKey, VK_HOME)}};
+    bool listed[4] = {};
+    for (int i = 0; i < 4; ++i) {
         if (listed[i]) continue;
         std::string settings = uses[i].setting;
-        for (int j = i + 1; j < 3; ++j)
+        for (int j = i + 1; j < 4; ++j)
             if (uses[j].code == uses[i].code) {
                 settings += std::string(", ") + uses[j].setting;
                 listed[i] = listed[j] = true;
@@ -386,11 +387,12 @@ void Start()
 void KeyCheck(LogFn log)
 {
     Config const& config = GetConfig();
-    char names[3][16];
+    char names[4][16];
     partner::KeyName(partner::KeyFromName(config.partnerKey, VK_NEXT), names[0], sizeof(names[0]));
     partner::KeyName(partner::KeyFromName(config.offerAcceptKey, VK_INSERT), names[1], sizeof(names[1]));
     partner::KeyName(partner::KeyFromName(config.offerDeclineKey, VK_DELETE), names[2], sizeof(names[2]));
-    std::string line = "KEYCHECK partner=" + std::string(names[0]) + " accept=" + names[1] + " decline=" + names[2] +
+    partner::KeyName(partner::KeyFromName(config.emoteKey, VK_HOME), names[3], sizeof(names[3]));
+    std::string line = "KEYCHECK partner=" + std::string(names[0]) + " accept=" + names[1] + " decline=" + names[2] + " emote=" + names[3] +
                        " checked=" + (keysChecked ? "1" : "0") + " clashes=" + std::to_string(clashes.size()) + " shown=" + (clashShown ? "1" : "0");
     for (Clash const& clash : clashes) line += " [" + clash.key + ": " + clash.settings + "]";
     log(line.c_str());

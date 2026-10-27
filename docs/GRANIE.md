@@ -195,6 +195,10 @@ gry na jednym komputerze; gra przez prawdziwy internet nie została jeszcze spra
   graczem, któremu chcesz pomóc. Można go użyć raz na pięć sekund. Lepiej trzymać się razem, ale możecie się rozdzielić
   i potem zebrać. Aby zmienić klawisz, wpisz w INI `partner_key = F9` (F1–F24, PAGEUP, HOME, END, INSERT, DELETE albo
   litera; Insert i Delete to klawisze handlu opisane niżej).
+- **Emotki:** **Home** pokazuje u góry ekranu emotkę, każde kolejne naciśnięcie następną: wiwatowanie, oklaski,
+  taniec, siadanie, klęczenie, skrzyżowane ręce, zamyślenie, groźba. Po sekundzie bez naciśnięcia twój bohater ją
+  odgrywa, a drugi gracz widzi ją na twojej postaci. Siadanie, taniec i podobne trwają, dopóki nie ruszysz. To ruchy,
+  które postacie w grze już mają. Aby zmienić klawisz, wpisz w INI `emote_key = END` (te same nazwy co przy `partner_key`).
 - **Mapa i kompas:** drugi gracz jest zaznaczony na twojej mapie, z nazwą, i na kompasie w swoim kierunku względem tego,
   gdzie patrzysz.
 - **Twój wygląd:** drugi gracz widzi twoją zbroję i hełm. Aby wyglądać jak inna postać, ustaw we własnym INI

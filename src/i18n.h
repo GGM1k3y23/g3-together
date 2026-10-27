@@ -59,6 +59,8 @@ enum Message
     PlaceInUse,
     NpcTalking,
     EpilogueWaits,
+    EmoteChoose,
+    EmoteNotNow,
     MessageCount
 };
 

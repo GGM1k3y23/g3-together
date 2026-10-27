@@ -21,7 +21,7 @@ uint32_t Send(uint8_t seller, Delta const* deltas, int count, int32_t gold);
 using ResultFn = void (*)(uint32_t serial, bool accepted);
 void SetResultHandler(ResultFn handler);  // trade.cpp: trade::OnResult
 
-void Start();         // the network handlers; the key clash check (partner_key, offer_accept_key, offer_decline_key)
+void Start();         // the network handlers; the key clash check (partner_key, offer_accept_key, offer_decline_key, emote_key)
 void Tick();          // once per frame: the seller's keys and 30 s, the buyer's 40 s
 void OnWorldChange(); // an open offer ends (the seller answers "ran out", the buyer's are declined)
 
