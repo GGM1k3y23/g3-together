@@ -629,6 +629,12 @@ bool RunHitAction(const char* action)
         g3t::combat::Guard(argument, &Log);
     } else if (!std::strcmp(action, "storycompanionoff")) {  // here: RunLaterAction is at C1061 again (review 26.10.)
         g3t::infocmd::StoryCompanionOff(&Log);
+    } else if (!std::strcmp(action, "emote")) {  // emotes here too: RunLaterAction is at C1061 (27.10.)
+        g3t::emote::Command(argument, &Log);
+    } else if (!std::strcmp(action, "emoteraw")) {
+        g3t::emote::Raw(argument, &Log);
+    } else if (!std::strcmp(action, "emotestate")) {
+        g3t::emote::State(&Log);
     } else {
         return false;
     }
@@ -779,12 +785,6 @@ bool RunLaterAction(const char* action)
         g3t::trace::Command(argument, &Log);
     } else if (!std::strcmp(action, "partnerjump")) {
         g3t::partner::JumpQa(&Log);
-    } else if (!std::strcmp(action, "emote")) {
-        g3t::emote::Command(argument, &Log);
-    } else if (!std::strcmp(action, "emotenames")) {
-        g3t::emote::Names(&Log);
-    } else if (!std::strcmp(action, "emotestate")) {
-        g3t::emote::State(&Log);
     } else if (!std::strcmp(action, "partyxpoff")) {
         g3t::combat::PartyXpOff(&Log);
     } else if (!std::strcmp(action, "npcrecvon")) {

@@ -13925,20 +13925,18 @@ def stageL(copies, report, negative=False):
 def stageEmote(copies, report, negative=False):
     """Emotes (owner 27.10.: "Kleine Spaß-Idee"): a key (INI emote_key, default Home) plays one of the game's own NPC
     motions on the local hero; nothing new travels, the motion goes to the puppet with the PlayerState. The client plays
-    G3_EMOTE (default cheer; QA: emote, the same function as the key) and stands still; the client's hero shows the
-    emote's motion and the host's puppet of the client shows the same motion, running. emotenames lists what the game
-    resolves for the hero (report only). Negative control: no emote, the puppet shows no such motion."""
+    G3_EMOTE (default cheer; QA: emote, the same function as the key; raw:<motion>[:method] plays any motion with
+    emoteraw) and stands still; the client's hero shows the emote's motion and the host's puppet of the client shows the
+    same motion, running. Negative control: no emote, the puppet shows no such motion."""
     host, client = join_both(copies)
     clear_raid(host, report)
     for copy in (host, client):
         report_line(copy.bot, 'unarm', 'UNARM')
     time.sleep(3)
-    start = client.bot.send('emotenames', 20)
-    client.bot.line('EMOTENAMES ', 20, 'emotenames', start)
-    report['names'] = [l for l in client.bot.log()[start:].splitlines() if 'EMOTENAME' in l]
-    key = os.environ.get('G3_EMOTE', 'cheer')
+    key = os.environ.get('G3_EMOTE', 'cheer')  # an emote's key, or raw:<motion> for any motion (QA emoteraw)
     if not negative:
-        report['emote'] = line = report_line(client.bot, 'emote ' + key, 'EMOTE ')
+        command = 'emoteraw ' + key[4:] if key.startswith('raw:') else 'emote ' + key
+        report['emote'] = line = report_line(client.bot, command, 'EMOTE ')
         assert 'ok=1' in line, line
     motion = re.search(r' motion=(\S+)', report.get('emote', ''))
     motion = motion[1] if motion else None
@@ -13950,8 +13948,10 @@ def stageEmote(copies, report, negative=False):
             snap(host, 'emote-host', report)
             snap(client, 'emote-client', report)
     report['samples'] = samples
-    action = {'cheer': 'Cheer', 'applaud': 'Applaud', 'dance': 'Dance', 'sit': 'SitGround', 'kneel': 'Kneel', 'arms': 'ArmsCrossed',
-              'think': 'Think', 'threaten': 'Threaten'}.get(key, key)
+    word = key[4:].split(':')[0] if key.startswith('raw:') else key.split(':')[0]
+    action = {'cheer': 'SuperCheer', 'applaud': 'Applaud', 'dance': 'Dance', 'arms': 'ArmsCrossed', 'hips': 'HandsOnHips',
+              'think': 'Think', 'approve': 'Say_Approve', 'point': 'Say_Point', 'threaten': 'Say_Threaten'}.get(word)
+    action = action or re.split(r'_(?:Begin|Loop|End|N|O)_', word.replace('Hero_Stand_None_None_P0_', ''))[0]
     seen = [p for _, p in samples if p and '_' + action + '_' in p['shows'] and p['run0'] == 1]
     report['puppet_seen'] = len(seen)
     if negative:
