@@ -81,6 +81,7 @@ def main():
         for launcher in ('Setup.cmd', 'Einrichten.cmd', 'Instalacja.cmd'):
             z.write(ROOT / launcher, launcher)
         z.write(ROOT / 'COPYING', 'COPYING')
+        z.write(ROOT / 'COPYING.STEAMWORKS', 'COPYING.STEAMWORKS')  # GPLv3 section 7: the Steamworks API library
         enet = ROOT / 'thirdparty/enet/LICENSE'
         if enet.exists():
             z.write(enet, 'licenses/ENet-LICENSE')

@@ -136,4 +136,4 @@ The compiled QA bot activates only with `qa-enable.txt`. Use it only in disposab
 
 ## License and credits
 
-**GPL-3.0-or-later** — see [COPYING](COPYING). Built on the unofficial [Gothic 3 SDK](https://github.com/georgeto/gothic3sdk); bundles [ENet 1.3.18](https://github.com/lsalzman/enet) under its [MIT license](thirdparty/enet/LICENSE).
+**GPL-3.0-or-later** — see [COPYING](COPYING). Built on the unofficial [Gothic 3 SDK](https://github.com/georgeto/gothic3sdk); bundles [ENet 1.3.18](https://github.com/lsalzman/enet) under its [MIT license](thirdparty/enet/LICENSE). With an [additional permission](COPYING.STEAMWORKS) under GPLv3 section 7 for combining it with Valve's Steamworks API library (`steam_api.dll`, the optional Steam connection). The Steam transport is adapted from [Jericho Co-op](https://github.com/dolbaras/jericho-coop) ([MIT](thirdparty/licenses/jericho-coop-LICENSE)).

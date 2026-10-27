@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// Combined with Valve's steam_api.dll under the additional permission in COPYING.STEAMWORKS (GPLv3 section 7).
 // Steam transport, see steam.h. steam_api.dll (32-bit, Steamworks.NET Standalone 2025.164.1, SHA-256
 // fdafb7c65ec7d4182b42bf92cc8671c68e4dc547cc6e613899d2618a47eb65da) is loaded at run time and driven through its flat C
 // API with manual callback dispatch: no Steamworks headers or import libraries. The flat API table, the lobby and session
