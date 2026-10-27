@@ -13925,42 +13925,53 @@ def stageL(copies, report, negative=False):
 def stageEmote(copies, report, negative=False):
     """Emotes (owner 27.10.: "Kleine Spaß-Idee"): a key (INI emote_key, default Home) plays one of the game's own NPC
     motions on the local hero; nothing new travels, the motion goes to the puppet with the PlayerState. The client plays
-    G3_EMOTE (default cheer; QA: emote, the same function as the key; raw:<motion>[:method] plays any motion with
-    emoteraw) and stands still; the client's hero shows the emote's motion and the host's puppet of the client shows the
-    same motion, running. Negative control: no emote, the puppet shows no such motion."""
+    each of G3_EMOTE (comma list, default cheer; an emote's key as QA emote, the same function as the key, or
+    raw:<motion>[:method] for any motion with emoteraw) and stands still; the client's hero shows the emote's motion and
+    the host's puppet of the client shows the same motion, running. G3_EMOTE=all: every emote. Negative control: no
+    emote, the puppet shows none of these motions."""
+    actions = {'cheer': 'SuperCheer', 'applaud': 'Applaud', 'dance': 'Dance', 'arms': 'ArmsCrossed', 'hips': 'HandsOnHips',
+               'think': 'Think', 'approve': 'Say_Approve', 'point': 'Say_Point', 'threaten': 'Say_Threaten'}
+    keys = os.environ.get('G3_EMOTE', 'cheer')
+    keys = list(actions) if keys == 'all' else keys.split(',')
     host, client = join_both(copies)
     clear_raid(host, report)
     for copy in (host, client):
         report_line(copy.bot, 'unarm', 'UNARM')
     time.sleep(3)
-    key = os.environ.get('G3_EMOTE', 'cheer')  # an emote's key, or raw:<motion> for any motion (QA emoteraw)
-    if not negative:
-        command = 'emoteraw ' + key[4:] if key.startswith('raw:') else 'emote ' + key
-        report['emote'] = line = report_line(client.bot, command, 'EMOTE ')
-        assert 'ok=1' in line, line
-    motion = re.search(r' motion=(\S+)', report.get('emote', ''))
-    motion = motion[1] if motion else None
-    samples = []
-    for i in range(8):
-        time.sleep(0.5)
-        samples.append((report_line(client.bot, 'emotestate', 'EMOTESTATE '), puppet_pose(host.bot, 2)))
-        if i == 3:
-            snap(host, 'emote-host', report)
-            snap(client, 'emote-client', report)
-    report['samples'] = samples
-    word = key[4:].split(':')[0] if key.startswith('raw:') else key.split(':')[0]
-    action = {'cheer': 'SuperCheer', 'applaud': 'Applaud', 'dance': 'Dance', 'arms': 'ArmsCrossed', 'hips': 'HandsOnHips',
-              'think': 'Think', 'approve': 'Say_Approve', 'point': 'Say_Point', 'threaten': 'Say_Threaten'}.get(word)
-    action = action or re.split(r'_(?:Begin|Loop|End|N|O)_', word.replace('Hero_Stand_None_None_P0_', ''))[0]
-    seen = [p for _, p in samples if p and '_' + action + '_' in p['shows'] and p['run0'] == 1]
-    report['puppet_seen'] = len(seen)
-    if negative:
-        assert not seen, f'the puppet showed {action} without an emote: {seen[:2]}'
-        return
-    hero = [h for h, _ in samples if motion and 'shows=' + motion[:40] in h]
-    report['hero_seen'] = len(hero)
-    assert hero, f'the client\'s hero never showed {motion}: {[h for h, _ in samples][:3]}'
-    assert seen, f'the host\'s puppet never showed {action} running: {[p and p["shows"] for _, p in samples]}'
+    failed = []
+    for key in keys:
+        word = key[4:].split(':')[0] if key.startswith('raw:') else key.split(':')[0]
+        action = actions.get(word) or re.split(r'_(?:Begin|Loop|End|N|O)_', word.replace('Hero_Stand_None_None_P0_', ''))[0]
+        entry = report.setdefault('emotes', {}).setdefault(key, {'action': action})
+        if not negative:
+            command = 'emoteraw ' + key[4:] if key.startswith('raw:') else 'emote ' + key
+            entry['emote'] = line = report_line(client.bot, command, 'EMOTE ')
+            if 'ok=1' not in line:
+                failed.append(f'{key}: {line}')
+                continue
+        motion = re.search(r' motion=(\S+)', entry.get('emote', ''))
+        motion = motion[1] if motion else None
+        samples = []
+        for i in range(8):
+            time.sleep(0.5)
+            samples.append((report_line(client.bot, 'emotestate', 'EMOTESTATE '), puppet_pose(host.bot, 2)))
+            if i == 3:
+                snap(host, 'emote-host-' + word[:20], report)
+                snap(client, 'emote-client-' + word[:20], report)
+        entry['samples'] = samples
+        seen = [p for _, p in samples if p and '_' + action + '_' in p['shows'] and p['run0'] == 1]
+        hero = [h for h, _ in samples if motion and 'shows=' + motion[:40] in h]
+        entry['puppet_seen'], entry['hero_seen'] = len(seen), len(hero)
+        if negative:
+            if seen:
+                failed.append(f'{key}: the puppet showed {action} without an emote')
+        elif not hero or not seen:
+            failed.append(f'{key}: hero {len(hero)}/8, puppet {len(seen)}/8')
+        time.sleep(2)  # a loop goes on until the hero walks off; the next emote replaces it
+        if negative:
+            break
+    report['failed'] = failed
+    assert not failed, failed
 
 
 TRACE_LINE = re.compile(r'^\s*(\d+) (anim|task|aitask) (\S+?)(\(puppet\)|\(mirror\))? (.*) by (\S+)$')
