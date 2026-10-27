@@ -207,7 +207,7 @@ beschriebenen Tests liefen auf einem PC mit zwei Spielkopien; Spielen über das 
   jederzeit wieder treffen; am besten bleibt ihr meist zusammen. Andere Taste: `partner_key = F9` in der INI
   (F1–F24, PAGEUP, HOME, END, INSERT, DELETE oder ein Buchstabe; Einfg und Entf sind die Handelstasten, siehe unten).
 - **Emotes:** Die Taste **Pos1** zeigt oben im Bild ein Emote, jeder weitere Druck das nächste: Jubeln, Klatschen,
-  Tanzen, Arme verschränken, Hände in die Hüften, Nachdenken, Zustimmen, Zeigen, Drohen. Eine Sekunde ohne Druck, und dein Held spielt es;
+  Tanzen, Arme verschränken, Hände in die Hüften, Nachdenken, Zustimmen, Zeigen, Drohen, Pinkeln. Eine Sekunde ohne Druck, und dein Held spielt es;
   dein Mitspieler sieht es an deiner Figur. Klatschen, Tanzen und Ähnliches laufen, bis du losgehst. Es sind die
   Bewegungen, die NPCs im Spiel schon haben. Andere Taste: `emote_key = END` in der INI (dieselben Namen wie bei
   `partner_key`).

@@ -44,6 +44,7 @@ const Emote Emotes[] = {
     {"approve", {L"Nod", L"Zustimmen", L"Zgoda"}, HERO_STAND "Say_Approve_N_Fwd_00_%_00_P0_0", nullptr},
     {"point", {L"Point", L"Zeigen", L"Wskazanie"}, HERO_STAND "Say_Point_N_Fwd_00_%_00_P0_0", nullptr},
     {"threaten", {L"Threaten", L"Drohen", L"Groźba"}, HERO_STAND "Say_Threaten_N_Fwd_00_%_00_P0_0", nullptr},
+    {"pee", {L"Pee", L"Pinkeln", L"Sikanie"}, HERO_STAND "Pee_Begin_N_Fwd_00_%_00_P0_0", HERO_STAND "Pee_Loop_N_Fwd_00_%_00_P0_0"},
 };
 constexpr int Count = static_cast<int>(sizeof(Emotes) / sizeof(Emotes[0]));
 constexpr uint32_t ChooseMs = 1000;  // without a further press the shown emote plays

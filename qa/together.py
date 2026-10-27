@@ -13930,7 +13930,7 @@ def stageEmote(copies, report, negative=False):
     the host's puppet of the client shows the same motion, running. G3_EMOTE=all: every emote. Negative control: no
     emote, the puppet shows none of these motions."""
     actions = {'cheer': 'SuperCheer', 'applaud': 'Applaud', 'dance': 'Dance', 'arms': 'ArmsCrossed', 'hips': 'HandsOnHips',
-               'think': 'Think', 'approve': 'Say_Approve', 'point': 'Say_Point', 'threaten': 'Say_Threaten'}
+               'think': 'Think', 'approve': 'Say_Approve', 'point': 'Say_Point', 'threaten': 'Say_Threaten', 'pee': 'Pee'}
     keys = os.environ.get('G3_EMOTE', 'cheer')
     keys = list(actions) if keys == 'all' else keys.split(',')
     host, client = join_both(copies)
