@@ -61,6 +61,7 @@ struct Running
     bool inLoop = false;
     float start[3] = {};
     uint32_t nextLook = 0, checkAt = 0, startedAt = 0;
+    double lastPlay = -1.0;  // slot 0's play time at the last look
     int method = Auto;
     bool active = false;
 };
@@ -133,6 +134,28 @@ bool Start(int index, char const* begin, char const* loop, int method, char cons
     return true;
 }
 
+// Slot 0's play time and length in seconds; false without an actor.
+bool Progress(eCEntity* hero, double& play, double& length)
+{
+    auto* animation = static_cast<eCVisualAnimation_PS*>(hero->GetPropertySet(eEPropertySetType_Animation));
+    eCWrapper_emfx2Actor* actor = animation ? animation->GetActor() : nullptr;
+    if (!actor) return false;
+    const auto slot0 = static_cast<eCWrapper_emfx2Actor::eEMotionType>(0);
+    play = actor->GetPlayTime(slot0);
+    length = actor->GetMaxTime(slot0);
+    return true;
+}
+
+// Ends the emote's motion on slot 0 the way body.cpp ends a replayed stance motion, so the hero's own idle comes back.
+void StopOurs(eCEntity* hero)
+{
+    Entity(hero).StopPlayAni();
+    if (auto* routine = static_cast<gCScriptRoutine_PS*>(hero->GetPropertySet(eEPropertySetType_ScriptRoutine)))
+        routine->AIStopPlayAnimation();
+    if (auto* animation = static_cast<eCVisualAnimation_PS*>(hero->GetPropertySet(eEPropertySetType_Animation)))
+        animation->StopMotion(static_cast<eCWrapper_emfx2Actor::eEMotionType>(0), 0.2f);
+}
+
 void Follow(uint32_t now)
 {
     if (!running.active) return;
@@ -147,20 +170,37 @@ void Follow(uint32_t now)
         Logf("emote: %s after 150 ms, slot 0 shows %s (%s)", running.index >= 0 ? Emotes[running.index].key : "raw", shows,
              Shows(hero, current) ? "ours" : "not ours");
     }
+    const bool ours = Shows(hero, current);
     const bCVector& p = hero->GetWorldPosition();
     const float dx = p.GetX() - running.start[0], dz = p.GetZ() - running.start[2];
-    if (std::sqrt(dx * dx + dz * dz) > MoveCm) { running = Running{}; return; }  // walked off: movement has slot 0
+    if (std::sqrt(dx * dx + dz * dz) > MoveCm) {  // walked off: movement has slot 0, unless the emote still holds it
+        if (ours) StopOurs(hero);
+        running = Running{};
+        return;
+    }
     if (static_cast<int32_t>(now - running.nextLook) < 0) return;
-    running.nextLook = now + 300;
-    const bool ours = Shows(hero, current), runs = body::MotionRunning(hero);
-    if (ours && runs) return;
+    running.nextLook = now + 200;
+    // A motion played as a play-ani instruction stays on slot 0 at its last frame and still counts as running
+    // (stageEmote 27.10. 17:00: Dance_Begin for 20 s, no loop): it is over when its play time reaches its length or
+    // stops moving on.
+    double play = 0.0, length = 0.0;
+    const bool timed = Progress(hero, play, length);
+    const bool atEnd = timed && length > 0.0 && play >= length - 0.05;
+    const bool stalled = timed && running.lastPlay >= 0.0 && play == running.lastPlay;
+    running.lastPlay = timed ? play : -1.0;
+    if (ours && body::MotionRunning(hero) && !atEnd && !stalled) return;
     char shows[128] = "";
     body::CurrentMotion(hero, shows, sizeof(shows));
-    // The emote's own motion ended: the hero's stance idle (_Ambient_) took slot 0, or nothing runs. Anything else (a
-    // weapon drawn, a hit) ends the emote.
-    const bool ended = ours || !runs || std::strstr(shows, "_Ambient_");
-    if (!ended || !*running.loop) { running = Running{}; return; }
+    // Anything else on slot 0 than the emote or the hero's idle (a weapon drawn, a hit) ends the emote.
+    if (!ours && !std::strstr(shows, "_Ambient_")) { running = Running{}; return; }
+    if (!*running.loop) {  // a gesture: back to the hero's own idle
+        if (ours) StopOurs(hero);
+        running = Running{};
+        return;
+    }
+    if (ours) StopOurs(hero);  // the instruction would hold the last frame; the loop starts from its first
     running.inLoop = true;
+    running.lastPlay = -1.0;
     if (StartMotion(hero, running.loop, running.method)) ++loopRestarts;
 }
 
@@ -251,12 +291,16 @@ void State(LogFn log)
 {
     eCEntity* hero = remote::ControlledBody();
     char shows[128] = "-";
-    if (hero) body::CurrentMotion(hero, shows, sizeof(shows));
+    double play = -1.0, length = -1.0;
+    if (hero) {
+        body::CurrentMotion(hero, shows, sizeof(shows));
+        Progress(hero, play, length);
+    }
     char line[500];
-    Format(line, "EMOTESTATE running=%s ms=%u loop=%d shows=%s run0=%d played=%u refused=%u loops=%u last=%s",
+    Format(line, "EMOTESTATE running=%s ms=%u loop=%d shows=%s run0=%d t=%.2f/%.2f played=%u refused=%u loops=%u last=%s",
            !running.active ? "-" : running.index >= 0 ? Emotes[running.index].key : "raw",
            running.active ? static_cast<unsigned>(GetTickCount() - running.startedAt) : 0u, running.inLoop ? 1 : 0,
-           *shows ? shows : "-", hero && body::MotionRunning(hero) ? 1 : 0, played, refused, loopRestarts, lastResult);
+           *shows ? shows : "-", hero && body::MotionRunning(hero) ? 1 : 0, play, length, played, refused, loopRestarts, lastResult);
     log(line);
 }
 }

@@ -13940,6 +13940,8 @@ def stageEmote(copies, report, negative=False):
         report_line(copy.bot, 'unarm', 'UNARM')
     time.sleep(3)
     report['lookat'] = report_line(host.bot, 'lookat puppet2', ('LOOKAT', 'REFUSED lookat'))
+    x, y, z = hero_pos(host.bot)
+    move_hero(host.bot, (x + 150, y, z))  # a step aside: right behind the host's hero the camera did not see the puppet
     time.sleep(2)
     failed = []
     for key in keys:
@@ -13959,12 +13961,13 @@ def stageEmote(copies, report, negative=False):
             time.sleep(0.5)
             samples.append((report_line(client.bot, 'emotestate', 'EMOTESTATE '), puppet_pose(host.bot, 2)))
             if i in (1, 5, 9):
-                snap(host, f'emote-host-{word[:20]}-{i // 2}s', report)
-                snap(client, f'emote-client-{word[:20]}-{i // 2}s', report)
+                snap(host, f'emote-host-{word[:20]}-{(i + 1) // 2}s', report)
+                snap(client, f'emote-client-{word[:20]}-{(i + 1) // 2}s', report)
         entry['samples'] = samples
         seen = [p for _, p in samples if p and '_' + action + '_' in p['shows'] and p['run0'] == 1]
-        hero = [h for h, _ in samples if motion and 'shows=' + motion[:40] in h]
+        hero = [h for h, _ in samples if motion and '_' + action + '_' in h.split(' shows=')[-1].split(' ')[0]]
         entry['puppet_seen'], entry['hero_seen'] = len(seen), len(hero)
+        entry['loop_seen'] = sum(' loop=1 ' in h for h, _ in samples)
         if negative:
             if seen:
                 failed.append(f'{key}: the puppet showed {action} without an emote')
