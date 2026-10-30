@@ -27,4 +27,6 @@ void Potions(LogFn log); // QA: POTION lines for the hero's potions
 void Report(LogFn log);  // QA: DOWNED line
 void AutoHelpOn(LogFn log);     // QA: standing next to a downed partner for 3 s helps it up again (as before 23.10.)
 void HelpOptionOff(LogFn log);  // QA negative control: a downed partner's puppet offers no help option
+void HelpLineSaid();  // infocmd.cpp: the line "Ich werde dir helfen." of the help option is being spoken
+bool Switch(char const* action, LogFn log);  // QA negative controls of the play-evening fixes (27.10.): true if it was one
 }

@@ -30,6 +30,13 @@ struct PlayerState
     char helmet[40] = {};
     char look[32] = {};      // template the player chose to be seen as (INI look); empty = the receiver's puppet_template
     int32_t gold = 0;        // the hero's gold while flag bit 4 is set (what a robber finds on its puppet), else 0
+    // Protocol 58 (display review 28.10.): the number of the hero's last action motion start (body::ActionSeq; a restart of the
+    // same motion counts too) and how far it has played (ms)
+    uint8_t actionSeq = 0;
+    uint16_t actionMs = 0;
+    // Protocol 59 (29.10.): how far slot 0's motion has played, 0..65535 of its length (body::MotionFraction; 65535 also when
+    // nothing runs), so the receiver can show a mirrored blow where it is at the sender (body.cpp, motion_seek)
+    uint16_t motionFrac = 65535;
 };
 #pragma pack(pop)
 
@@ -41,12 +48,16 @@ struct NpcRecord
     float position[3] = {};
     float rotation[4] = {};
     uint8_t movementMode = 0;
-    uint8_t flags = 0;       // bit 0: dead, bit 1: down (knocked out)
+    // bit 0: dead, bit 1: down (knocked out), bit 2: fighting (AI mode combat, Stufe 4.2), bits 3-5: the player it fights (its
+    // hero, puppet or party member; 0 none). Older receivers look at bits 0 and 1 only.
+    uint8_t flags = 0;
     int32_t hitPoints = 0;
     uint32_t motion = 0;     // hash of the visible motion's name; names travel once via SendMotionName
     uint8_t aniState = 0;    // gEAniState (2 standing, 4 fighting stance ...); 0 = unknown
     uint32_t heldRight = 0;  // HashName of the item in the right hand (a drawn weapon), 0 = empty
     uint32_t heldLeft = 0;   // the same for the left hand (shield, bow)
+    uint8_t actionSeq = 0;   // protocol 58: as PlayerState.actionSeq
+    uint16_t motionFrac = 65535;  // protocol 59: as PlayerState.motionFrac
 };
 #pragma pack(pop)
 
@@ -59,8 +70,13 @@ struct Remote
     bool connected = false;
 };
 
-bool Start(bool host, char const* address, unsigned short port, char const* name);
+// steam: transport = steam (steam.cpp); a client without Steam connects to address instead.
+bool Start(bool host, char const* address, unsigned short port, char const* name, bool steam);
 void Stop();  // at shutdown: disconnect now so the others notice at once
+void Stats(void (*log)(char const*));      // QA: NETSTATS (rtt and packet loss per connection)
+void RttLogOff(void (*log)(char const*));  // QA negative control: no "net: rtt=" lines
+// ENet's round trip to that player in ms (host: its connection; client: the one to the host, which relays the others), 0 unknown.
+uint32_t RoundTrip(uint8_t player);
 void Reconnect(void (*log)(char const*));  // QA, client (stage W1): leave the host and connect again at once
 // Service the socket and, at most every 50 ms, send the local state. Call once per frame.
 void Tick(PlayerState const& local, bool haveLocal);
@@ -116,7 +132,8 @@ void SetWorldHandler(WorldHandler handler);
 // NPC snapshots (unreliable) and motion names (reliable): host -> every client; client -> host (its own region,
 // passed on by the host).
 constexpr int MaxNpcsPerMessage = 48;  // receiving limit
-constexpr int NpcsPerSend = 18;         // sent per message: 11 + 18 x 63 bytes fit one 1200-byte datagram (hamachi-net-c.md)
+constexpr int NpcsPerSend = 18;         // sent per message: 11 + 18 x 66 bytes (protocol 59) fit one 1200-byte datagram (hamachi-net-c.md)
+static_assert(11 + NpcsPerSend * sizeof(NpcRecord) <= 1200, "a batch of NPC records must fit one datagram");
 void SendNpcs(NpcRecord const* records, int count);
 void SendMotionName(uint32_t hash, char const* name);
 // Client side: received NPC snapshots and motion names are handed to these callbacks.
@@ -131,13 +148,14 @@ void SetNpcHandlers(NpcHandler npcs, MotionNameHandler names);
 // Any machine -> the NPC's owner `to` (through the host): this player hit it. weapon: template ID, zeros = none.
 // npc: the GUID of one of the sender's NPCs that hit it (zeros or null: the sender's hero). outcome: what the game decided
 // for this hit of the sender's hero on the sender's machine (its hit judgement runs before AddHitPoints), see HitOutcome.
+// seen: the owner's send time of the NPC's state the sender showed when its hero struck (Stufe 3.3), 0 unknown.
 enum HitOutcome : uint8_t { HitUnjudged = 0, HitKnockOut = 1, HitDeath = 2 };
 void SendHitNpc(uint8_t to, uint8_t const guid[16], int32_t delta, uint8_t const weapon[16], uint8_t const npc[16] = nullptr,
-                uint8_t outcome = HitUnjudged);
+                uint8_t outcome = HitUnjudged, uint32_t seen = 0);
 // attacker: the hitting NPC (GUID), or zeros with attackerPlayer = the player whose hero hit.
 void SendHitPlayer(uint8_t playerId, int32_t delta, uint8_t const attacker[16], uint8_t attackerPlayer);
 using HitNpcHandler = void (*)(uint8_t from, uint8_t const guid[16], int32_t delta, uint8_t const weapon[16], uint8_t const npc[16],
-                               uint8_t outcome);
+                               uint8_t outcome, uint32_t seen);
 using HitPlayerHandler = void (*)(int32_t delta, uint8_t const attacker[16], uint8_t attackerPlayer);
 void SetHitHandlers(HitNpcHandler npc, HitPlayerHandler player);
 // Host -> one client: your hit killed the NPC with this GUID (the killer earns the experience).

@@ -14,6 +14,7 @@
 #include "log.h"
 #include "remote.h"
 #include "explore.h"
+#include "steam.h"
 
 #include <Game.h>
 #include <Windows.h>
@@ -121,8 +122,16 @@ unsigned worldChanges = 0;
 uint32_t epoch = 0, epochs = 0;
 struct Client { uint32_t told = 0; std::string toldCampaign; uint32_t ready = 0; uint32_t sent = 0; unsigned resends = 0; uint32_t hinted = 0; bool wants = false;
                 uint32_t generation = 0;     // net::PeerGeneration of the connection this is about
-                uint32_t waitHinted = 0; };  // the epoch the host was last shown that this player waits for its hero
+                uint32_t waitHinted = 0;     // the epoch the host was last shown that this player waits for its hero
+                uint32_t sentAt = 0;         // GetTickCount() of the last send of the campaign to this player
+                bool arrivedSinceSend = false; };  // the player came into the host's world since that send
 uint32_t savedAt = 0;            // GetTickCount() of the host's last save: the game writes the files after SaveGame returns
+// A send still on its way is not repeated for a player who is only in its menu or starting a game (29.10. under G3_NETSIM 800:
+// menu then new game sent the 2-MB save twice more; they arrived 1.5 and 3 min later, and each loaded the client's world again,
+// the second in the middle of play). QA resendguardoff: sent again, as before.
+constexpr uint32_t ResendGuard = 180000;  // ms
+bool resendGuard = true;
+unsigned resendsSkipped = 0;
 Client clients[net::MaxPlayers];
 bool byGeneration = true;        // host: false after the QA negative control `generationoff` (a slot is reset only once empty)
 uint32_t pausedUntil = 0;        // host, QA (stage W1): HostTick waits until then (`persistpause <ms>`), as if leave and join fell in one frame
@@ -247,6 +256,10 @@ bool SendCampaign(uint8_t to)
     }
     net::SendFileDone(to, campaign.c_str(), sizes, crcs);
     ++filesSent;
+    if (to < net::MaxPlayers) {
+        clients[to].sentAt = GetTickCount() ? GetTickCount() : 1;
+        clients[to].arrivedSinceSend = false;
+    }
     Logf("persist: campaign %s sent to player %u (%u + %u + %u bytes)", campaign.c_str(), to, sizes[0], sizes[1], sizes[2]);
     return true;
 }
@@ -338,6 +351,31 @@ void OrderAutoload(std::string const& slot)
     ArmAutoload();
 }
 
+// Client: the newest record of this player's own hero for any of the host's saves (g3t-hero-G3T_host_*.txt, not the
+// quick-slot files), written within the last day; empty if there is none.
+bool lastOwnHero = true;  // false: a save the host made without this player gives a copy of the host's hero (as before 27.10.)
+std::string LatestOwnRecord()
+{
+    WIN32_FIND_DATAA found;
+    const std::string folder = Folder();
+    HANDLE find = FindFirstFileA((folder + "g3t-hero-G3T_host_*.txt").c_str(), &found);
+    if (find == INVALID_HANDLE_VALUE) return {};
+    std::string best;
+    FILETIME bestTime{};
+    do {
+        const size_t n = std::strlen(found.cFileName);
+        if (n > 10 && !_stricmp(found.cFileName + n - 10, ".quick.txt")) continue;
+        if (CompareFileTime(&found.ftLastWriteTime, &bestTime) > 0) { bestTime = found.ftLastWriteTime; best = folder + found.cFileName; }
+    } while (FindNextFileA(find, &found));
+    FindClose(find);
+    if (best.empty()) return {};
+    FILETIME nowTime;
+    GetSystemTimeAsFileTime(&nowTime);
+    const auto ticks = [](FILETIME const& t) { return (static_cast<uint64_t>(t.dwHighDateTime) << 32) | t.dwLowDateTime; };
+    if (ticks(nowTime) - ticks(bestTime) > 24ull * 3600 * 10000000) return {};  // older than a day: another campaign
+    return best;
+}
+
 void OnFileDone(char const* name, uint32_t const size[net::FileCount], uint32_t const crc[net::FileCount])
 {
     if (!SafeName(name)) {
@@ -380,8 +418,18 @@ void OnFileDone(char const* name, uint32_t const size[net::FileCount], uint32_t 
     const std::string record = hero::RecordPath(local.c_str());
     if (GetFileAttributesA(record.c_str()) == INVALID_FILE_ATTRIBUTES) {
         gCSession& session = gCSession::GetInstance();
+        // A save the host made while this player was not there (refused, or not joined yet) has no record of this
+        // player either: its newest own record goes on instead of a copy of the host's hero (the client as a copy of the host's hero after
+        // the host saved alone, playtest 27.10.).
+        const std::string latest = lastOwnHero ? LatestOwnRecord() : std::string();
         if (session.GetHero() && session.IsGameRunning() && hero::SaveRecord(record.c_str())) {
             Logf("persist: first time in %s; the current hero is kept as this player's hero", local.c_str());
+        } else if (!latest.empty() && CopyFileA(latest.c_str(), record.c_str(), FALSE)) {
+            std::string quickFrom = latest, quickTo = record;
+            quickFrom.resize(quickFrom.size() - 4);
+            quickTo.resize(quickTo.size() - 4);
+            CopyFileA((quickFrom + ".quick.txt").c_str(), (quickTo + ".quick.txt").c_str(), FALSE);
+            Logf("persist: no hero of this player in %s; its newest own hero (%s) goes on", local.c_str(), latest.c_str());
         } else {
             hud::Message(hud::Warning, i18n::Text(i18n::NoCampaignHero));
             Logf("persist: first time in %s and no hero in play; the host's hero is copied", local.c_str());
@@ -560,12 +608,18 @@ void OnWorld(uint8_t from, net::WorldNote const& note)
             return;
         }
         net::SetInWorld(from, true);
+        c.arrivedSinceSend = true;
         Logf("persist: player %u (%s) is in the host's world %08x", from, net::PeerName(from), epoch);
     } else if (note.op == net::WorldOther) {
         c.ready = 0;
         net::SetInWorld(from, false);
         Logf("persist: player %u (%s) plays another world (%s %s)", from, net::PeerName(from), KindName(note.kind), note.campaign);
-        if (!campaign.empty() && transferring) {
+        const bool onItsWay = resendGuard && !GetConfig().qaResendGuardOff && c.sentAt && !c.arrivedSinceSend && GetTickCount() - c.sentAt < ResendGuard &&
+                              c.sent == epoch && (note.kind == net::KindMenu || note.kind == net::KindNew);
+        if (onItsWay) {
+            ++resendsSkipped;
+            Logf("persist: the save sent to player %u %u s ago is still on its way; not sent again", from, (GetTickCount() - c.sentAt) / 1000);
+        } else if (!campaign.empty() && transferring) {
             if (c.sent != epoch || c.resends < 2) {  // a client that loaded something else gets the save again, twice at most
                 if (c.sent == epoch) ++c.resends;
                 c.sent = epoch;
@@ -755,11 +809,29 @@ void StatusHints()
     Config const& config = GetConfig();
     const bool hintsOff = qa::Enabled() && !_stricmp(config.qaHostHint, "off");
     const bool refusalOff = hintsOff || (qa::Enabled() && !_stricmp(config.qaHostHint, "norefusal"));
+    // transport = steam without Steam (not running, no steam_api.dll): said once in the game; the log has the details.
+    static bool steamToldOff = false;
+    if (config.steam && !steam::Ready() && *steam::Error() && running && !steamToldOff) {
+        steamToldOff = true;
+        wchar_t text[400], reason[200] = {};
+        MultiByteToWideChar(CP_UTF8, 0, steam::Error(), -1, reason, 199);
+        _snwprintf_s(text, _TRUNCATE, i18n::Text(config.host ? i18n::SteamUnavailableHost : i18n::SteamUnavailableClient), reason);
+        hud::Message(hud::Warning, text);
+    }
     if (!hintsOff && trying >= 15000 && refusal.empty()) {
         wchar_t text[400], address[80] = {};
-        MultiByteToWideChar(CP_UTF8, 0, config.address, -1, address, 79);
-        _snwprintf_s(text, _TRUNCATE, i18n::Text(i18n::HostUnreachable), address, config.port, trying / 1000, config.port);
-        if (!unreachableHinted) Logf("net: host %s:%u not reachable for %u s; still trying (said in the menu and the game)", config.address, config.port, trying / 1000);
+        if (steam::Ready()) {  // over Steam there is no address to check: say whom it looks for or waits on
+            MultiByteToWideChar(CP_UTF8, 0, steam::HostName(), -1, address, 79);
+            if (*address) _snwprintf_s(text, _TRUNCATE, i18n::Text(i18n::SteamConnecting), address, trying / 1000);
+            else _snwprintf_s(text, _TRUNCATE, i18n::Text(i18n::SteamSearching), trying / 1000);
+        } else {
+            MultiByteToWideChar(CP_UTF8, 0, config.address, -1, address, 79);
+            _snwprintf_s(text, _TRUNCATE, i18n::Text(i18n::HostUnreachable), address, config.port, trying / 1000, config.port);
+        }
+        if (!unreachableHinted && steam::Ready())
+            Logf("net: no host over Steam for %u s (%s); still trying (said in the menu and the game)", trying / 1000,
+                 *steam::HostName() ? steam::HostName() : "no friend hosting");
+        else if (!unreachableHinted) Logf("net: host %s:%u not reachable for %u s; still trying (said in the menu and the game)", config.address, config.port, trying / 1000);
         unreachableHinted = true;
         if (!running && hud::MenuLine(text)) menuSet = true;
         if (running && (!hintedAt || now - hintedAt >= 30000)) {
@@ -1016,5 +1088,12 @@ void Report(LogFn log)
               writing ? 1 : 0, recordsWritten, recordsApplied, campaign.empty() ? "-" : campaign.c_str(), filesSent, filesReceived,
               autoLoads, lastReceived.c_str(), loadFrames, loadFramesRan, autoloadPosted, autoloadStale, loadTicks ? 1 : 0);
     log(line);
+}
+// QA negative controls of the play-evening fixes (27.10.): each switches its fix off (on: clientfameon).
+bool Switch(char const* action, LogFn log)
+{
+    if (!std::strcmp(action, "lastownherooff")) { lastOwnHero = false; log("SWITCH lastownherooff ok=1"); return true; }
+    if (!std::strcmp(action, "resendguardoff")) { resendGuard = false; log("SWITCH resendguardoff ok=1"); return true; }
+    return false;
 }
 }

@@ -17,6 +17,7 @@
 #include "talk.h"
 #include "items.h"
 #include "containers.h"
+#include "crashlog.h"
 #include "trade.h"
 #include "mapmarks.h"
 #include "ransack.h"
@@ -43,6 +44,7 @@
 #include "clock.h"
 #include "guide.h"
 #include "arena.h"
+#include "steam.h"
 #include "ending.h"
 #include "infocmd.h"
 #include "remote.h"
@@ -586,6 +588,10 @@ bool RunPlayerAction(const char* action)
         g3t::trade::Price(argument, &Log);
     } else if (!std::strcmp(action, "tradepricesoff")) {
         g3t::trade::PricesOff(&Log);
+    } else if (!std::strcmp(action, "tradeadjust")) {
+        g3t::trade::AdjustCommand(argument, &Log);
+    } else if (!std::strcmp(action, "tradeadjustoff")) {
+        g3t::trade::AdjustOff(&Log);
     } else if (!std::strcmp(action, "tradefilloff")) {
         g3t::trade::FillOff(&Log);
     } else if (!std::strcmp(action, "playergoods")) {
@@ -628,6 +634,18 @@ bool RunHitAction(const char* action)
         g3t::combat::Guard(argument, &Log);
     } else if (!std::strcmp(action, "storycompanionoff")) {  // here: RunLaterAction is at C1061 again (review 26.10.)
         g3t::infocmd::StoryCompanionOff(&Log);
+    } else if (!std::strcmp(action, "steamstatus")) {  // here as well: RunLaterAction is at C1061 (MSVC, 27.10.)
+        g3t::steam::Status(&Log);
+    } else if (!std::strcmp(action, "quickrestoreoff")) {  // here: RunAction is at C1061 (stageQuickLoad 27.10.)
+        g3t::hero::QuickRestoreOff(&Log);
+    } else if (!std::strcmp(action, "quickassign")) {
+        g3t::hero::QuickAssign(argument, &Log);
+    } else if (!std::strcmp(action, "quickdiag")) {
+        g3t::hero::QuickDiag(&Log);
+    } else if (!std::strcmp(action, "spellrestoreoff")) {
+        g3t::hero::SpellRestoreOff(&Log);
+    } else if (!std::strcmp(action, "spellknow")) {
+        g3t::hero::SpellKnow(argument, &Log);
     } else {
         return false;
     }
@@ -896,6 +914,34 @@ void RunAction(const char* action)
 {
     gCSession& session = gCSession::GetInstance();
     char line[256] = {};
+    if (!std::strcmp(action, "netstats")) { g3t::net::Stats(&Log); return; }
+    if (!std::strcmp(action, "tradebegin")) { g3t::containers::TradeBegin(argument, &Log); return; }  // C1061: not in the chains
+    if (!std::strcmp(action, "rttlogoff")) { g3t::net::RttLogOff(&Log); return; }
+    if (!std::strcmp(action, "crashprobe")) { g3t::crashlog::Probe(&Log); return; }  // stageCrashNames
+    if (!std::strcmp(action, "crashnamesoff")) { g3t::crashlog::NamesOff(&Log); return; }
+    if (!std::strcmp(action, "motiontime")) { g3t::body::MotionTime(g3t::remote::ControlledBody(), &Log); return; }  // stageSeek
+    if (!std::strcmp(action, "motionlag")) { g3t::body::MotionLagReport(&Log); return; }
+    if (!std::strcmp(action, "seekon")) { g3t::body::motionSeek = 1; Log("SWITCH seekon ok=1"); return; }
+    if (!std::strcmp(action, "seekoff")) { g3t::body::motionSeek = 0; Log("SWITCH seekoff ok=1"); return; }
+    if (!std::strcmp(action, "interpoff")) { g3t::body::interpolate = false; Log("SWITCH interpoff ok=1"); return; }
+    if (!std::strcmp(action, "interpon")) { g3t::body::interpolate = true; Log("SWITCH interpon ok=1"); return; }
+    if (!std::strcmp(action, "walkrel")) { g3t::remote::WalkRel(argument, &Log); return; }  // stageWalk
+    if (!std::strcmp(action, "actionseqon")) { g3t::body::actionSeq = true; Log("SWITCH actionseqon ok=1"); return; }
+    if (!std::strcmp(action, "fallmoveon")) { g3t::body::fallMove = true; Log("SWITCH fallmoveon ok=1"); return; }
+    if (!std::strcmp(action, "actionseqoff")) { g3t::body::actionSeq = false; Log("SWITCH actionseqoff ok=1"); return; }
+    if (!std::strcmp(action, "smoothwindowoff")) { g3t::body::smoothWindow = false; Log("SWITCH smoothwindowoff ok=1"); return; }
+    if (!std::strcmp(action, "interpstats")) {
+        char interpLine[160];
+        Format(interpLine, "INTERP between=%u ahead=%u held=%u on=%d", g3t::body::sampledBetween, g3t::body::sampledAhead,
+               g3t::body::sampledHeld, g3t::body::interpolate ? 1 : 0);
+        Log(interpLine);
+        return;
+    }
+    if (g3t::npcs::Switch(action, &Log) || g3t::containers::Switch(action, &Log) || g3t::remote::Switch(action, &Log) ||
+        g3t::combat::Switch(action, &Log) || g3t::dialogaudio::Switch(action, &Log) ||
+        g3t::persist::Switch(action, &Log) || g3t::downed::Switch(action, &Log) || g3t::enclaves::Switch(action, &Log) ||
+        g3t::items::Switch(action, &Log))
+        return;
     if (RunHitAction(action) || RunLaterAction(action) || RunReviewAction(action) || RunPlayerAction(action)) return;
     if (!std::strcmp(action, "state")) {
         State(session);

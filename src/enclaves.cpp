@@ -56,6 +56,9 @@ std::map<std::string, int> statusSeen;
 bool statusSync = true;  // QA negative control: townstatusoff
 unsigned statusSent = 0;
 bool keepLocal = true;        // QA negative control: KeepLocalOff (the host's counters overwrite unreported deeds)
+// Fame comes from quest rewards, which run on every machine: the host has counted it already, a client's delta counted it
+// twice (Reddock at 100 early, playtest 27.10.). true: the host adds a client's fame again, as before.
+bool clientFame = false;
 
 // Political crimes (PlayerMemory.PoliticalCrimeCount per alignment): the game counts one only in ChangeEnclaveStatus, when a
 // town turns to Flee (freed; not Ardea), for GetPlayer of the machine where it turns (re/out/world-scripts-c.c 1340). A boss
@@ -308,7 +311,7 @@ void OnNote(uint8_t from, net::EnclaveNote const& note)
             if (note.suspect[i] > c.suspect[i]) c.suspect[i] = note.suspect[i];
         }
         if (note.known > c.known) c.known = note.known;
-        c.fame += note.fame;
+        if (clientFame) c.fame += note.fame;
         Write(e, c);
         const std::string name(note.name);
         seen[name] = Read(enclave);
@@ -859,5 +862,11 @@ void SetKnown(char const* argument, LogFn log)
     char line[120];
     Format(line, "CRIMEKNOWN enclave=%s known=%d", name, value);
     log(line);
+}
+// QA negative controls of the play-evening fixes (27.10.): each switches its fix off (on: clientfameon).
+bool Switch(char const* action, LogFn log)
+{
+    if (!std::strcmp(action, "clientfameon")) { clientFame = true; log("SWITCH clientfameon ok=1"); return true; }
+    return false;
 }
 }

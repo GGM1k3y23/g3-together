@@ -47,19 +47,25 @@ Erreicht dein Spiel den Host gar nicht, sagt das nach etwa 15 Sekunden die obers
 deiner INI (im Spiel: alle 30 Sekunden eine Meldung). Prüfe, ob das Spiel des Hosts läuft, Adresse und Port und die Firewall beim
 Host. Die Mod versucht es weiter; sobald sie den Host erreicht, ist die Zeile wieder wie vorher.
 
+**Über Steam** (`transport = steam`, experimentell, siehe [SPIELEN.md](SPIELEN.md#über-steam-experimentell)): Du brauchst
+keine Adresse. Dein Spiel sucht den Host unter deinen Steam-Freunden; solange es keinen findet, sagt das nach etwa 15
+Sekunden die oberste Zeile des Hauptmenüs. Der Host muss in deiner Steam-Freundesliste sein und Steam und sein Spiel laufen
+haben.
+
 ## Im Spiel
 
 - Wirst du tödlich getroffen, bleib liegen: Ein verbundener Mitspieler in derselben Welt kann dir aufhelfen: Er spricht dich an und wählt „Ich werde dir helfen.“. Das kostet ihn einen Heiltrank; ohne Trank bleibst du liegen, bis er einen hat. Liegen alle am Boden oder bist du allein, stirbst du wie im Einzelspiel (Game Over, Spielstand laden).
 - Trag deshalb immer ein paar Heiltränke für deinen Partner bei dir.
 - Schlägt dich eine Wache oder ein Duellgegner nur nieder, stehst du wie im Einzelspiel von selbst wieder auf (ausgeraubt wirst du dabei noch nicht).
 - Kämpft dein Partner ein Duell oder in der Arena, halte dich heraus: Deine Treffer auf seinen Gegner zählen nicht.
-- Ab etwa 35 m vom Host erscheint **„Weit weg vom Host“**; unter etwa 25 m **„Wieder beim Host“**.
+- Die Gegend jedes Spielers läuft bei ihm und bleibt für beide gleich, darum gibt es keine Abstandsmeldung. Ist dein Partner in einer anderen Welt, erscheint **„<Name> ist in einer anderen Welt.“**
 - **Bild ab** (Page Down) bringt dich direkt hinter deinen Mitspieler, auch zu ihm, wenn er am Boden liegt. Danach 5 Sekunden
   Pause. Andere Taste: in der INI `partner_key = F9` (F1–F24, PAGEUP, HOME, END, INSERT, DELETE oder ein Buchstabe;
   Einfg und Entf sind die Handelstasten, solange du die nicht änderst).
 - Dein Partner ist auf deiner Karte und deinem Kompass eingezeichnet.
 - Dein Partner sieht die Rüstung und den Helm, die du trägst. Mit `look = Diego` in deiner INI siehst du für ihn wie eine andere Figur aus.
 - Handeln mit deinem Partner: seine Figur ansprechen, „Zeig mir deine Ware!“; er bestätigt mit Einfg (Entf lehnt ab).
+  Eigenen Preis im offenen Handelsfenster mit Num+ / Num− einstellen (mit Shift in 100er-Schritten).
   Andere Tasten: `offer_accept_key` und `offer_decline_key` in der INI; sind zwei deiner Tasten gleich, warnt die Mod beim Start.
 - Gespeichert wird beim Host.
 - Was noch schiefgehen kann und was ihr dann tut: Abschnitt **„Bekannte Probleme“** in der [Spielanleitung](SPIELEN.md).

@@ -60,7 +60,7 @@ des Spiels. Jeder Spieler kann die Sprache unabhängig wählen; sie ändert nur 
 | 18–28 min | Gefolgsmann anwerben und entlassen | Der Mitspieler wirbt ein geeignetes NPC an. Prüfen: es folgt dem Mitspieler, beide sehen dasselbe NPC und keine Seite simuliert es doppelt. Danach entlässt derselbe Mitspieler es und beide prüfen, dass es nicht weiter als sein Gefolgsmann läuft. |
 | 28–38 min | Bewusstlosigkeit und Hilfe | In sicherer Umgebung einen Spieler kontrolliert niederschlagen lassen. Der Partner stellt sich zuerst ein paar Sekunden daneben: Es darf nichts passieren. Dann spricht er ihn an und wählt „Ich werde dir helfen.“. Prüfen: Aufhelfen und Meldung, ein Heiltrank des Helfers weniger. Ohne Heiltrank: Hinweis bei beiden, der Bewusstlose bleibt liegen. Optional zum Schluss (danach Spielstand laden): Liegen beide am Boden, sterben beide (Game Over). |
 | 38–50 min | Dialog, Quest, Handel und Plündern | Einen Dialog mit einem NPC beginnen, eine bekannte Queststufe auslösen, eine eindeutige Handelsaktion durchführen und einen Gegenstand aus einer Truhe oder Leiche nehmen. Beide vergleichen Quest-/Dialogstatus, Gold und Gegenstandsbestand. Danach miteinander handeln, mit der Maus: Ein Spieler spricht die Figur des anderen an und wählt „Zeig mir deine Ware!“ (beim allerersten Handel den Tipp mit Ok schließen), nimmt einen Gegenstand, gibt einen und schließt das Fenster; der andere nimmt mit Einfg an. Gegenstände und Gold auf beiden Rechnern vergleichen. Noch einmal handeln und mit Entf ablehnen: Es darf nichts den Besitzer wechseln. Die Maussteuerung des Handelsfensters konnten die Bots nicht prüfen. |
-| 50–70 min | Abstand, getrennte Regionen und Wiedersehen | Host und Mitspieler entfernen sich deutlich voneinander. Bei mehr als ungefähr 35 m prüfen, dass „Weit weg vom Host“ erscheint und der Host den entfernten Mitspieler erkennt. Während sie getrennt sind, kämpft jeder in seiner jeweiligen Gegend gegen ein eigenes NPC; notieren, ob beide dieselben Ergebnisse sehen und keine doppelte Simulation auffällt. Danach gehen sie wieder unter ungefähr 25 m zusammen und prüfen die Meldung „Wieder beim Host“ sowie den gemeinsamen Zustand. Einen Kill-Quest-Auftrag annehmen und ein Ziel in der Gegend des Mitspielers töten lassen: Der Zähler im Quest-Log des Hosts muss steigen. |
+| 50–70 min | Abstand, getrennte Regionen und Wiedersehen | Host und Mitspieler entfernen sich deutlich voneinander. Bei mehr als ungefähr 35 m prüfen, dass auf keinem PC eine Abstandsmeldung erscheint (kein „Weit weg vom Host“, kein „ist weit entfernt“). Während sie getrennt sind, kämpft jeder in seiner jeweiligen Gegend gegen ein eigenes NPC; notieren, ob beide dieselben Ergebnisse sehen und keine doppelte Simulation auffällt. Danach gehen sie wieder zusammen und prüfen, dass keine Meldung kommt („Wieder beim Host“ gibt es nicht mehr), sowie den gemeinsamen Zustand. Einen Kill-Quest-Auftrag annehmen und ein Ziel in der Gegend des Mitspielers töten lassen: Der Zähler im Quest-Log des Hosts muss steigen. |
 | 70–82 min | Speichern und Laden | Host speichert mit eindeutigem Namen. Prüfen, dass der Mitspieler seinen Helden für diesen Spielstand behält. Für das Laden einen separaten Teststand oder ein Backup verwenden. Nach dem Laden Welt und Spieler stabilisieren lassen und den allgemeinen Zustand vergleichen. Hatte der Mitspieler einen Gefolgsmann: Nach dem Laden und seinem Wiederbeitritt muss der Gefolgsmann ihm wieder folgen. |
 | 82–90 min | Wiederbeitritt und Fehlerpaket | Falls noch Zeit ist, einen sauberen Leave und Wiederbeitritt im selben Prozess oder nach Neustart prüfen. Kampagne, Heldenaufzeichnung, NPC-Besitz und Begleiterzustand notieren. Bei Fehlern beide Logpakete nach der folgenden Anleitung erstellen und privat an den Host geben. |
 
@@ -122,6 +122,18 @@ Wenn nur 60 Minuten verfügbar sind: zuerst Beitritt, Kampf, Aufhelfen, Gefolgsm
 | Story-Umzüge | Nach der Befreiung von Ardea gehen beide weit weg: Diego, Gorn und Milten stehen bei beiden am selben neuen Ort. Folgt Diego dem Mitspieler, bleibt er bei ihm. |
 | Befreite Stadt | Der Mitspieler befreit bei gemeinsamem Ruf eine Stadt: Die Rebellen sprechen den Host darauf an wie den Mitspieler. |
 | Schlafendes Tier | Der Mitspieler geht zu einem schlafenden Tier: Es wacht auf wie beim Host. |
+
+### Optional: über Steam (experimentell)
+
+Beide stellen `transport = steam` ein (oder wählen im Setup Steam) und sind Steam-Freunde; siehe [SPIELEN.md](SPIELEN.md#über-steam-experimentell).
+
+| Abschnitt | Schritte und Beobachtungen |
+|---|---|
+| Host finden | Der Host startet zuerst, dann der Mitspieler ohne Adresse: Er tritt nach wenigen Sekunden bei (Dauer notieren). Steam zeigt beide als „spielt Spacewar“. |
+| Verschiedene Netze | Von zwei verschiedenen Wohnungen aus spielen (kein LAN, kein VPN): Beitritt, Übertragung des Spielstands und eine Stunde Spiel klappen. Ruckler im Vergleich zu Hamachi notieren. |
+| Spiel beitreten | Das Spiel des Mitspielers läuft schon; dann in der Steam-Freundesliste beim Host „Spiel beitreten“: Er tritt bei. |
+| Verlassen | Der Mitspieler beendet sein Spiel: Der Host sieht ihn sofort weg. Er startet neu und tritt wieder bei. |
+| Ohne Steam | Der Mitspieler beendet Steam und startet das Spiel: Eine Meldung sagt, dass Steam nicht nutzbar ist; mit Adresse in der INI verbindet er sich über die Adresse. |
 
 ## Bei einem Fehler
 

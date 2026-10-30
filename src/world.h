@@ -10,6 +10,11 @@ namespace g3t::world {
 using LogFn = void (*)(char const*);
 // Every entity the engine processes here, static ones included (doors, ore veins); null before the scene exists.
 bTSmallArray<eCEntity*> const* ProcessedEntities();
+void Tick();  // host: its processing range as host_roi says (config.h)
+// host_sim = elastic or spheres: whether the host's game processes around the other players too in this frame, and whether
+// it processes this place (margin cm inside the edge of its sphere or of one of its spheres).
+bool Extended();
+bool HostProcesses(float const at[3], float margin);
 void Usables(char const* radius, LogFn log);  // USABLE lines within radius cm (default 3000) of the hero, then USABLE end
 void Face(char const* name, LogFn log);       // FACE line: stand in front of the nearest entity of that name (or GUID)
 void Use(char const* name, LogFn log);        // USE line: the hero uses the nearest entity of that name

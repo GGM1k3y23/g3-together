@@ -44,6 +44,7 @@
 #include "shot.h"
 #include "spells.h"
 #include "summon.h"
+#include "world.h"
 
 #include <Game.h>
 #include <Windows.h>
@@ -179,6 +180,7 @@ class Module : public eCEngineComponentBase
         if (!frame.run) return;
         Frame();
         g3t::crashlog::Tick();
+        g3t::world::Tick();
         g3t::remote::Tick();
         g3t::npcs::Tick();
         g3t::ai::Tick();

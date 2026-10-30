@@ -8,7 +8,9 @@
 #include <Windows.h>
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <map>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -24,6 +26,9 @@ bool checking = true;     // QA negative control: recordcheckoff (a record is ap
 char const* lastRefusal = nullptr;  // why the last LoadRecord refused its record, nullptr if it did not (LastRefusal)
 bool replaceSkills = true;  // QA negative control: skillreplaceoff (skills only taught on top, as before 23.10.)
 bool writeFault = false;  // QA (stage W2): recordwritefault breaks off the next write before it replaces the record
+bool restoreQuick = true;  // QA negative control: quickrestoreoff (the quick slots stay empty after a record, as before 27.10.)
+bool restoreSpells = true;  // QA negative control: spellrestoreoff (learned spells come back unlearned, as before 27.10.)
+constexpr int QuickSlots = 16;  // slot numbers asked for, 0 to 15 (the quick bar shows ten)
 
 struct Stack
 {
@@ -100,6 +105,150 @@ std::vector<Stack> Stacks(Entity& self)
 }
 
 eCDynamicEntity* Hero() { return gCSession::GetInstance().GetHero(); }
+
+// A quick slot sits on its stack (gCInventoryStack::m_iQuickSlot), so a stack the record deletes and makes again comes
+// back without it: after every load of the host's save the client's quick bar was empty (playtest 27.10.). They go into a
+// file of their own next to the record (<record>.quick.txt), which an older mod never reads: its record stays as it was.
+struct Quick
+{
+    int slot = 0;
+    std::string id;  // template ID, 32 hex digits
+    unsigned quality = 0;
+};
+
+int StackQuickSlot(Entity& self, int i)
+{
+    auto* inventory = static_cast<gCInventory_PS*>(self.GetInstance()->GetPropertySet(eEPropertySetType_Inventory));
+    gCInventoryStack const* stack = inventory ? inventory->GetStack(i) : nullptr;
+    return stack ? stack->GetQuickSlot() : -1;
+}
+
+// A learned spell is its stack's Learned byte (LearnStack sets it, LearnSpell finds the stack first); the record makes
+// the stack again and the byte with it starts at 0, so the client's spells were gone after a load as well.
+int StackLearned(Entity& self, int i)
+{
+    auto* inventory = static_cast<gCInventory_PS*>(self.GetInstance()->GetPropertySet(eEPropertySetType_Inventory));
+    gCInventoryStack const* stack = inventory ? inventory->GetStack(i) : nullptr;
+    return stack ? (stack->GetLearned() ? 1 : 0) : -1;
+}
+
+std::vector<std::string> LearnedSpellsOf(Entity& self)
+{
+    std::vector<std::string> out;
+    for (int i = 0; i < self.Inventory.GetStackCount(); ++i) {
+        if (static_cast<int>(self.Inventory.GetCategory(i)) != gEItemCategory_Spellbook || StackLearned(self, i) != 1) continue;
+        const Template item = self.Inventory.GetTemplate(i);
+        bCPropertyID const& id = item;
+        out.push_back(Hex(id));
+    }
+    return out;
+}
+
+// A slot counts when the game's own lookup (the one its keys use) finds a stack that names that slot.
+std::vector<Quick> QuickSlotsOf(Entity& self)
+{
+    std::vector<Quick> out;
+    for (int slot = 0; slot < QuickSlots; ++slot) {
+        const GEInt i = self.Inventory.FindStackIndexByQuickSlot(slot);
+        if (i < 0 || i >= self.Inventory.GetStackCount() || StackQuickSlot(self, i) != slot) continue;
+        const Template item = self.Inventory.GetTemplate(i);
+        bCPropertyID const& id = item;
+        out.push_back({slot, Hex(id), self.Inventory.GetQuality(i)});
+    }
+    return out;
+}
+
+std::string QuickPath(char const* record)
+{
+    std::string path = record;
+    if (path.size() > 4 && !_stricmp(path.c_str() + path.size() - 4, ".txt")) path.resize(path.size() - 4);
+    return path + ".quick.txt";
+}
+
+bool SaveQuick(Entity& self, char const* record)
+{
+    const std::string path = QuickPath(record), temp = path + ".tmp";
+    FILE* file = nullptr;
+    if (fopen_s(&file, temp.c_str(), "w") || !file) return false;
+    const std::vector<Quick> quick = QuickSlotsOf(self);
+    const std::vector<std::string> spells = LearnedSpellsOf(self);
+    bool ok = fprintf(file, "G3TQUICK 1\n") > 0;
+    for (std::string const& id : spells) ok = ok && fprintf(file, "spell %s\n", id.c_str()) > 0;
+    for (Quick const& q : quick) ok = ok && fprintf(file, "quick %d %s %u\n", q.slot, q.id.c_str(), q.quality) > 0;
+    ok = ok && fprintf(file, "end %zu\n", spells.size() + quick.size()) > 0;
+    ok = fflush(file) == 0 && ok;
+    ok = fclose(file) == 0 && ok;
+    if (ok) ok = MoveFileExA(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+    if (!ok) {
+        DeleteFileA(temp.c_str());
+        Logf("hero: quick slots %s not written; the ones before stay", path.c_str());
+    }
+    return ok;
+}
+
+// After the record went on: the learned spells first (a spell that is not learned may not go on a quick slot), then each
+// slot back on a stack of its item (that quality first). A file that is not whole changes nothing; an item the hero no
+// longer carries leaves its slot empty.
+void LoadQuick(Entity& self, char const* record)
+{
+    const std::string path = QuickPath(record);
+    FILE* file = nullptr;
+    if (fopen_s(&file, path.c_str(), "r") || !file) { Logf("hero: no quick slots for %s (a record of before 27.10.)", record); return; }
+    char line[160];
+    std::vector<Quick> wanted;
+    std::vector<std::string> spells;
+    size_t declared = 0;
+    bool ended = false;
+    char const* refused = fgets(line, sizeof(line), file) && !std::strncmp(line, "G3TQUICK 1", 10) ? nullptr : "no header";
+    while (!refused && fgets(line, sizeof(line), file)) {
+        char a[64] = {};
+        Quick q;
+        if (ended) refused = "a line after the end line";
+        else if (sscanf_s(line, "quick %d %63s %u", &q.slot, a, 64u, &q.quality) == 3) {
+            q.id = a;
+            if (q.slot < 0 || q.slot >= QuickSlots || q.id.size() != 32 || q.id.find_first_not_of("0123456789abcdef") != std::string::npos)
+                refused = "a slot out of range";
+            wanted.push_back(q);
+        } else if (sscanf_s(line, "spell %63s", a, 64u) == 1) {
+            spells.push_back(a);
+            if (spells.back().size() != 32 || spells.back().find_first_not_of("0123456789abcdef") != std::string::npos)
+                refused = "a spell whose item is no template ID";
+        } else if (sscanf_s(line, "end %zu", &declared) == 1) ended = true;
+        else refused = "a line that is no quick slot line";
+    }
+    fclose(file);
+    if (!refused && (!ended || declared != spells.size() + wanted.size())) refused = "no end line (the write broke off)";
+    if (refused) { Logf("hero: quick slots %s refused (%s); the quick bar stays as it is", path.c_str(), refused); return; }
+    unsigned learned = 0, spellsMissing = 0;
+    for (std::string const& id : restoreSpells ? spells : std::vector<std::string>()) {
+        int index = -1;
+        for (int i = 0; i < self.Inventory.GetStackCount() && index < 0; ++i) {
+            if (static_cast<int>(self.Inventory.GetCategory(i)) != gEItemCategory_Spellbook) continue;
+            const Template item = self.Inventory.GetTemplate(i);
+            bCPropertyID const& itemId = item;
+            if (Hex(itemId) == id) index = i;
+        }
+        auto* inventory = static_cast<gCInventory_PS*>(self.GetInstance()->GetPropertySet(eEPropertySetType_Inventory));
+        if (index >= 0 && (StackLearned(self, index) == 1 || (inventory && inventory->LearnStack(index)))) ++learned;
+        else ++spellsMissing;
+    }
+    Logf("hero: spells %s learned again: %u of %zu, %u missing%s", path.c_str(), learned, spells.size(), spellsMissing,
+         restoreSpells ? "" : " (spellrestoreoff)");
+    if (!restoreQuick) { Logf("hero: quick slots %s not put back (quickrestoreoff)", path.c_str()); return; }
+    unsigned assigned = 0, missing = 0;
+    for (Quick const& q : wanted) {
+        int index = -1;
+        for (int pass = 0; pass < 2 && index < 0; ++pass)
+            for (int i = 0; i < self.Inventory.GetStackCount() && index < 0; ++i) {
+                const Template item = self.Inventory.GetTemplate(i);
+                bCPropertyID const& id = item;
+                if (Hex(id) == q.id && (pass == 1 || self.Inventory.GetQuality(i) == q.quality)) index = i;
+            }
+        if (index >= 0 && self.Inventory.AssignStackToQuickSlot(index, q.slot)) ++assigned;
+        else ++missing;
+    }
+    Logf("hero: quick slots %s put back: %u, %u missing", path.c_str(), assigned, missing);
+}
 }
 
 // Written to <path>.tmp and moved over the old record only once every line and the close went through, with an end line
@@ -133,6 +282,7 @@ bool SaveRecord(char const* path)
         DeleteFileA(temp.c_str());
         Logf("hero: record %s not written; the one before stays", path);
     }
+    if (ok) SaveQuick(self, path);
     return ok;
 }
 
@@ -262,6 +412,7 @@ bool LoadRecord(char const* path)
     }
     Logf("hero: record %s applied: %zu skills in it, %u taught, %u unlearned, %u removed", path, recordSkills.size(), skillsTaught,
          skillsUnlearned, skillsRemoved);
+    LoadQuick(self, path);
     return true;
 }
 
@@ -289,8 +440,14 @@ void Dump(LogFn log)
         for (char const* c = part; *c; ++c) { hash ^= static_cast<unsigned char>(*c); hash *= 1099511628211ull; }
         ++count;
     }
-    Format(part, " stacks=%d inventory=%016llx", count, hash);
+    Format(part, " stacks=%d inventory=%016llx quick=", count, hash);
     text += part;
+    for (Quick const& q : QuickSlotsOf(self)) {
+        const GEInt i = self.Inventory.FindStackIndexByQuickSlot(q.slot);
+        Entity item = self.Inventory.GetTemplateItem(i);
+        Format(part, "%d:%.48s,", q.slot, item.GetInstance() ? item.GetName().GetText() : "?");
+        text += part;
+    }
     log(("HERODUMP " + text).c_str());
 }
 
@@ -351,6 +508,93 @@ void CutCommand(char const* argument, LogFn log)
     }
     char line[300];
     Format(line, "HEROCUT name=%s ok=%d kept=%zu of=%zu", name.substr(0, 64).c_str(), ok ? 1 : 0, keep, lines.size());
+    log(line);
+}
+
+void QuickRestoreOff(LogFn log)
+{
+    restoreQuick = false;
+    log("QUICKRESTOREOFF ok=1 (a record leaves the quick bar empty, as before 27.10.)");
+}
+
+// QA (stageQuickLoad): "<item>-<slot>", the hero's stack of that item on that quick slot, as the inventory's key does.
+void QuickAssign(char const* argument, LogFn log)
+{
+    char line[200];
+    eCDynamicEntity* hero = Hero();
+    const std::string text = argument ? argument : "";
+    const size_t dash = text.rfind('-');
+    if (!hero || dash == std::string::npos || dash == 0) { log("REFUSED quickassign: no hero or not <item>-<slot>"); return; }
+    const std::string item = text.substr(0, dash);
+    const int slot = std::atoi(text.c_str() + dash + 1);
+    Entity self(hero);
+    const GEInt stack = self.Inventory.FindStackIndex(Template(item.c_str()));
+    if (stack < 0) { Format(line, "REFUSED quickassign %.64s: not carried", item.c_str()); log(line); return; }
+    const GEBool assigned = self.Inventory.AssignStackToQuickSlot(stack, slot);
+    Format(line, "QUICKASSIGN item=%.64s stack=%d slot=%d assigned=%d found=%d raw=%d", item.c_str(), stack, slot, assigned ? 1 : 0,
+           self.Inventory.FindStackIndexByQuickSlot(slot), StackQuickSlot(self, stack));
+    log(line);
+}
+
+// QA diagnostic: the raw quick slot of every stack (how many stacks have each value) and what the game's lookup finds
+// for 0 to 15, so the value of "no slot" is seen.
+void QuickDiag(LogFn log)
+{
+    eCDynamicEntity* hero = Hero();
+    if (!hero) { log("QUICKDIAG none"); return; }
+    Entity self(hero);
+    std::map<int, int> raw;
+    for (int i = 0; i < self.Inventory.GetStackCount(); ++i) ++raw[StackQuickSlot(self, i)];
+    std::string text = "QUICKDIAG stacks=" + std::to_string(self.Inventory.GetStackCount()) + " raw=";
+    for (auto const& [value, count] : raw) text += std::to_string(value) + "x" + std::to_string(count) + ",";
+    text += " lookup=";
+    for (int slot = 0; slot < QuickSlots; ++slot) {
+        const GEInt i = self.Inventory.FindStackIndexByQuickSlot(slot);
+        if (i < 0) continue;
+        Entity item = self.Inventory.GetTemplateItem(i);
+        char part[96];
+        Format(part, "%d:%d:%.40s:%d,", slot, i, item.GetInstance() ? item.GetName().GetText() : "?", StackQuickSlot(self, i));
+        text += part;
+    }
+    log(text.c_str());
+}
+
+void SpellRestoreOff(LogFn log)
+{
+    restoreSpells = false;
+    log("SPELLRESTOREOFF ok=1 (a record leaves the hero's spells unlearned, as before 27.10.)");
+}
+
+// QA (stageSpellLoad): "<It_Spell_...>" reports that spell, "<It_Spell_...>-learn" first makes the stack if the hero has
+// none and learns it as a teacher does (LearnSpell on the item, the stack's LearnStack if that found no stack).
+void SpellKnow(char const* argument, LogFn log)
+{
+    char line[300];
+    eCDynamicEntity* hero = Hero();
+    std::string item = argument ? argument : "";
+    const bool learn = item.size() > 6 && item.compare(item.size() - 6, 6, "-learn") == 0;
+    if (learn) item.resize(item.size() - 6);
+    const Template spell(item.c_str());
+    if (!hero || !spell.IsValid()) { Format(line, "REFUSED spellknow %.64s: no hero or no such item", item.c_str()); log(line); return; }
+    Entity self(hero);
+    GEInt stack = self.Inventory.FindStackIndex(spell);
+    if (learn && stack < 0) stack = self.Inventory.CreateItems(spell, 0, 1);
+    // HasLearnedSpell and TeachSpell take the spell behind the item (stageSpellLoad 27.10.: with It_Spell_Healing itself
+    // both said 0 while the stack was learned), as the skills take the perk behind theirs.
+    Entity carried = stack >= 0 ? self.Inventory.GetTemplateItem(stack) : Entity();
+    Entity behind = carried.GetInstance() ? carried.Item.GetSpell() : Entity();
+    const Template magic = behind.GetInstance() ? behind.GetTemplate() : Template();
+    int taught = -1, stacked = -1;
+    if (learn) {
+        taught = magic.IsValid() && self.Inventory.TeachSpell(magic) ? 1 : 0;
+        auto* inventory = static_cast<gCInventory_PS*>(self.GetInstance()->GetPropertySet(eEPropertySetType_Inventory));
+        if (stack >= 0 && StackLearned(self, stack) != 1 && inventory) stacked = inventory->LearnStack(stack) ? 1 : 0;
+    }
+    Format(line, "SPELLKNOW item=%.64s spell=%.48s stack=%d category=%d learned=%d has=%d has_item=%d taught=%d stack_learn=%d spells_learned=%zu",
+           item.c_str(), behind.GetInstance() ? behind.GetName().GetText() : "-", stack,
+           stack >= 0 ? static_cast<int>(self.Inventory.GetCategory(stack)) : -1, stack >= 0 ? StackLearned(self, stack) : -1,
+           magic.IsValid() && self.Inventory.HasLearnedSpell(magic) ? 1 : 0, self.Inventory.HasLearnedSpell(spell) ? 1 : 0, taught, stacked,
+           LearnedSpellsOf(self).size());
     log(line);
 }
 

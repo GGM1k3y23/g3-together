@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Distance warning: the host's world is only kept in step within the engine's processing range around the
-// host (Entity.ROI, 40 m). A client that walks further away plays there with its own, unsynchronised NPCs;
-// it is told so, and the host is told who is far away.
+// Other-world notice: a partner who is in another world than this player is told to host and client alike (each
+// player's surroundings run on that player's PC since stage E, so distance alone needs no notice).
 #pragma once
 
 namespace g3t::range {

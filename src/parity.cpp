@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "parity.h"
 
+#include "config.h"
 #include "log.h"
 
 #include <Engine.h>
@@ -78,6 +79,8 @@ bool IsRulesArchive(std::string const& name)
     return false;
 }
 
+char optionsText[128] = "";
+
 uint64_t HashOptions(std::string const& dir)
 {
     Fnv fnv;
@@ -89,9 +92,19 @@ uint64_t HashOptions(std::string const& dir)
     fnv.AddValue(setup.MinHitDuration);
     fnv.AddValue(setup.XPModifier);
     fnv.AddValue(setup.QuickLoot);
-    Logf("PARITY options difficulty=%s alternative_balancing=%d alternative_ai=%d min_hit_duration=%d xp_modifier=%d quick_loot=%d",
+    // Owner 28.10.: the co-op's own balance (config.h) counts like the game's options, so both play by the host's.
+    fnv.AddValue(GetConfig().friendlyFire);
+    fnv.AddValue(static_cast<int>(GetConfig().npcDamage * 100.0f + 0.5f));
+    fnv.AddValue(static_cast<int>(GetConfig().npcHp * 100.0f + 0.5f));
+    Logf("PARITY options difficulty=%s alternative_balancing=%d alternative_ai=%d min_hit_duration=%d xp_modifier=%d quick_loot=%d "
+         "friendly_fire=%d npc_damage=%.2f npc_hp=%.2f",
          difficulty ? difficulty : "", setup.AlternativeBalancing, setup.AlternativeAI, setup.MinHitDuration, setup.XPModifier,
-         setup.QuickLoot);
+         setup.QuickLoot, GetConfig().friendlyFire, GetConfig().npcDamage, GetConfig().npcHp);
+    // Short labels: the refusal carries at most 160 characters, its own words and these values (npc_hp last) included.
+    Format(optionsText, "difficulty %s, bal. %d, AI %d, min. hit %d, XP %d%%, loot %d, friendly_fire %d, npc_damage %g, npc_hp %g",
+           difficulty ? difficulty : "?", setup.AlternativeBalancing ? 1 : 0, setup.AlternativeAI ? 1 : 0,
+           static_cast<int>(setup.MinHitDuration), static_cast<int>(setup.XPModifier), setup.QuickLoot ? 1 : 0, GetConfig().friendlyFire,
+           static_cast<double>(GetConfig().npcDamage), static_cast<double>(GetConfig().npcHp));
     // The [Game] section of ge3.ini also holds options the setup struct does not show (ExtendedContent).
     static char section[8192];
     const DWORD n = GetPrivateProfileSectionA("Game", section, sizeof(section), (dir + "\\Ini\\ge3.ini").c_str());
@@ -112,6 +125,7 @@ char const* ItemName(int item)
 }
 
 uint64_t const* Local() { return items; }
+char const* OptionsText() { return optionsText; }
 
 void Compute()
 {

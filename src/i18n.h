@@ -21,10 +21,6 @@ enum Message
     JumpCooldown,
     NoCampaignHero,
     PartnerInOtherWorld,
-    PartnerFarAway,
-    FarFromHost,
-    PartnerNearby,
-    NearHost,
     HostInMenu,
     HostNewGame,
     HostLoadedSave,
@@ -59,6 +55,15 @@ enum Message
     PlaceInUse,
     NpcTalking,
     EpilogueWaits,
+    SteamSearching,
+    SteamConnecting,
+    SteamUnavailableClient,
+    SteamUnavailableHost,
+    TradePriceHint,
+    TradePricePay,
+    TradePriceGet,
+    TradePriceLimit,
+    TradePriceNoGoods,
     MessageCount
 };
 

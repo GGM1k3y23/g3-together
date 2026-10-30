@@ -95,6 +95,9 @@ GEInt GE_STDCALL Detour(gCScriptProcessingUnit* spu, GELPVoid self, GELPVoid oth
         ++stood;
         EndDeathTask(npc);
         journal::NewLife(instance);
+        uint8_t guid[16];
+        std::memcpy(guid, &eCEntityProxy(instance).GetEntityID().GetCore(), 16);
+        npcs::NewLife(guid);
         Send(instance, StoodUp);
         Logf("respawn: %s stands up again here; everyone is told", npc.GetName().GetText());
     } else if ((instance->GetWorldPosition() - before).GetMagnitude() > 10000.0f) {
@@ -168,7 +171,10 @@ void Tick()
 void OnState(uint8_t from, net::WorldState const& s)
 {
     if (s.guard != StoodUp && s.guard != Gone) return;
-    if (s.guard == StoodUp) journal::NewLife(s.guid);  // a new death of it is reported again, here or wherever it dies
+    if (s.guard == StoodUp) {
+        journal::NewLife(s.guid);  // a new death of it is reported again, here or wherever it dies
+        npcs::NewLife(s.guid);
+    }
     if (!Apply(from, s)) pending[std::string(reinterpret_cast<char const*>(s.guid), 16)] = Pending{from, s};
 }
 

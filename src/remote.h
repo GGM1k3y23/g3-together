@@ -30,10 +30,12 @@ void PuppetCombatOff(LogFn log);  // QA negative control: puppets replay swings 
 void ShapeOff(LogFn log);  // QA negative control of stage T
 void Step(int index, LogFn log);  // QA: move the local hero to point `index` of a 3 m circle
 void WalkTo(int index, LogFn log); // QA: let the local hero run (game AI goto) to point `index` of a 15 m circle
+void WalkRel(char const* argument, LogFn log);  // QA: run to anchor + "dx_dz" cm, or "stop"
 void WearHero(char const* argument, LogFn log);  // QA: the local hero wears an armor/helmet by name, -armor/-helmet takes it off
 void WornScan(LogFn log);  // QA: armor and helmet of NPCs within 50 m
 void WearOff(LogFn log);   // QA negative control: puppets wear nothing of their player
 void LookOff(LogFn log);   // QA negative control: every player shown as puppet_template, its own look ignored
 void PuppetTradeOn(char const* argument, LogFn log);  // QA (phase 2): trading switched on for player <id>'s puppet
 void PuppetInfo(char const* argument, LogFn log);  // QA (phase 2): "<id>_<Info>": own name and a copied dialog option for a puppet
+bool Switch(char const* action, LogFn log);  // QA negative controls of the play-evening fixes (27.10.): true if it was one
 }

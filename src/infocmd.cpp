@@ -411,6 +411,8 @@ void Observe(gCScriptProcessingUnit* spu)
     if (!command.IsValid()) command = Entity::GetWorldEntity().InfoManager.GetCurrentCommand();
     if (!command.IsValid()) return;
     const Entity e1 = command.GetEntity1(), e2 = command.GetEntity2();
+    if (!std::strcmp(command.GetCommand().GetText(), "Say") && !std::strcmp(command.GetTextID().GetText(), "INFO_SKALVERAM320060309153144"))
+        downed::HelpLineSaid();  // the help option's own line, not just a dialog with the puppet (downed.cpp)
     char key[400];
     Format(key, "%s|%s|%s|%s|%s", command.GetCommand().GetText(), e1.GetInstance() ? e1.GetName().GetText() : "-",
               e2.GetInstance() ? e2.GetName().GetText() : "-", command.GetID1().GetText(), command.GetID2().GetText());

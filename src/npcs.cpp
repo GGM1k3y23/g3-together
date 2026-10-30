@@ -2,6 +2,7 @@
 #include "npcs.h"
 
 #include "body.h"
+#include "combat.h"
 #include "guide.h"
 #include "arena.h"
 #include "log.h"
@@ -9,6 +10,7 @@
 #include "remote.h"
 #include "journal.h"
 #include "talk.h"
+#include "world.h"
 
 #include <Game.h>
 #include <Script.h>
@@ -20,11 +22,28 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace g3t::npcs {
 namespace {
 constexpr float InterestRadius = 4000.0f;  // cm around any player
-constexpr uint32_t SendInterval = 100;     // ms
+constexpr uint32_t SendInterval = 50;      // ms (Stufe 1, 27.10.: 20 Hz; 100 before)
+// At 20 Hz only what changed since its last snapshot goes out every time; an unchanged NPC still every 100 ms, so the
+// bandwidth stays near the old one while moving NPCs show twice as often.
+constexpr uint32_t FullEvery = 100;        // ms
+bool fastNpcs = true;  // QA negative control: fastnpcsoff (every NPC every 100 ms, as before)
+struct LastSent { net::NpcRecord record; uint32_t at = 0; };
+std::unordered_map<std::string, LastSent> lastSent;
+unsigned npcsUnchangedSkipped = 0;
+bool Changed(net::NpcRecord const& a, net::NpcRecord const& b)
+{
+    float d = 0.0f;
+    for (int k = 0; k < 3; ++k) d += (a.position[k] - b.position[k]) * (a.position[k] - b.position[k]);
+    float q = 0.0f;
+    for (int k = 0; k < 4; ++k) q += std::fabs(a.rotation[k] - b.rotation[k]);
+    return d > 4.0f || q > 0.002f || a.motion != b.motion || a.flags != b.flags || a.hitPoints != b.hitPoints ||
+           a.aniState != b.aniState || a.movementMode != b.movementMode || a.heldRight != b.heldRight || a.heldLeft != b.heldLeft;
+}
 constexpr uint32_t StaleAfter = 3000;      // ms without a snapshot: give the NPC its own AI back
 
 // Owned NPCs (the host's processing area; a client's own region): sent to the others
@@ -35,6 +54,14 @@ std::unordered_set<uint32_t> namesSent;
 std::unordered_set<std::string> owned;  // GUIDs this machine sent in its last update
 bool owning = true;                     // QA negative control (client): send nothing of its own
 unsigned claimsRefused = 0;             // host: a client's snapshots of NPCs the host simulates itself
+// Dead stays dead (playtest 27.10.: wolves the host killed lived on at the client, which then simulated them and they
+// attacked the host, unseen there). Client: what the host reported dead is held dead here and never sent as its own.
+// Host: a client's snapshots of an NPC dead here are refused (combat.cpp drops its hits).
+std::unordered_set<std::string> deadOnHost;
+std::unordered_map<std::string, body::ActionClock> actionClocks;  // protocol 58: this machine's NPCs' action numbers
+bool deadStays = true;  // false: as before 27.10.
+bool newLife = true;     // QA negative control deadnewlifeoff: a respawned NPC stays held dead (code review P2, as before)
+unsigned deadRefused = 0, deadKept = 0;
 unsigned hostWins = 0;                  // client: NPCs it simulated itself until the host's snapshots came (now mirrors)
 bool hostWinsRule = true;               // QA negative control: HostWinsOff
 constexpr uint32_t JoinGrace = 10000;   // ms after a client joined in which the host keeps the NPCs near its hero
@@ -60,6 +87,38 @@ std::unordered_set<std::string> myClaims;            // client: NPCs this player
 std::unordered_map<std::string, uint32_t> claimSeen; // host: last sign of life of a claim (claim or snapshot)
 std::unordered_map<std::string, uint32_t> givenBack; // client: NPCs handed back, not sent until the host's arrive
 std::unordered_set<std::string> hostTaken;           // host: clients' NPCs that guide or follow the host's hero (P9)
+// host_sim = elastic (Stufe 2): a client that jumped (partner key) simulates the NPCs around it before the host's sphere
+// follows, and whoever simulates an NPC first keeps it, so they stayed the client's while it stood still (stageRoiHold 28.10.:
+// 67 % the host's after a jump, 100 % after walking). Inside the host's sphere for ReclaimAfter, near a player, not fighting
+// (no attack, parade, stumble or knock-down in its last ReclaimCalm, not lying) and nobody's companion, the host takes it back: own AI here, and the client's copy
+// becomes a mirror when the host's snapshots arrive (hostWinsRule). While it stays inside, the client's snapshots of it are
+// refused; after it left the sphere (or the sphere is off) it is not taken back for ReclaimPause, so nothing goes to and fro.
+constexpr uint32_t ReclaimAfter = 2000;   // ms inside the sphere
+constexpr uint32_t ReclaimPause = 15000;  // ms after it left the sphere
+constexpr float ReclaimInside = 1000.0f;  // cm inside the sphere's edge
+constexpr uint32_t ReclaimCalm = 5000;    // ms without a combat motion
+std::unordered_map<std::string, uint32_t> inSphereSince;  // host: clients' NPCs inside the sphere, since
+std::unordered_set<std::string> reclaimed;                // host: taken back; the client's snapshots refused
+std::unordered_map<std::string, uint32_t> reclaimPause;   // host: left the sphere; not taken back before then
+unsigned reclaims = 0, reclaimRefused = 0;
+bool reclaimRule = true;  // QA negative control: reclaimoff
+// Stufe 3.3: whether each NPC this machine simulates parried in the states it sent, by send time, so that a player's blow is
+// judged against the parade the player saw on its mirror (half a round trip and a snapshot old), not against the parade now.
+// The game's IsInParadeMode, not AniState alone: an NPC keeps AniState parade for a while after it stopped parrying (Hamlar,
+// stageLagBlock 28.10.: AniState 4 with parade_mode=0), and every blow counted as one on a parrying NPC.
+struct SentStates
+{
+    uint32_t at[32] = {};
+    bool parrying[32] = {};
+    int next = 0;
+};
+std::unordered_map<std::string, SentStates> sentStates;
+constexpr uint32_t SentStatesFor = 1500;  // ms
+// On by default since 29.10. (stageLagBlock under G3_NETSIM 800: without it every blow on an NPC parrying when the claim came,
+// though the client saw him not parrying, was blocked; with it they land as seen, 4 of 4 runs). QA lagblockon / lagblockoff.
+bool lagBlocks = true;
+unsigned swingSamples = 0, swingArmed = 0;  // Stufe 4.1 (SwingSamples)
+unsigned fightSent = 0, fightSeenAny = 0, fightSeenUs = 0, fightSeenNear = 0;  // Stufe 4.2 (FightStats)
 constexpr uint32_t RevokeAfter = 15000;   // ms: a claim whose owner sends nothing goes back to the host
 constexpr uint32_t GiveBackFor = 5000;    // ms: a handed-back NPC is not sent while the host takes it over
 unsigned claimsDenied = 0, claimsRevoked = 0;
@@ -70,6 +129,8 @@ std::unordered_map<std::string, std::string> companions;
 std::unordered_map<std::string, uint32_t> offered;  // host: when a saved companion was last handed to its player
 constexpr uint32_t OfferEvery = 20000;  // ms
 bool offering = true;  // QA negative control: CompanionsOff
+bool companionNear = true;  // false: a saved companion is handed over wherever it is (as before 27.10.)
+unsigned companionsFar = 0;
 unsigned companionsOffered = 0, companionsAdopted = 0;
 
 // Client side
@@ -173,6 +234,15 @@ bool IsNpc(eCEntity* instance)
 // QA (NPCSEND): why SendOwned last left an NPC out, or "sent", and when (net::Now()).
 struct SendNote { char const* reason = "never"; uint32_t at = 0; };
 std::unordered_map<std::string, SendNote> sendNotes;
+// Fewer changes of hands around the edge (owner 27.10.: NPCs changed hands three times as often when the players stood
+// some 40 m apart, every change can jerk). What this machine sends it keeps up to KeepRadius from the nearest player as
+// long as it processes it, not just to InterestRadius; for MinHold after it began, and while it fights, up to HoldRadius.
+// Taking one over still needs InterestRadius. With host_roi the host processes far enough for this (world.cpp).
+struct Held { uint32_t since = 0, last = 0; };
+std::unordered_map<std::string, Held> sending;  // since when and until when this machine sent each NPC
+bool hysteresis = true;  // false: sent only within InterestRadius (as before 27.10.)
+constexpr uint32_t MinHold = 10000;  // ms
+unsigned heldBand = 0;
 
 // Host: a client's NPC becomes a mirror here (stageM2 24.10.: Orc_GameStartRaider_Scout_07 ran on the client 12 s after a
 // join, 1 run in 3): where it is here and there, and why this machine last left it out of its own snapshots.
@@ -223,6 +293,11 @@ void OnNpcs(net::NpcRecord const* records, int count, uint32_t now, uint32_t sen
         // turns its copy into a mirror as soon as the host's snapshots arrive.
         if (!net::IsHost() && myClaims.count(key)) continue;  // ours now; the host's last snapshots are late
         if (net::IsHost() && hostTaken.count(key)) { ++claimsRefused; continue; }  // it guides or follows the host's hero (P9)
+        if (net::IsHost() && reclaimed.count(key)) { ++reclaimRefused; continue; }  // taken back into the elastic sphere
+        if (deadStays && net::IsHost() && owner > 1 && !(records[i].flags & 1)) {
+            Entity here = Resolve(records[i].guid);
+            if (here.GetInstance() && here.IsDead()) { ++deadRefused; continue; }
+        }
         if (owned.count(key) && !claimedBy.count(key)) {
             // Host: it keeps what it simulates. Client: the host's snapshots win over its own simulation (a mirror gone
             // stale for 3 s gets its own AI back and is then sent from here; refusing the host's snapshots left both
@@ -264,9 +339,43 @@ void OnNpcs(net::NpcRecord const* records, int count, uint32_t now, uint32_t sen
     }
 }
 
+// Dead as a state, the way dead mirrors die here (MirrorTick): no death script, so no experience and no crime here.
+void KeepDead(Entity& npc)
+{
+    if (npc.IsDead()) return;
+    npc.NPC.DefeatedByPlayer = GETrue;  // the game's scripts reward nothing for it
+    npc.Routine.FullStop();
+    npc.DamageReceiver.HitPoints = 0;
+    npc.Routine.AIMode = gEAIMode_Dead;
+    npc.Routine.SetTask(bCString("ZS_Dead"));
+    if (++deadKept < 20) Logf("npcs: %s is dead on the host; dead here again", npc.GetName().GetText());
+}
+
 void OnMotionName(uint32_t hash, char const* name)
 {
     if (motionNames.size() < 50000 || motionNames.count(hash)) motionNames[hash] = name;  // the game has some 20000 motions
+}
+
+// Stufe 4.2: NpcRecord.flags bits 2-5 for an NPC in combat mode: whom it fights, as a player id (our hero, a puppet, or a party
+// member of either: the game's fight music counts the player's party).
+uint8_t PlayerOf(eCEntity* entity)
+{
+    if (!entity) return 0;
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    if (entity == hero || entity == remote::ControlledBody()) return net::LocalId();
+    if (const int owner = remote::PuppetOwner(entity)) return static_cast<uint8_t>(owner);
+    return 0;
+}
+
+uint8_t FightFlags(Entity& npc)
+{
+    if (npc.Routine.AIMode != gEAIMode_Combat) return 0;
+    ++fightSent;
+    eCEntity* target = npc.NPC.GetCurrentTarget().GetInstance();
+    uint8_t player = PlayerOf(target);
+    if (!player && target && target->GetPropertySet(eEPropertySetType_Party))
+        player = PlayerOf(Entity(target).Party.GetPartyLeader().GetInstance());
+    return static_cast<uint8_t>(4 | ((player & 7) << 3));
 }
 
 // Every NPC this machine processes and nobody else simulates, near a player: one snapshot each.
@@ -290,6 +399,12 @@ void SendOwned(eCEntity* hero, float const players[][3], int playerCount)
         note.at = net::Now();
         if (journal::Pending(instance)) { note.reason = "pending"; continue; }  // a recorded death not applied yet: never show it alive
         if (mirrors.count(Key(guid))) { note.reason = "mirror"; continue; }      // simulated elsewhere: we show theirs
+        if (deadStays && !net::IsHost() && deadOnHost.count(Key(guid))) {
+            Entity corpse(instance);
+            KeepDead(corpse);
+            note.reason = "dead on host";
+            continue;
+        }
         if (claimedBy.count(Key(guid))) { note.reason = "claimed"; continue; }
         const auto back = givenBack.find(Key(guid));
         if (back != givenBack.end() && static_cast<int32_t>(net::Now() - back->second) < 0) { note.reason = "givenback"; continue; }  // handed back
@@ -298,13 +413,31 @@ void SendOwned(eCEntity* hero, float const players[][3], int playerCount)
         float nearest = 1e30f;
         for (int k = 0; k < playerCount; ++k) nearest = std::min(nearest, body::Distance(at, players[k]));
         bool inRange = nearest <= InterestRadius;
+        // This player's companion, as long as this machine processes it: dropped at the radius, the host ended the claim
+        // for want of snapshots and handed it over again (Gorn, playtest 27.10.).
+        if (!inRange && companionNear && !net::IsHost() && myClaims.count(Key(guid)) && nearest <= KeepRadius) inRange = true;
         if (!inRange) {
             const auto held = contested.find(Key(guid));
             if (held != contested.end() && nearest <= KeepRadius) inRange = true;  // contested: kept here in the band
             else if (held != contested.end()) contested.erase(held);
         }
+        if (!inRange && hysteresis) {
+            const auto held = sending.find(Key(guid));
+            const uint32_t t = net::Now();
+            if (held != sending.end() && static_cast<int32_t>(t - held->second.last) <= 1500) {  // ours until now
+                const bool young = static_cast<int32_t>(t - held->second.since) < static_cast<int32_t>(MinHold);
+                const bool fighting = Entity(instance).Routine.AIMode == gEAIMode_Combat;
+                if (nearest <= KeepRadius || ((young || fighting) && nearest <= KeepRadius + 2000.0f)) { inRange = true; ++heldBand; }
+            }
+        }
         if (!inRange) { note.reason = "range"; continue; }
         note.reason = "sent";
+        {
+            Held& held = sending[Key(guid)];
+            const uint32_t t = net::Now();
+            if (!held.last || static_cast<int32_t>(t - held.last) > 1500) held.since = t;
+            held.last = t;
+        }
         net::NpcRecord& r = batch[n];
         r = net::NpcRecord{};
         std::memcpy(r.guid, guid, 16);
@@ -314,9 +447,15 @@ void SendOwned(eCEntity* hero, float const players[][3], int playerCount)
         r.rotation[0] = q.GetX(); r.rotation[1] = q.GetY(); r.rotation[2] = q.GetZ(); r.rotation[3] = q.GetW();
         Entity self(instance);
         r.movementMode = static_cast<uint8_t>(self.CharacterMovement.GetMovementMode());
-        r.flags = (self.IsDead() ? 1 : 0) | (self.IsDown() ? 2 : 0);
+        r.flags = static_cast<uint8_t>((self.IsDead() ? 1 : 0) | (self.IsDown() ? 2 : 0) | FightFlags(self));
         r.hitPoints = self.DamageReceiver.HitPoints;
         r.aniState = static_cast<uint8_t>(static_cast<int>(self.Routine.AniState));
+        {
+            SentStates& states = sentStates[Key(guid)];
+            states.at[states.next] = net::Now();  // the snapshot's send time (NpcsHeader.sent) within a millisecond
+            states.parrying[states.next] = r.aniState == gEAniState_Parade && combat::InParadeMode(instance);
+            states.next = (states.next + 1) % 32;
+        }
         r.heldRight = HeldHash(self, gESlot_RightHand);
         r.heldLeft = HeldHash(self, gESlot_LeftHand);
         for (gESlot slot : {gESlot_RightHand, gESlot_LeftHand}) {
@@ -329,16 +468,91 @@ void SendOwned(eCEntity* hero, float const players[][3], int playerCount)
         if (body::CurrentMotion(instance, motion, sizeof(motion)) && *motion) {
             r.motion = net::HashName(motion);
             if (namesSent.insert(r.motion).second) net::SendMotionName(r.motion, motion);
+        } else {
+            *motion = '\0';
+        }
+        r.actionSeq = body::ActionSeq(instance, actionClocks[Key(guid)], motion, nullptr);  // protocol 58
+        r.motionFrac = body::MotionFraction(instance);  // protocol 59 (not in Changed: a running motion alone sends nothing new)
+        {
+            LastSent& last = lastSent[Key(guid)];
+            const uint32_t t = net::Now();
+            if (fastNpcs && last.at && static_cast<int32_t>(t - last.at) < static_cast<int32_t>(FullEvery) && !Changed(r, last.record)) {
+                ++npcsUnchangedSkipped;
+                continue;  // still ours (owned): only not sent again this time
+            }
+            last.record = r;
+            last.at = t;
         }
         if (++n == net::NpcsPerSend) { net::SendNpcs(batch, n); n = 0; }
     }
     if (n) net::SendNpcs(batch, n);
 }
 
+// Host, host_sim = elastic: takes back the clients' NPCs inside its sphere (see ReclaimAfter).
+void Reclaim(float const players[][3], int playerCount)
+{
+    const bool on = reclaimRule && world::Extended();
+    const uint32_t now = net::Now();
+    const auto inside = [&](float const at[3]) { return on && world::HostProcesses(at, ReclaimInside); };
+    for (auto it = reclaimed.begin(); it != reclaimed.end();) {
+        Entity npc = Resolve(reinterpret_cast<uint8_t const*>(it->data()));
+        bool keep = false;
+        if (npc.GetInstance() && !npc.IsDead()) {
+            const bCVector& p = npc.GetInstance()->GetWorldPosition();
+            const float at[3] = {p.GetX(), p.GetY(), p.GetZ()};
+            keep = inside(at);
+        }
+        if (keep) { ++it; continue; }
+        reclaimPause[*it] = now + ReclaimPause;
+        it = reclaimed.erase(it);
+    }
+    if (!on) { inSphereSince.clear(); return; }
+    std::unordered_map<std::string, uint32_t> stillInside;
+    std::vector<std::string> take;
+    for (auto& entry : mirrors) {
+        Mirror const& m = entry.second;
+        if (m.owner <= 1 || m.killed || !m.entity.GetInstance() || (m.latest.flags & 3)) continue;
+        // Not in a fight: a slave holds a tool in its hand all day (stageRoiHold 28.10.: Slave_06 stayed the client's), so the
+        // motions tell, not the hands.
+        if (m.latest.aniState == gEAniState_Parade || m.latest.aniState >= gEAniState_SitKnockDown) continue;
+        if (m.body.combatMoveAt && now - m.body.combatMoveAt < ReclaimCalm) continue;
+        if (const auto name = motionNames.find(m.latest.motion); name != motionNames.end()) {
+            char const* motion = name->second.c_str();
+            if (std::strstr(motion, "Attack") || std::strstr(motion, "Parade") || std::strstr(motion, "Stumble") || std::strstr(motion, "KnockDown") ||
+                std::strstr(motion, "GetUp"))
+                continue;
+        }
+        if (claimedBy.count(entry.first) || hostTaken.count(entry.first)) continue;
+        if (const auto pause = reclaimPause.find(entry.first); pause != reclaimPause.end()) {
+            if (static_cast<int32_t>(now - pause->second) < 0) continue;
+            reclaimPause.erase(pause);
+        }
+        float nearest = 1e30f;
+        for (int k = 0; k < playerCount; ++k) nearest = std::min(nearest, body::Distance(m.latest.position, players[k]));
+        if (nearest > InterestRadius || !inside(m.latest.position)) continue;
+        const auto since = inSphereSince.find(entry.first);
+        const uint32_t from = since != inSphereSince.end() ? since->second : now;
+        stillInside[entry.first] = from;
+        if (now - from >= ReclaimAfter) take.push_back(entry.first);
+    }
+    inSphereSince.swap(stillInside);
+    for (auto const& key : take) {
+        auto it = mirrors.find(key);
+        Mirror& m = it->second;
+        const unsigned owner = m.owner;
+        body::Release(m.entity, m.body);  // its own AI again, here
+        if (m.guarded) m.entity.NPC.DefeatedByPlayer = m.defeatedBefore;
+        if (++reclaims <= 50) Logf("npcs: took back %s from player %u (inside the host's range)", m.entity.GetName().GetText(), owner);
+        mirrors.erase(it);
+        reclaimed.insert(key);
+        inSphereSince.erase(key);
+    }
+}
+
 void HostTick()
 {
     const uint32_t now = net::Now();
-    if (now - lastSend < SendInterval) return;
+    if (now - lastSend < (fastNpcs ? SendInterval : FullEvery)) return;
     lastSend = now;
     if (net::JoinCount() != knownJoins) {  // a new client needs every motion name again
         knownJoins = net::JoinCount();
@@ -362,6 +576,7 @@ void HostTick()
         std::memcpy(players[playerCount++], remotes[id].latest.position, sizeof(float) * 3);
     }
     if (!anyClient || !playerCount) return;
+    Reclaim(players, playerCount);
     SendOwned(hero, players, playerCount);
 }
 
@@ -379,7 +594,7 @@ void OwnTick()
     wasConnected = connected;
     if (!connected || !owning) { owned.clear(); return; }
     const uint32_t now = net::Now();
-    if (now - lastSend < SendInterval) return;
+    if (now - lastSend < (fastNpcs ? SendInterval : FullEvery)) return;
     lastSend = now;
     eCDynamicEntity* hero = gCSession::GetInstance().GetHero();
     if (!hero) return;
@@ -421,7 +636,16 @@ void OfferCompanions(uint32_t now)
         for (uint8_t id = 2; id < net::MaxPlayers; ++id) {
             net::Remote const& r = net::Remotes()[id];
             if (!r.connected || !(r.latest.flags & 1) || r.latest.world != remote::CurrentWorld() || name != r.latest.name) continue;
-            if (!Resolve(reinterpret_cast<uint8_t const*>(key.data())).GetInstance()) break;
+            Entity npc = Resolve(reinterpret_cast<uint8_t const*>(key.data()));
+            if (!npc.GetInstance()) break;
+            // Only near its player: one far away is not processed there and never sent, the claim ran out for want of
+            // snapshots and it was handed over again every 20 s (Gorn some 320 times, playtest 27.10.). The host keeps it
+            // until its player comes close.
+            if (companionNear) {
+                const bCVector& p = npc.GetInstance()->GetWorldPosition();
+                const float at[3] = {p.GetX(), p.GetY(), p.GetZ()};
+                if (body::Distance(at, r.latest.position) > InterestRadius) { ++companionsFar; break; }
+            }
             net::WorldState s{};
             s.kind = 7;  // to player `guard`: this NPC is your companion (from the save)
             std::memcpy(s.guid, key.data(), 16);
@@ -649,6 +873,7 @@ void MirrorTick()
             // Die like the game's scripts let NPCs die. Entity::Kill removed the body from the NPC list (and
             // from view), so a client never showed a corpse.
             const bool first = !m.killed;
+            if (!net::IsHost()) deadOnHost.insert(it->first);
             m.killed = true;  // before SetTask: the AI filter lets the death state run only for killed mirrors
             if (first) m.killedAt = now ? now : 1;
             if (first)
@@ -702,14 +927,98 @@ void MirrorTick()
         const float speed = body::Speed(m.previous.position, m.latest.position, m.previousSent, m.latestSent, m.previousTicks, m.latestTicks);
         auto name = motionNames.find(m.latest.motion);
         if (name != motionNames.end()) LearnSkeleton(m, name->second.c_str());
-        const body::Target target{m.latest.position, m.latest.rotation, m.latest.movementMode,
+        const uint32_t newestBefore = m.body.track.count ? m.body.track.snaps[m.body.track.count - 1].sent : 0;
+        body::Feed(m.body.track, m.latest.position, m.latest.rotation, m.latestSent, m.latestTicks);
+        // QA (Stufe 3.2): how far the mirror stood from where its owner had the NPC (half the round trip before it arrived)
+        if (m.body.track.count && m.body.track.snaps[m.body.track.count - 1].sent != newestBefore && speed > 100.0f)
+            body::NoteTruth(m.body, m.latest.position, m.latestTicks - net::RoundTrip(m.owner) / 2);
+        float shownAt[3], shownTurn[4];
+        const bool buffered = body::interpolate && body::Sample(m.body.track, now, shownAt, shownTurn);
+        const float steady = body::Steadiness(m.body.track, m.body, now);  // also the glide causes (overshoot after a stop or turn)
+        float ahead[3];
+        body::Target target{buffered ? shownAt : m.latest.position, buffered ? shownTurn : m.latest.rotation, m.latest.movementMode,
                                   name != motionNames.end() ? name->second.c_str() : nullptr, speed,
-                                  style && m.latest.aniState ? static_cast<int>(m.latest.aniState) : -1};
+                                  style && m.latest.aniState ? static_cast<int>(m.latest.aniState) : -1,
+                                  body::SteerGoal(m.body.track, now, ahead, buffered ? m.latest.position : nullptr,
+                                                  body::mirrorLead && steady >= 1.0f)};
+        target.actionSeq = m.latest.actionSeq;  // protocol 58
+        target.motionFrac = m.latest.motionFrac;  // protocol 59: where the owner's motion was, and how long ago
+        target.motionAgeMs = now - m.latestTicks + net::RoundTrip(m.owner) / 2;
         m.body.combatMoves = true;  // attacks replay as the game's combat moves (body.cpp)
         body::Drive(m.entity, m.body, target, now);
+        if (m.body.combatMoveAt && now - m.body.combatMoveAt < 1000) {
+            ++swingSamples;
+            Entity weapon = m.entity.Inventory.GetItemFromSlot(gESlot_RightHand);
+            if (weapon.GetInstance() && weapon.GetInstance()->GetPropertySet(eEPropertySetType_Damage) &&
+                static_cast<gEDamageType>(weapon.Damage.DamageType) != gEDamageType_None)
+                ++swingArmed;
+        }
         ++it;
     }
 }
+}
+
+bool MirrorFightsHero()
+{
+    eCEntity* body = remote::ControlledBody();
+    if (!body || !net::LocalId()) return false;
+    const bCVector& p = body->GetWorldPosition();
+    const float at[3] = {p.GetX(), p.GetY(), p.GetZ()};
+    bool any = false, us = false;
+    for (auto const& entry : mirrors) {
+        Mirror const& m = entry.second;
+        if (m.killed || !(m.latest.flags & 4) || (m.latest.flags & 1)) continue;
+        any = true;
+        if (((m.latest.flags >> 3) & 7) != net::LocalId()) continue;
+        us = true;
+        if (body::Distance(m.latest.position, at) <= 3000.0f) {  // HandleMusicSituation's 30 m (SG 0xb4070)
+            ++fightSeenAny, ++fightSeenUs, ++fightSeenNear;
+            return true;
+        }
+    }
+    fightSeenAny += any;
+    fightSeenUs += us;
+    return false;
+}
+
+void FightStats(unsigned& sent, unsigned& seenAny, unsigned& seenUs, unsigned& seenNear)
+{
+    sent = fightSent, seenAny = fightSeenAny, seenUs = fightSeenUs, seenNear = fightSeenNear;
+}
+
+void SwingSamples(unsigned& armed, unsigned& samples)
+{
+    armed = swingArmed;
+    samples = swingSamples;
+}
+
+uint32_t SeenAt(eCEntity const* entity)
+{
+    if (!entity) return 0;
+    for (auto const& entry : mirrors)
+        if (entry.second.entity.GetInstance() == entity && entry.second.latestSent)
+            // With the display buffer the mirror shows the owner's state some BufferDelay older than the newest snapshot.
+            return entry.second.latestSent - (body::interpolate ? static_cast<uint32_t>(body::BufferDelay) : 0u);
+    return 0;
+}
+
+bool ParryingAt(eCEntity const* entity, uint32_t at, bool& parrying)
+{
+    if (!lagBlocks || !entity || !at) return false;
+    uint8_t guid[16];
+    Guid(const_cast<eCEntity*>(entity), guid);
+    const auto it = sentStates.find(Key(guid));
+    if (it == sentStates.end()) return false;
+    // The newest state sent at or before `at` (25 ms leeway for the clock reading), not older than SentStatesFor.
+    int best = -1;
+    for (int i = 0; i < 32; ++i) {
+        const uint32_t t = it->second.at[i];
+        if (!t || static_cast<int32_t>(t - at) > 25 || static_cast<int32_t>(at - t) > static_cast<int32_t>(SentStatesFor)) continue;
+        if (best < 0 || static_cast<int32_t>(t - it->second.at[best]) > 0) best = i;
+    }
+    if (best < 0) return false;
+    parrying = it->second.parrying[best];
+    return true;
 }
 
 void Start() { net::SetNpcHandlers(&OnNpcs, &OnMotionName); }
@@ -791,6 +1100,70 @@ eCEntity* NpcByGuid(uint8_t const guid[16])
     return IsNpc(instance) ? instance : nullptr;
 }
 
+// Our hero's blow on a mirror shows at once (Stufe 1, owner 27.10.): its owner judges it a network round later, and until
+// then the NPC stood unmoved. The mirror plays a short stumble here, only the look: no hit points, no AI. Its motion is
+// one the owner already sent for this skeleton (a stumble's hit motion, of the same weapon stance if one is known), so no
+// name is guessed; with none known yet nothing plays. The owner's own snapshot takes over after LocalHitFor: a parade or
+// a miss there shows as such then.
+bool localHits = true;  // QA negative control: localhitsoff
+bool fallbackStumbles = true;  // a first blow on a skeleton the owner sent no stumble of yet
+constexpr uint32_t LocalHitFor = 350;  // ms
+unsigned localHitsShown = 0, localHitsUnknown = 0;
+std::unordered_map<std::string, std::string> stumbleFor;  // "<skeleton>_<stance>" -> a stumble motion the owner sent
+
+std::string StumbleMotion(char const* skeleton, char const* stance)
+{
+    const std::string key = std::string(skeleton) + "_" + stance;
+    if (auto it = stumbleFor.find(key); it != stumbleFor.end()) return it->second;
+    std::string any, same;
+    const std::string prefix = std::string(skeleton) + "_Stand_";
+    for (auto const& [hash, name] : motionNames) {
+        if (name.compare(0, prefix.size(), prefix) || name.find("Stumble") == std::string::npos || name.find("_Hit_") == std::string::npos) continue;
+        if (name.find("Parade") != std::string::npos) continue;
+        if (any.empty()) any = name;
+        if (*stance && name.find(std::string("_") + stance + "_") != std::string::npos) { same = name; break; }
+    }
+    std::string chosen = same.empty() ? any : same;
+    // None sent yet (a first blow): the stumbles seen in the play evening's logs, 27.10. (Hero without a weapon
+    // StumbleR ..._P0_90, with one QuickStumble ..._P0_90; a waran StumbleR ..._P0_200, used for every other skeleton).
+    if (chosen.empty() && fallbackStumbles) {
+        if (!std::strcmp(skeleton, "Hero") && (!*stance || !std::strcmp(stance, "None")))
+            chosen = "Hero_Stand_None_None_P0_StumbleR_Hit_N_Back_00_%_00_P0_90";
+        else if (!std::strcmp(skeleton, "Hero"))
+            chosen = std::string("Hero_Stand_None_") + stance + "_P0_QuickStumble_Hit_N_Fwd_00_%_00_P0_90";
+        else
+            chosen = std::string(skeleton) + "_Stand_None_Fist_P0_StumbleR_Hit_N_Back_00_%_00_P0_200";
+        return chosen;  // not kept: a name the owner sends later replaces it
+    }
+    if (const size_t dot = chosen.find(".xmot"); dot != std::string::npos) chosen.resize(dot);
+    if (!chosen.empty()) stumbleFor[key] = chosen;
+    return chosen;
+}
+
+void LocalHit(eCEntity* entity)
+{
+    if (!localHits || !entity) return;
+    for (auto& [key, m] : mirrors) {
+        if (m.entity.GetInstance() != entity || m.killed || !*m.skeleton) continue;
+        // The weapon stance from what it shows now (<Skeleton>_<State>_<Sub>_<Weapon>_...), e.g. "1H" of Orc_Stand_None_1H_...
+        char shows[128];
+        body::CurrentMotion(entity, shows, sizeof(shows));
+        char stance[16] = "";
+        int field = 0;
+        for (char const* c = shows; *c && field < 4; ++c) {
+            if (*c == '_') { ++field; continue; }
+            if (field == 3) { const size_t n = std::strlen(stance); if (n + 1 < sizeof(stance)) stance[n] = *c, stance[n + 1] = '\0'; }
+        }
+        const std::string motion = StumbleMotion(m.skeleton, stance);
+        if (motion.empty()) { ++localHitsUnknown; return; }
+        m.entity.StartPlayAni(bCString(motion.c_str()), 0, GEFalse, 1.0f, GEFalse);
+        m.body.localHitAt = net::Now() ? net::Now() : 1;  // its stagger's effect came with our hit (body::staggerEffects)
+        m.body.actionUntil = net::Now() + LocalHitFor;  // Drive leaves the pose alone meanwhile, then the owner's state again
+        if (++localHitsShown < 10) Logf("npcs: our blow on %s shows here at once (%s)", m.entity.GetName().GetText(), motion.c_str());
+        return;
+    }
+}
+
 bool IsMirrored(eCEntity const* entity)
 {
     if (!entity) return false;
@@ -811,6 +1184,13 @@ void OnWorldDeactivate()
     givenBack.clear();
     contested.clear();
     hostTaken.clear();
+    reclaimed.clear();
+    reclaimPause.clear();
+    sentStates.clear();
+    inSphereSince.clear();
+    deadOnHost.clear();
+    lastSent.clear();
+    sending.clear();
 }
 
 void CorpseTick(uint32_t now)
@@ -819,6 +1199,7 @@ void CorpseTick(uint32_t now)
         Mirror& c = it->second;
         c.entity = Resolve(c.latest.guid);
         if (!c.entity.GetInstance()) { ++it; continue; }  // not in this part of the world now; again when it is
+        if (deadStays && !net::IsHost() && deadOnHost.count(it->first) && !mirrors.count(it->first)) KeepDead(c.entity);
         if (!c.entity.IsDead() || mirrors.count(it->first)) { it = corpses.erase(it); continue; }  // alive again, or mirrored now
         LayDown(c, now);
         LateCheck(c, now, c.wasMirror ? "mirror" : "journal");
@@ -963,12 +1344,18 @@ void StoryMoved(uint8_t const guid[16], float const position[3], float const rot
     Logf("npcs: the story moved %s on the host; moved here too", e.GetName().GetText());
 }
 
+bool companionWins = true;  // false: the host takes a client's companion for a guide too (as before 27.10.)
+
 bool HostTake(eCEntity* entity)
 {
     if (!entity || !net::IsHost()) return false;
     uint8_t guid[16];
     Guid(entity, guid);
     const std::string key = Key(guid);
+    // A client's companion stays with its player: taken back here for a guide, its player's snapshots were refused, the claim
+    // ran out and the host handed it over again every 15 s (Gorn guiding the host while the client's companion, playtest 27.10.).
+    if (companionWins)
+        if (const auto c = claimedBy.find(key); c != claimedBy.end() && net::Remotes()[c->second].connected) return false;
     auto it = mirrors.find(key);
     if (it == mirrors.end()) return false;
     const unsigned owner = it->second.owner;
@@ -1000,6 +1387,22 @@ void Mirrored(std::vector<eCEntity*>& out)
 {
     for (auto& [key, m] : mirrors)
         if (m.resolved && !m.missing && !m.killed && m.entity.GetInstance()) out.push_back(m.entity.GetInstance());
+}
+
+bool DeadStays() { return deadStays; }
+
+uint8_t CompanionOwner(eCEntity* entity)
+{
+    if (!entity || claimedBy.empty()) return 0;
+    uint8_t guid[16];
+    Guid(entity, guid);
+    const auto it = claimedBy.find(Key(guid));
+    return it != claimedBy.end() ? it->second : 0;
+}
+
+void NewLife(uint8_t const guid[16])
+{
+    if (newLife && deadOnHost.erase(Key(guid))) Logf("npcs: %s no longer held dead here (it stood up again)", Resolve(guid).GetName().GetText());
 }
 
 bool Claimed(eCEntity const* entity)
@@ -1083,8 +1486,9 @@ void Report(LogFn log)
                   mirror != mirrors.end() ? mirror->second.owner : 0);
         log(line);
     }
-    Format(line, "NPCSYNC claims_refused=%u host_wins=%u host_wins_rule=%d join_refused=%u join_grace=%d contested_refused=%u contested=%zu contest_rule=%d",
-              claimsRefused, hostWins, hostWinsRule ? 1 : 0, joinRefused, joinGraceRule ? 1 : 0, contestedRefused, contested.size(), contestRule ? 1 : 0);
+    Format(line, "NPCSYNC claims_refused=%u host_wins=%u host_wins_rule=%d join_refused=%u join_grace=%d contested_refused=%u contested=%zu contest_rule=%d reclaims=%u reclaim_refused=%u reclaimed=%zu reclaim_rule=%d",
+              claimsRefused, hostWins, hostWinsRule ? 1 : 0, joinRefused, joinGraceRule ? 1 : 0, contestedRefused, contested.size(), contestRule ? 1 : 0,
+              reclaims, reclaimRefused, reclaimed.size(), reclaimRule ? 1 : 0);
     log(line);
 }
 
@@ -1317,5 +1721,20 @@ void DeadPoseReport(LogFn log)
     }
     Format(line, "DEADPOSE enabled=%d laid=%u loops=%u slots_stopped=%u", deadPose ? 1 : 0, corpsesLaid, corpseLoops, slotsStopped);
     log(line);
+}
+// QA negative controls of the play-evening fixes (27.10.): each switches its fix off (on: clientfameon).
+bool Switch(char const* action, LogFn log)
+{
+    if (!std::strcmp(action, "localhitsoff")) { localHits = false; log("SWITCH localhitsoff ok=1"); return true; }
+    if (!std::strcmp(action, "fastnpcsoff")) { fastNpcs = false; log("SWITCH fastnpcsoff ok=1"); return true; }
+    if (!std::strcmp(action, "deadstaysoff")) { deadStays = false; log("SWITCH deadstaysoff ok=1"); return true; }
+    if (!std::strcmp(action, "deadnewlifeoff")) { newLife = false; log("SWITCH deadnewlifeoff ok=1"); return true; }
+    if (!std::strcmp(action, "companionnearoff")) { companionNear = false; log("SWITCH companionnearoff ok=1"); return true; }
+    if (!std::strcmp(action, "hysteresisoff")) { hysteresis = false; log("SWITCH hysteresisoff ok=1"); return true; }
+    if (!std::strcmp(action, "companionwinsoff")) { companionWins = false; log("SWITCH companionwinsoff ok=1"); return true; }
+    if (!std::strcmp(action, "reclaimoff")) { reclaimRule = false; log("SWITCH reclaimoff ok=1"); return true; }
+    if (!std::strcmp(action, "lagblockoff")) { lagBlocks = false; log("SWITCH lagblockoff ok=1"); return true; }
+    if (!std::strcmp(action, "lagblockon")) { lagBlocks = true; log("SWITCH lagblockon ok=1"); return true; }
+    return false;
 }
 }

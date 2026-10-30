@@ -11,4 +11,5 @@ char const* ItemName(int item);
 // Hash the install and read the options; logs one PARITY line per item. Call once before the network starts.
 void Compute();
 uint64_t const* Local();  // ItemCount values, valid after Compute
+char const* OptionsText();  // this install's options in a few words, for a refusal (valid after Compute)
 }

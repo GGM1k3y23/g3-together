@@ -33,4 +33,5 @@ void Waiting(LogFn log);       // QA (stage W7): RECORDWAIT line, whether the pl
 void LoadTicksOff(char const* argument, LogFn log);  // QA stage W6: negative control; hold/release/welcome are deterministic timing probes
 void WorldReport(LogFn log);   // QA: WORLD line
 void Report(LogFn log);  // QA: PERSIST line
+bool Switch(char const* action, LogFn log);  // QA negative controls of the play-evening fixes (27.10.): true if it was one
 }

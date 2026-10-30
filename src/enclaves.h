@@ -44,4 +44,5 @@ void CheatKill(char const* name, LogFn log);
 // QA (stageLiberate): "<enclave>": this machine's hero kills every living member farther than 40 m (as farkill), so that
 // the ones near it are left for the other player; a town flees once fewer than a fifth of its defenders live.
 void TownFarKill(char const* enclave, LogFn log);
+bool Switch(char const* action, LogFn log);  // QA negative controls of the play-evening fixes (27.10.): true if it was one
 }

@@ -137,6 +137,12 @@ bool Corpse(Entity& entity)
     return instance && instance->GetPropertySet(eEPropertySetType_NPC) && entity.IsDead();
 }
 
+// A corpse's plunder (an animal's fur and teeth) is rolled once, by the host, like a chest's: the client rolled its own at
+// every opening, the host's copy stayed empty and nothing was reported, so a wolf could be plundered for ever (playtest
+// 27.10.). false: as before 27.10.
+bool corpsePlunder = true;
+bool Rolled(Entity& entity) { return IsChest(entity) || (corpsePlunder && Corpse(entity)); }
+
 // A stack that is part of the contents: not in a slot (equipped or held).
 bool Counted(Entity& entity, int stack)
 {
@@ -179,6 +185,28 @@ Content Read(Entity& entity)
     return content;
 }
 
+bool merchandise = true;  // a trader's goods are written as merchandise stacks (false: Normal stacks, as before 27.10.)
+
+// A trader's goods as merchandise, as the game fills them: PSInventory::CreateItems makes Normal stacks, which the trade
+// screen does not list for a trader (empty for the client), and which lay as plunder on a knocked-out one (Joey,
+// playtest 27.10.; the same as for puppets, trade.cpp CreateMerchandise). Everything else as Normal stacks.
+void CreateGoods(Entity& entity, std::string const& key, int amount)
+{
+    if (amount <= 0) return;
+    if (merchandise && IsTrader(entity)) {
+        auto* inventory = static_cast<gCInventory_PS*>(entity.GetInstance()->GetPropertySet(eEPropertySetType_Inventory));
+        _GUID raw;
+        std::memcpy(&raw, key.data(), 16);
+        eCTemplateEntityProxy item;
+        item.SetEntity(bCPropertyID(bCGuid(raw)));
+        if (eCTemplateEntity* templ = item.GetEntity(); inventory && templ) {
+            inventory->CreateItems(templ, 0, static_cast<GEU32>(amount), gEStackType_Merchandise);
+            return;
+        }
+    }
+    entity.Inventory.CreateItems(TemplateOf(key), 0, amount);
+}
+
 void Write(Entity& entity, Content const& content)
 {
     // On the host a dying NPC puts what it held into its inventory (a slave's rice), while its mirror here still holds
@@ -204,8 +232,7 @@ void Write(Entity& entity, Content const& content)
     for (int i = entity.Inventory.GetStackCount() - 1; i >= 0; --i)
         if (entity.Inventory.GetSlotFromStack(i) == gESlot_None || (corpse && content.count(TemplateKey(entity, i))))
             entity.Inventory.DeleteStack(i);
-    for (auto const& [key, amount] : content)
-        if (amount > 0) entity.Inventory.CreateItems(TemplateOf(key), 0, amount);
+    for (auto const& [key, amount] : content) CreateGoods(entity, key, amount);
     ++rewrites;
 }
 
@@ -293,6 +320,8 @@ void Broadcast(std::string const& key, Content const& content)
     ++contentsSent;
 }
 
+bool hostFill = true;  // false: the host fills a trader only when a client comes close (as before 27.10.)
+
 void HostTick()
 {
     const DWORD now = GetTickCount();
@@ -320,6 +349,10 @@ void HostTick()
     }
     if (!anyClient) return;
     for (auto it = watched.begin(); it != watched.end();) it = static_cast<int32_t>(it->second - now) < 0 ? watched.erase(it) : ++it;
+    // The host's own dialog partner: a trader a client simulates is a mirror here, and a mirror runs no ZS_Talk, which fills
+    // a trader's goods; it stayed empty for the host (Jens after a quick load, playtest 27.10.).
+    gCInfoManager_PS* infos = gCInfoManager_PS::GetInstance();
+    eCEntity* hostPartner = hostFill && infos && infos->AccessIsRunning() ? infos->GetDialogPartnerNPC() : nullptr;
     const bTObjArray<Entity> all = Entity::GetEntities();
     for (int i = 0; i < all.GetCount(); ++i) {
         Entity entity = all.GetAt(i);
@@ -335,13 +368,14 @@ void HostTick()
         const std::string key = Key(guid);
         // A chest a client comes close to is rolled here before the client can open it: its loot screen then
         // shows the host's contents from the start (the watch on opening stays as a fallback).
-        if (IsChest(entity) && !entity.Inventory.IsGeneratedPlunder()) {
+        if (Rolled(entity) && !entity.Inventory.IsGeneratedPlunder()) {
             bool close = false;
             for (auto const& at : clients) close = close || DistanceTo(instance, at.data()) <= PreRollRadius;
             if (close) {
                 entity.Inventory.GeneratePlunderInvFromTreasureSets();
                 entity.Inventory.SetGeneratedPlunder(GETrue);
-                Logf("containers: a player came close to chest %s, rolled here: %s", entity.GetName().GetText(), Describe(Read(entity)).c_str());
+                Logf("containers: a player came close to %s %s, rolled here: %s", IsChest(entity) ? "chest" : "corpse", entity.GetName().GetText(),
+                     Describe(Read(entity)).c_str());
             }
         }
         // A trader likewise: only the host fills it (a client's dialog runs on the host's NPC and fills nothing, so
@@ -351,10 +385,11 @@ void HostTick()
         bool clientClose = false;
         if (trader)
             for (auto const& at : clients) clientClose = clientClose || DistanceTo(instance, at.data()) <= PreRollRadius;
-        if (trader && clientClose && !traderFillOff && !entity.Inventory.IsGeneratedTrade()) {
+        if (trader && (clientClose || instance == hostPartner) && !traderFillOff && !entity.Inventory.IsGeneratedTrade()) {
             entity.Inventory.GenerateTradeInvFromTreasureSets();
             if (static_cast<GEFloat>(entity.Dialog.EndDialogTimestamp) == 0.0f) entity.Inventory.RefreshTradeInvFromTreasureSets();
-            Logf("containers: a player came close to trader %s, filled here: %s", entity.GetName().GetText(), Describe(Read(entity)).c_str());
+            Logf("containers: %s trader %s, filled here: %s", clientClose ? "a player came close to" : "the host talks with the mirrored",
+                 entity.GetName().GetText(), Describe(Read(entity)).c_str());
         }
         bool wanted = (watched.count(key) && HasInventory(instance)) || IsContainer(entity);  // near a player (above)
         // Its goods go out while a client is close, so the trade screen shows them from the start.
@@ -380,11 +415,10 @@ void OnTx(uint8_t from, uint8_t const guid[16], uint32_t seq, net::ContentEntry 
     if (ok) {
         // All or nothing: every removal is still possible, so apply the whole transaction.
         for (int i = 0; i < count; ++i) {
-            const Template item = TemplateOf(KeyOf(entries[i]));
             if (entries[i].amount < 0) {
                 Remove(container, KeyOf(entries[i]), -entries[i].amount);
             } else if (entries[i].amount > 0) {
-                container.Inventory.CreateItems(item, 0, entries[i].amount);
+                CreateGoods(container, KeyOf(entries[i]), entries[i].amount);  // a trader: what it bought is merchandise
             }
         }
         ++txApplied;
@@ -415,7 +449,7 @@ void OnWatch(uint8_t from, uint8_t const guid[16])
     Note("containers: player %u opened %s (%s); here %s", from, NameOf(chest).c_str(), IsChest(chest) ? "chest" : "trade",
          chest.GetInstance() && HasInventory(chest.GetInstance()) ? Describe(Read(chest)).c_str() : "(not here)");
     // A client opened a chest: its contents are rolled here, once, as if the host had opened it.
-    if (!IsChest(chest) || chest.Inventory.IsGeneratedPlunder()) return;
+    if (!Rolled(chest) || chest.Inventory.IsGeneratedPlunder()) return;
     chest.Inventory.GeneratePlunderInvFromTreasureSets();
     chest.Inventory.SetGeneratedPlunder(GETrue);
     const Content content = Read(chest);
@@ -424,9 +458,24 @@ void OnWatch(uint8_t from, uint8_t const guid[16])
 }
 
 // --- client ---
+bool tradeKeep = true;  // see below (dialogTrade)
+bool tradeBase = true;  // QA negative control tradebaseoff: P1 of the code review 28.10. as before (see HostPlusPending)
+bool tradeSnap = false;  // QA tradesnapon / tradesnapoff (see SnapshotUnknown); off: not proven (29.10.)
 std::unordered_map<std::string, Content> known;  // the host's contents
+// With tradeKeep (stageTradeRace 28.10.): what a container here holds without this player's changes not reported yet, the
+// host's contents plus the transactions sent and not answered yet. The player's own change is "here minus base", never "here
+// minus the host's contents": host goods that changed meanwhile (a trader filled on the host) were reported back as the
+// player's taking them (Map_World -1/+1, 23 transactions back and forth) when the host's contents waited for a result.
+std::unordered_map<std::string, Content> bases;
 std::string active;                              // the container this client's player opened
 DWORD activeSince = 0;
+// Diagnostic (28.10., a client's purchase lost under lag: the trader was set to the host's goods while not "active"): one
+// line whenever the container this client's player has open changes, with why.
+void NoteActive(char const* what, std::string const& key, char const* why)
+{
+    Entity container = Resolve(key);
+    Logf("containers: open container %s %s (%s)", key.empty() ? "-" : NameOf(container).c_str(), what, why);
+}
 struct Pending {
     std::string key;
     Content deltas;  // container side: negative = the hero took, positive = the hero put in
@@ -443,14 +492,42 @@ bool PendingFor(std::string const& key)
     return false;
 }
 
-// What this client's player changed in the open container since the host's last contents: one transaction.
+void AddTo(Content& to, Content const& from, int sign)
+{
+    for (auto const& [name, amount] : from) to[name] += sign * amount;
+    for (auto it = to.begin(); it != to.end();) it = it->second == 0 ? to.erase(it) : ++it;
+}
+
+// The host's contents plus what was sent for this container and is not answered yet, never below 0: a container cannot
+// hold less (code review 28.10., P1: both players bought the last item; the host's contents had it gone, the pending
+// purchase took it once more, -1; the poll then reported the 0 the game holds as the player putting one in, and a refusal
+// counted the host's gold as the player's).
+Content HostPlusPending(std::string const& key)
+{
+    Content content = known.count(key) ? known[key] : Content{};
+    for (auto const& entry : pending)
+        if (entry.second.key == key) AddTo(content, entry.second.deltas, 1);
+    if (tradeBase)
+        for (auto it = content.begin(); it != content.end();) it = it->second < 0 ? content.erase(it) : ++it;
+    return content;
+}
+
+Content BaseOf(std::string const& key)
+{
+    auto it = bases.find(key);
+    return it != bases.end() ? it->second : HostPlusPending(key);
+}
+
+// What this client's player changed in the open container since the host's last contents (with tradeKeep: since its base):
+// one transaction.
 void ReportChange(Entity& container, Content& hostContent)
 {
     const Content local = Read(container);
-    if (local == hostContent) return;
+    const Content from = tradeKeep ? BaseOf(active) : hostContent;
+    if (local == from) return;
     Content deltas;
     for (auto const& [name, amount] : local) deltas[name] += amount;
-    for (auto const& [name, amount] : hostContent) deltas[name] -= amount;
+    for (auto const& [name, amount] : from) deltas[name] -= amount;
     for (auto it = deltas.begin(); it != deltas.end();) it = it->second == 0 ? deltas.erase(it) : ++it;
     const std::vector<net::ContentEntry> entries = Entries(deltas);
     const uint32_t seq = nextSeq;
@@ -463,7 +540,8 @@ void ReportChange(Entity& container, Content& hostContent)
     pending[seq] = Pending{active, deltas, local};
     ++txSent;
     Note("containers: transaction %u sent for %s: %s", seq, NameOf(container).c_str(), Describe(deltas).c_str());
-    hostContent = local;  // optimistic until the result arrives
+    if (tradeKeep) bases[active] = local;  // the host's contents stay the host's
+    else hostContent = local;  // optimistic until the result arrives
 }
 
 void OnContents(uint8_t const guid[16], net::ContentEntry const* entries, int count)
@@ -473,6 +551,41 @@ void OnContents(uint8_t const guid[16], net::ContentEntry const* entries, int co
     const std::string key = Key(guid);
     Entity container = Resolve(guid);
     if (container.GetInstance() && !Shared(container)) return;
+    if (tradeKeep) {
+        // The open container: the host's contents plus what is sent and not answered, plus the player's change not reported
+        // yet (here minus base). Any other: the host's contents plus what is sent and not answered (the game's own drift
+        // goes back, as before).
+        // A change of the player's not reported yet goes out first, as without tradeKeep: folded into the host's contents a
+        // purchase of an item the host's contents no longer hold was lost (the container cannot go below 0), and the hero kept
+        // the item the other player bought too (code review P1, model_tradekeep.py scenario B).
+        const bool first = !known.count(key);
+        const bool based = !first || (tradeSnap && bases.count(key));  // the host's goods, or the snapshot of a trader's first trade
+        if (tradeBase && key == active && container.GetInstance() && based && Read(container) != BaseOf(key)) {
+            Content unused = first ? Content{} : known[key];
+            ReportChange(container, unused);
+        }
+        Content mine;
+        if (key == active && container.GetInstance() && based) {
+            AddTo(mine, Read(container), 1);
+            AddTo(mine, BaseOf(key), -1);
+        }
+        known[key] = FromEntries(entries, count);
+        if (Rolled(container) && !container.Inventory.IsGeneratedPlunder()) container.Inventory.SetGeneratedPlunder(GETrue);
+        bases[key] = HostPlusPending(key);
+        if (key == active && first)
+            Note("containers: host contents of the open %s: %s; here %s", NameOf(container).c_str(), Describe(known[key]).c_str(),
+                 container.GetInstance() ? Describe(Read(container)).c_str() : "(not here)");
+        if (!container.GetInstance()) return;
+        Content want = bases[key];
+        AddTo(want, mine, 1);
+        const Content here = Read(container);
+        if (here != want) {
+            Note("containers: %s%s set to the host's contents%s: %s (was %s)", NameOf(container).c_str(), key == active ? " (open)" : "",
+                 mine.empty() ? "" : " and the player's change", Describe(want).c_str(), Describe(here).c_str());
+            Write(container, want);
+        }
+        return;
+    }
     if (key == active && container.GetInstance() && !PendingFor(key) && known.count(key)) {
         // A change by this player that the poll has not reported yet must not be overwritten (that lost the
         // take and doubled the item): report it against the contents it was made on; the host decides.
@@ -480,7 +593,7 @@ void OnContents(uint8_t const guid[16], net::ContentEntry const* entries, int co
     }
     const bool first = !known.count(key);
     known[key] = FromEntries(entries, count);
-    if (IsChest(container) && !container.Inventory.IsGeneratedPlunder()) container.Inventory.SetGeneratedPlunder(GETrue);
+    if (Rolled(container) && !container.Inventory.IsGeneratedPlunder()) container.Inventory.SetGeneratedPlunder(GETrue);
     if (key == active && first)
         Note("containers: host contents of the open %s: %s; here %s", NameOf(container).c_str(), Describe(known[key]).c_str(),
              container.GetInstance() ? Describe(Read(container)).c_str() : "(not here)");
@@ -488,6 +601,7 @@ void OnContents(uint8_t const guid[16], net::ContentEntry const* entries, int co
     if (container.GetInstance()) {
         const Content here = Read(container);
         if (here != known[key]) {
+            if (key != active) NoteActive("is not", key, active.empty() ? "nothing open" : "another one is open");
             Note("containers: %s%s set to the host's contents: %s (was %s)", NameOf(container).c_str(), key == active ? " (open)" : "",
                  Describe(known[key]).c_str(), Describe(here).c_str());
             Write(container, known[key]);
@@ -500,6 +614,9 @@ void OnTxResult(uint8_t const guid[16], uint32_t seq, bool ok)
     auto it = pending.find(seq);
     if (it == pending.end()) return;
     const Pending done = it->second;
+    // tradeKeep: the container is set to the host's contents (plus the pending, plus the player's change) while it waits, so
+    // the player's own change since is the container against its base (still with this transaction), not against done.after.
+    const Content base = tradeKeep && tradeBase ? BaseOf(done.key) : done.after;
     pending.erase(it);
     Note("containers: transaction %u %s by the host", seq, ok ? "applied" : "refused");
     if (ok) return;
@@ -508,11 +625,11 @@ void OnTxResult(uint8_t const guid[16], uint32_t seq, bool ok)
     // reported yet; the container then follows the host's contents.
     Entity container = Resolve(guid);
     // What the hero changed here since sending counts against the container as it was then, not against host contents that
-    // arrived meanwhile (Codex review R2: with those, a refused take could leave the hero its item).
+    // arrived meanwhile (Codex review R2: with those, a refused take could leave the hero its item); with tradeKeep its base.
     Content undo = done.deltas;
     if (container.GetInstance()) {
         for (auto const& [name, amount] : Read(container)) undo[name] += amount;
-        for (auto const& [name, amount] : done.after) undo[name] -= amount;
+        for (auto const& [name, amount] : base) undo[name] -= amount;
     }
     if (eCDynamicEntity* hero = gCSession::GetInstance().GetHero()) {
         Entity self(hero);
@@ -528,13 +645,69 @@ void OnTxResult(uint8_t const guid[16], uint32_t seq, bool ok)
         ++reverted;
     }
     auto host = known.find(done.key);
-    if (container.GetInstance() && host != known.end()) Write(container, host->second);
+    if (tradeKeep) {
+        // Undone above (the hero), so the container holds the host's contents plus what is still sent and not answered.
+        bases[done.key] = HostPlusPending(done.key);
+        if (container.GetInstance()) Write(container, bases[done.key]);
+    } else if (container.GetInstance() && host != known.end()) {
+        Write(container, host->second);
+    }
     Logf("containers: transaction %u refused by the host; undone", seq);
+}
+
+bool dialogTrade = true;  // false: a dialog's trade is not reported (as before 27.10.)
+// While the trade screen with a trader is open, that trader stays this client's open container, however far its copy here
+// stands and however long it is open (stageTradeAgain 28.10. under NETSIM: Hamlar's copy 18 m from the hero, so the 8-m rule
+// let him go and the dialog trade set him again in every poll; host goods arriving in between set him back to the host's,
+// and a purchase not yet reported was lost: evening run scene 14). On (stageTradeRace 28.10.: tradekeepoff lost 3 of 6 purchases,
+// with it 6 of 6 arrived; stageTrade, stageNpcBuy, stageQuickLoot, stageChest green). QA tradekeepon / tradekeepoff (declared above).
+// QA (reproducing scene 14): the poll reports a change of the open container only once it is ReportDelay old, so that host
+// goods arriving meanwhile meet a purchase not yet reported (the window is otherwise a few ms). Off by default.
+bool reportDelay = false;
+constexpr DWORD ReportDelay = 600;  // ms
+DWORD changeSince = 0;
+unsigned dialogTrades = 0;
+
+// The trade screen of a dialog seen every frame, not only in the 250-ms poll (29.10., stageAbend: opened, bought and closed within
+// one poll, the trader never became the open container and the purchase stayed on the client). Once it is the open container,
+// the poll reports the change, also after the screen closed. QA tradeframeon / tradeframeoff. Off by default: stageTradeQuick
+// 29.10. lost the same with and without it; the purchase of stageAbend fell on the tutorial page the game shows at a player's
+// first trade (page 15, not the trade page 5), which a player closes before buying.
+bool tradeFrame = false;
+// A trader whose goods this client does not know yet (its first trade): its copy here as it was when it became the open
+// container is the base, so a purchase before the host's goods arrive is reported against it (29.10. stageTradeQuick: the
+// host's goods came 0.6 s after the screen opened and overwrote the purchase; the hero kept the item, its gold was gone, the
+// host never heard of it; seen once, in run 20261029-060453). Not reproduced on purpose since (the purchase came after the
+// host's goods), so off by default: QA tradesnapon (tradeSnap, declared above).
+
+void SnapshotUnknown(Entity& container)
+{
+    if (tradeSnap && tradeKeep && !known.count(active) && container.GetInstance()) bases[active] = Read(container);
+}
+
+void DialogTradeFrame(DWORD now)
+{
+    gCGUIManager* guiManager = gCSession::GetInstance().GetGUIManager();
+    gCInfoManager_PS* infos = gCInfoManager_PS::GetInstance();
+    eCEntity* partner = guiManager && infos && guiManager->GetActivePage() == gEGamePage_Trade ? infos->GetDialogPartnerNPC() : nullptr;
+    Entity trader(partner);
+    if (!partner || remote::PuppetOwner(partner) || !IsTrader(trader)) return;
+    uint8_t guid[16];
+    GuidOf(partner, guid);
+    if (Key(guid) == active) return;
+    active = Key(guid);
+    activeSince = now;
+    SnapshotUnknown(trader);
+    NoteActive("set", active, "dialog trade, frame");
+    net::SendWatch(guid);
+    ++dialogTrades;
+    Logf("containers: trading with %s (dialog trade seen in its frame, host goods known=%d)", trader.GetName().GetText(), known.count(active) ? 1 : 0);
 }
 
 void ClientTick()
 {
     const DWORD now = GetTickCount();
+    if (dialogTrade && tradeFrame && net::Connected() && gCSession::GetInstance().GetHero()) DialogTradeFrame(now);
     if (now - lastClientPoll < 250) return;
     lastClientPoll = now;
     eCEntity* hero = gCSession::GetInstance().GetHero();
@@ -555,19 +728,67 @@ void ClientTick()
             if (Key(guid) != active) {
                 active = Key(guid);
                 activeSince = now;
+                NoteActive("set", active, "chest interaction");
                 net::SendWatch(guid);
                 Logf("containers: opened %s (%s, host contents known=%d)", chest.GetName().GetText(), state, known.count(active) ? 1 : 0);
+            }
+        }
+    }
+    // A trade from a dialog (info command DoTrade) opens the trade screen without PlayerOpenTrade, so Opened never ran: the
+    // client's purchases and sales were never sent, and every 2 s the trader was set back to the host's goods (playtest
+    // 27.10.: Gelford 233 times "drifted", an endless stock). While the trade screen is open, the dialog partner is this
+    // client's open container, and the poll below reports what changed as a transaction.
+    bool trading = false;  // the trade screen with the open container is up (tradeKeep)
+    if (dialogTrade) {
+        gCGUIManager* guiManager = gCSession::GetInstance().GetGUIManager();
+        gCInfoManager_PS* infos = gCInfoManager_PS::GetInstance();
+        eCEntity* partner = guiManager && infos && guiManager->GetActivePage() == gEGamePage_Trade ? infos->GetDialogPartnerNPC() : nullptr;
+        Entity trader(partner);
+        if (partner && !remote::PuppetOwner(partner) && IsTrader(trader)) {
+            uint8_t guid[16];
+            GuidOf(partner, guid);
+            if (tradeKeep && Key(guid) == active) {
+                trading = true;
+                activeSince = now;  // open as long as the screen is
+            }
+            if (Key(guid) != active) {
+                active = Key(guid);
+                activeSince = now;
+                trading = tradeKeep;
+                SnapshotUnknown(trader);
+                NoteActive("set", active, "dialog trade");
+                net::SendWatch(guid);
+                ++dialogTrades;
+                static std::string lastLogged;  // once per trader in a row (a trader far from the hero is let go every poll)
+                if (lastLogged != active) Logf("containers: trading with %s (dialog trade, host goods known=%d)", trader.GetName().GetText(), known.count(active) ? 1 : 0);
+                lastLogged = active;
             }
         }
     }
     if (!active.empty()) {
         Entity container = Resolve(active);
         auto host = known.find(active);
-        if (container.GetInstance() && host != known.end() && !PendingFor(active)) ReportChange(container, host->second);
+        bool hold = false;
+        if (reportDelay && container.GetInstance() && host != known.end()) {
+            if (Read(container) == host->second) changeSince = 0;
+            else if (!changeSince) changeSince = now ? now : 1;
+            hold = changeSince && now - changeSince < ReportDelay;
+        }
+        if (!hold && container.GetInstance() && host != known.end() && !PendingFor(active)) {
+            ReportChange(container, host->second);
+            changeSince = 0;
+        }
         // Only after reporting what changed: the player walked away, or the container is gone.
         const bCVector& h = hero->GetWorldPosition();
         const float at[3] = {h.GetX(), h.GetY(), h.GetZ()};
-        if (!container.GetInstance() || DistanceTo(container.GetInstance(), at) > 800.0f || now - activeSince > 120000) active.clear();
+        if (!container.GetInstance() || (!trading && (DistanceTo(container.GetInstance(), at) > 800.0f || now - activeSince > 120000))) {
+            char why[64];
+            if (!container.GetInstance()) Format(why, "gone");
+            else if (DistanceTo(container.GetInstance(), at) > 800.0f) Format(why, "%.0f m away", DistanceTo(container.GetInstance(), at) / 100.0f);
+            else Format(why, "open %lu s", (now - activeSince) / 1000);
+            NoteActive("cleared", active, why);
+            active.clear();
+        }
     }
     if (now - lastResync < 2000) return;
     lastResync = now;
@@ -577,16 +798,17 @@ void ClientTick()
     const bTObjArray<Entity> all = Entity::GetEntities();
     for (int i = 0; i < all.GetCount(); ++i) {
         Entity entity = all.GetAt(i);
-        if (entity.GetInstance() && DistanceTo(entity.GetInstance(), at) <= InterestRadius && IsChest(entity) && !entity.Inventory.IsGeneratedPlunder())
+        if (entity.GetInstance() && DistanceTo(entity.GetInstance(), at) <= InterestRadius && Rolled(entity) && !entity.Inventory.IsGeneratedPlunder())
             entity.Inventory.SetGeneratedPlunder(GETrue);
     }
     // Anything else that drifted from the host's contents (a corpse rolling its own plunder) is put back.
-    for (auto const& [key, content] : known) {
+    for (auto const& [key, host] : known) {
         if (key == active) continue;
         Entity container = Resolve(key);
         // Far ones are skipped, not forgotten: the host sends a container again only when it changes.
         if (!container.GetInstance() || DistanceTo(container.GetInstance(), at) > InterestRadius) continue;
         const Content here = Read(container);
+        const Content content = tradeKeep ? HostPlusPending(key) : host;  // what was sent and not answered stays
         if (here == content) continue;
         Note("containers: %s drifted; set back to the host's contents: %s (was %s)", NameOf(container).c_str(), Describe(content).c_str(),
              Describe(here).c_str());
@@ -610,6 +832,7 @@ void Opened(gCScriptProcessingUnit* spu, GELPVoid other, bool trade)
     GuidOf(partner.GetInstance(), guid);
     active = Key(guid);
     activeSince = GetTickCount();
+    NoteActive("set", active, trade ? "trade opened" : "loot opened");
     auto host = known.find(active);
     Note("containers: this player opened %s (%s); here %s; host %s", NameOf(partner).c_str(), trade ? "trade" : "loot",
          Describe(Read(partner)).c_str(), host == known.end() ? "not known yet" : Describe(host->second).c_str());
@@ -669,6 +892,7 @@ GEBool __fastcall QuickTake(PSInventory* self, void*, GEInt stack, GEInt amount,
             }
             active = key;
             activeSince = GetTickCount();
+            NoteActive("set", active, "quick loot");
             Note("containers: quick loot from %s; host %s", NameOf(container).c_str(), Describe(known[key]).c_str());
         }
         ++quickTakes;
@@ -766,7 +990,9 @@ void OnWorldChange()
     // Kept, a client compared the reloaded container with its old copy and reported the difference as a deposit
     // (Codex review R5). Changes count again from the host's first contents in the new world.
     known.clear();
+    bases.clear();
     pending.clear();
+    if (!active.empty()) NoteActive("cleared", active, "world change");
     active.clear();
     lastSent.clear();
     watched.clear();
@@ -970,6 +1196,20 @@ void TradeOpen(char const* argument, LogFn log)
     log(line);
 }
 
+// QA (stageNpcBuy): the trade screen the way a dialog's DoTrade opens it, gCGUIManager::BeginTrade, not PlayerOpenTrade
+// (whose hook makes the trader the open container by itself): during a dialog with the trader.
+void TradeBegin(char const* argument, LogFn log)
+{
+    char const* unused = nullptr;
+    Entity trader = Target(argument, &unused);
+    gCGUIManager* guiManager = gCSession::GetInstance().GetGUIManager();
+    if (!guiManager || !trader.GetInstance()) { log("REFUSED tradebegin: no GUI or trader"); return; }
+    const GEBool ok = guiManager->BeginTrade(trader.GetInstance());
+    char line[200];
+    Format(line, "TRADEBEGIN trader=%s ok=%d page=%d", trader.GetName().GetText(), ok ? 1 : 0, static_cast<int>(guiManager->GetActivePage()));
+    log(line);
+}
+
 // QA: buy one piece (the first non-gold stack, or the named template) and pay its gold value, as the trade
 // screen moves the item one way and the gold the other.
 void TradeBuy(char const* argument, LogFn log)
@@ -1141,5 +1381,22 @@ void Chests(LogFn log)
     for (auto const& [distance, line] : found) log(line.c_str());
     const std::string end = "CHESTS end count=" + std::to_string(found.size());
     log(end.c_str());
+}
+// QA negative controls of the play-evening fixes (27.10.): each switches its fix off (on: clientfameon).
+bool Switch(char const* action, LogFn log)
+{
+    if (!std::strcmp(action, "dialogtradeoff")) { dialogTrade = false; log("SWITCH dialogtradeoff ok=1"); return true; }
+    if (!std::strcmp(action, "tradekeepoff")) { tradeKeep = false; log("SWITCH tradekeepoff ok=1"); return true; }
+    if (!std::strcmp(action, "tradekeepon")) { tradeKeep = true; log("SWITCH tradekeepon ok=1"); return true; }
+    if (!std::strcmp(action, "tradebaseoff")) { tradeBase = false; log("SWITCH tradebaseoff ok=1"); return true; }
+    if (!std::strcmp(action, "tradeframeoff")) { tradeFrame = false; log("SWITCH tradeframeoff ok=1"); return true; }
+    if (!std::strcmp(action, "tradesnapoff")) { tradeSnap = false; log("SWITCH tradesnapoff ok=1"); return true; }
+    if (!std::strcmp(action, "tradesnapon")) { tradeSnap = true; log("SWITCH tradesnapon ok=1"); return true; }
+    if (!std::strcmp(action, "tradeframeon")) { tradeFrame = true; log("SWITCH tradeframeon ok=1"); return true; }
+    if (!std::strcmp(action, "tradereportdelayon")) { reportDelay = true; log("SWITCH tradereportdelayon ok=1"); return true; }
+    if (!std::strcmp(action, "corpseplunderoff")) { corpsePlunder = false; log("SWITCH corpseplunderoff ok=1"); return true; }
+    if (!std::strcmp(action, "hostfilloff")) { hostFill = false; log("SWITCH hostfilloff ok=1"); return true; }
+    if (!std::strcmp(action, "merchandiseoff")) { merchandise = false; log("SWITCH merchandiseoff ok=1"); return true; }
+    return false;
 }
 }

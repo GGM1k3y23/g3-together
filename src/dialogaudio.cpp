@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "dialogaudio.h"
 
+#include "config.h"
 #include "log.h"
 #include "net.h"
 #include "remote.h"
@@ -85,6 +86,7 @@ char lastSubtitle[96] = "-";
 // Dialog options (phase 5 level 2, owner 25.10. "A"): the one who talks chooses; a listener nearby sees the options of the
 // speaker's menu in the dialog's subtitle box, and then what was chosen (the hero's line, as a subtitle above).
 bool options = true;  // QA negative control: optionsoff
+bool optionsForced = false;  // QA optionsboxon: the menu box although listener_textbox is off (the old QA stages)
 std::string sentOptions;  // speaker: the menu last sent ("" none)
 struct Menu {
     uint8_t speakerKind = 0;
@@ -344,6 +346,7 @@ void ShowMenu(uint8_t from)
     eCEntity* puppet = remote::PuppetOf(from);
     eCEntity* at = npc ? npc : puppet;
     if (!options || !hero || !puppet || !at || OwnDialog() || Distance(hero, at) > StartRange) return;
+    if (!GetConfig().listenerTextbox && !optionsForced) return;  // listener_textbox off: the spoken lines only, as subtitles
     if (!eCApplication::GetInstance().GetEngineSetup().ShowSubtitle) return;
     std::wstring text;
     wchar_t name[64] = {};
@@ -550,5 +553,13 @@ void MuteGame(char const* on, LogFn log)
     char line[80];
     Format(line, "MUTEGAME ok=%d muted=%d", master ? 1 : 0, mute ? 1 : 0);
     log(line);
+}
+}
+
+namespace g3t::dialogaudio {
+bool Switch(char const* action, LogFn log)
+{
+    if (!std::strcmp(action, "optionsboxon")) { optionsForced = true; log("SWITCH optionsboxon ok=1"); return true; }
+    return false;
 }
 }

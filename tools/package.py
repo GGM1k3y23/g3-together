@@ -1,9 +1,11 @@
 """Build a player package: the mod DLL, the setup (Setup.cmd, Einrichten.cmd, Instalacja.cmd, tools/setup.ps1), example configuration,
 the player guides, the test plan, the log collector and the licences.
 
-    python tools/package.py <built Script_G3Together.dll> <output folder>
+    python tools/package.py <built Script_G3Together.dll> <output folder> [<steam_api.dll>]
 
-Writes <output folder>/G3Together-<git hash>.zip. Contains no game files.
+Writes <output folder>/G3Together-<git hash>.zip. Contains no game files. With a steam_api.dll (Valve's 32-bit one from the
+Steamworks.NET Standalone release 2025.164.1, checked by its SHA-256) it goes in as G3Together/steam_api.dll for
+transport = steam; without it the setup offers to download that file.
 """
 import hashlib
 import subprocess
@@ -12,11 +14,16 @@ import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+STEAM_DLL_SHA256 = 'fdafb7c65ec7d4182b42bf92cc8671c68e4dc547cc6e613899d2618a47eb65da'
 
 HOST_INI = """# G3 Together: this player hosts the campaign.
+# This package speaks protocol 59: both players need this same package (older ones are refused).
 role = host
 port = 34567
 name = Host
+# Connection: udp (by address: IP, Hamachi, ZeroTier, Tailscale) or steam (Steam friends find this game over Steam; needs
+# G3Together/steam_api.dll, see PLAYING.md). Over Steam the UDP port stays open for players with an address.
+transport = udp
 # Mod messages only: auto (the language of your Gothic 3 texts), en, de or pl; without this line: en.
 # Each player can choose independently.
 language = auto
@@ -25,15 +32,45 @@ partner_key = PAGEDOWN
 # Keys that accept / decline the other player's trade offer (same names; the mod warns if two of these keys are the same)
 offer_accept_key = INSERT
 offer_decline_key = DELETE
+# Keys that raise / lower your own price in a trade window with the other player (Shift: 100 gold a press)
+price_up_key = NUMPLUS
+price_down_key = NUMMINUS
 # Your own look for the other players (a character template such as Diego; default: their puppet_template)
 # look = Diego
 # For a bug report about NPCs: remove the # below, restart, reproduce (writes g3trace.log, see PLAYING.md)
 # trace = on
 # Town reputation: shared (one record per town for both; default), together (shared guilt), personal (each their own)
 # reputation = shared
+# How far around the host its game runs the world, in cm (default 8000; the game itself uses 4000). Larger keeps the
+# NPCs near the other player on this PC longer, so they change hands less often.
+# host_roi = 8000
+# Recommended for co-op (off by default): elastic makes the host run the world around both players while they are within
+# its view distance, so the NPCs near the other player stay on this PC. Remove the # to use it; off is the previous behaviour.
+# host_sim = elastic
+# Or spheres (off by default): the host runs a sphere of host_roi around each player instead of one around both; the same
+# limit (the host's view distance), less work between the players.
+# host_sim = spheres
+# auto (default) shows the other player where they probably are now, not where their last state came from (a little ahead
+# along their movement); off as before. Each player decides for their own screen.
+# puppet_lead = off
+# on (default) shows the other player's and the NPCs' blows from where they are at the sender, not from their start; off as
+# before. Each player decides for their own screen.
+# motion_seek = off
+# While you listen to the other player's dialog you see the spoken lines as subtitles; on also shows their answers in a box.
+# listener_textbox = on
+# Balance (both players need the same values, the join compares them): friendly_fire = percent of the damage players and
+# their companions deal to each other (0-100, default 20); npc_damage and npc_hp = factors on the damage NPCs deal and on
+# how much NPCs endure (0.1-10, default 1.0; companions excepted).
+# friendly_fire = 20
+# npc_damage = 1.0
+# npc_hp = 1.0
 """
 CLIENT_INI = """# G3 Together: this player joins the host.
+# This package speaks protocol 59: both players need this same package (older ones are refused).
 role = client
+# Connection: udp (by address) or steam (finds the host among your Steam friends; then the address is only the fallback
+# for a PC without Steam). With several friends hosting: steam_host = <their Steam name>.
+transport = udp
 address = 127.0.0.1
 port = 34567
 name = Player
@@ -43,15 +80,35 @@ language = auto
 partner_key = PAGEDOWN
 offer_accept_key = INSERT
 offer_decline_key = DELETE
+# Keys that raise / lower your own price in a trade window with the other player (Shift: 100 gold a press)
+price_up_key = NUMPLUS
+price_down_key = NUMMINUS
 # Your own look for the other players (a character template such as Diego; default: their puppet_template)
 # look = Diego
 # For a bug report about NPCs: remove the # below, restart, reproduce (writes g3trace.log, see PLAYING.md)
 # trace = on
+# auto (default) shows the other player where they probably are now, not where their last state came from (a little ahead
+# along their movement); off as before. Each player decides for their own screen.
+# puppet_lead = off
+# on (default) shows the other player's and the NPCs' blows from where they are at the sender, not from their start; off as
+# before. Each player decides for their own screen.
+# motion_seek = off
+# While you listen to the other player's dialog you see the spoken lines as subtitles; on also shows their answers in a box.
+# listener_textbox = on
+# Balance (both players need the same values, the join compares them): friendly_fire = percent of the damage players and
+# their companions deal to each other (0-100, default 20); npc_damage and npc_hp = factors on the damage NPCs deal and on
+# how much NPCs endure (0.1-10, default 1.0; companions excepted).
+# friendly_fire = 20
+# npc_damage = 1.0
+# npc_hp = 1.0
 """
 
 
 def main():
     dll, out = Path(sys.argv[1]), Path(sys.argv[2])
+    steam_dll = Path(sys.argv[3]) if len(sys.argv) > 3 else None
+    if steam_dll and hashlib.sha256(steam_dll.read_bytes()).hexdigest() != STEAM_DLL_SHA256:
+        sys.exit(f'{steam_dll} is not the tested steam_api.dll (SHA-256 {STEAM_DLL_SHA256})')
     out.mkdir(parents=True, exist_ok=True)
     version = subprocess.run(['git', '-C', str(ROOT), 'rev-parse', '--short', 'HEAD'], capture_output=True, text=True).stdout.strip() or 'dev'
     target = out / f'G3Together-{version}.zip'
@@ -69,9 +126,13 @@ def main():
         for launcher in ('Setup.cmd', 'Einrichten.cmd', 'Instalacja.cmd'):
             z.write(ROOT / launcher, launcher)
         z.write(ROOT / 'COPYING', 'COPYING')
+        z.write(ROOT / 'COPYING.STEAMWORKS', 'COPYING.STEAMWORKS')  # GPLv3 section 7: the Steamworks API library
         enet = ROOT / 'thirdparty/enet/LICENSE'
         if enet.exists():
             z.write(enet, 'licenses/ENet-LICENSE')
+        z.write(ROOT / 'thirdparty/licenses/jericho-coop-LICENSE', 'licenses/JerichoCoop-LICENSE')  # steam.cpp is adapted from it
+        if steam_dll:
+            z.write(steam_dll, 'G3Together/steam_api.dll')
     digest = hashlib.sha256(target.read_bytes()).hexdigest()
     print(f'{target} sha256={digest} dll_sha256={hashlib.sha256(dll.read_bytes()).hexdigest()}')
 

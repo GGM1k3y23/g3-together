@@ -17,4 +17,5 @@ void Disable(LogFn log);  // QA negative control: lines are neither sent nor pla
 void MuteGame(char const* on, LogFn log);  // QA listening test: "1" silences this game (master group), "0" restores it
 void SubtitlesOff(LogFn log);              // QA negative control (subtitlesoff): lines play without their text
 void OptionsOff(LogFn log);                // QA negative control (optionsoff): a dialog's menu is neither sent nor shown
+bool Switch(char const* action, LogFn log);  // QA optionsboxon (the menu box although listener_textbox is off); true if it was
 }

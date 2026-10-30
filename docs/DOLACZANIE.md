@@ -56,20 +56,25 @@ Jeśli twoja gra w ogóle nie może połączyć się z hostem, po około 15 seku
 z adresem i portem z twojego INI (w grze: komunikat co 30 sekund). Sprawdź, czy gra hosta działa, adres i port oraz zaporę
 u hosta. Mod próbuje dalej; gdy połączy się z hostem, wiersz wraca do normy.
 
+**Przez Steam** (`transport = steam`, eksperymentalnie, zob. [GRANIE.md](GRANIE.md#przez-steam-eksperymentalnie)): adres
+nie jest potrzebny. Twoja gra szuka hosta wśród twoich znajomych na Steam; dopóki go nie znajdzie, po około 15 sekundach
+mówi o tym górny wiersz menu głównego. Host musi być na twojej liście znajomych na Steam i mieć uruchomiony Steam i grę.
+
 ## Podczas gry
 
 - Gdy leżysz powalony, poczekaj na drugiego gracza. Połączony gracz w tym samym świecie może pomóc ci wstać: rozmawia
   z tobą i wybiera „Pomogę ci.”. Kosztuje go to miksturę leczniczą. Bez mikstury leżysz, dopóki jej nie zdobędzie. Jeśli
   wszyscy leżą albo jesteś sam, giniesz jak w grze dla jednego gracza: koniec gry, potem wczytaj zapis.
 - Noś mikstury lecznicze dla drugiego gracza.
-- Dalej niż około 35 m od hosta widzisz **„Daleko od hosta”**; bliżej niż około 25 m: **„Znów w pobliżu hosta.”**
+- Okolica każdego gracza działa na jego komputerze i jest taka sama dla obu, więc odległość od hosta nie wywołuje
+  komunikatu. Gdy drugi gracz jest w innym świecie, widzisz **„Gracz <nazwa> jest w innym świecie.”**
 - **Page Down** stawia cię tuż za drugim graczem, także gdy leży powalony. Można go użyć raz na pięć sekund. Aby wybrać
   inny klawisz, ustaw w INI `partner_key = F9` (F1–F24, PAGEUP, HOME, END, INSERT, DELETE albo litera; Insert i Delete to
   klawisze handlu, chyba że je zmienisz).
 - Drugi gracz jest zaznaczony na twojej mapie i kompasie.
 - Drugi gracz widzi twoją zbroję i hełm. `look = Diego` w twoim INI pokazuje cię jako inną postać.
 - Handel z drugim graczem: porozmawiaj z jego postacią, „Pokaż mi swoje towary.”; on potwierdza klawiszem Insert (Delete
-  odrzuca). Inne klawisze: `offer_accept_key` i `offer_decline_key` w INI; mod ostrzega przy starcie, jeśli dwa twoje
+  odrzuca). Własną cenę ustawiasz w otwartym oknie handlu klawiszami Num+ / Num− (z Shift co 100). Inne klawisze: `offer_accept_key` i `offer_decline_key` w INI; mod ostrzega przy starcie, jeśli dwa twoje
   klawisze są takie same.
 - Kampanię zapisuje host.
 - Problemy i obejścia: **Znane problemy** w [pełnym poradniku](GRANIE.md).

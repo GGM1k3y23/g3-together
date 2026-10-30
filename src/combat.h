@@ -28,6 +28,10 @@ void KillHero(char const* guid, LogFn log); // QA stage A: OnCheatKill on the he
 void HitPuppetBy(char const* guid, LogFn log);  // QA stage A: an NPC hits player 2's puppet on the host
 void FleeFrom(char const* guid, LogFn log);     // QA stage V5: an NPC flees from player 2's puppet; FLEE line with its attitude
 void Report(LogFn log);                    // QA: HP of the local hero and counters
+// The game's IsInParadeMode (SG+d870: AniState parade and the parade held), for the parades sent (npcs.cpp, Stufe 3.3).
+bool InParadeMode(eCEntity* entity);
+// QA (Stufe 4.1): foreignjudgeskipon / foreignjudgeskipoff; true if it was one of them.
+bool Switch(char const* action, LogFn log);
 void Uninstall(LogFn log);                  // QA negative control: let every hit through
 void PuppetParadeOff(LogFn log);  // QA negative control: a parrying puppet blocks on the judging machine, as before
 void ParadeReport(LogFn log);

@@ -5,6 +5,7 @@
 
 #include "log.h"
 #include "parity.h"
+#include "steam.h"
 
 #include <cmath>
 #include <cstdio>
@@ -12,7 +13,7 @@
 
 namespace g3t::net {
 namespace {
-constexpr uint16_t ProtocolVersion = 56;  // 56: EnclavePolitical (a freed town's political crime for the other heroes, enclaves.cpp); 55: world state kind 18 (an NPC remembers a fight with the other player, fightmem.cpp); 54: world state kind 17 (the epilogue for everyone, ending.cpp), the hero's chapter as a story event; 53: world state kind 16 (an NPC with an important info walks up to a client, address.cpp); 52: world state kind 15 (a dialog partner's gestures); 51: dialog options for the listener (DialogLineNote kinds 3, 4); 50: WitnessJudge (witness op 3, P7); 49: world state kind 14 (respawn rolls); 48: HitNpcMsg.outcome (knock-outs by another machine's player), EnclaveCredit; 47: robbery (MsgRansack 34, gold and flag bit 4 in PlayerState), witnesses (MsgWitness 35), subtitles (DialogLineNote.text); 46: item quality in goods and offers; 45: send times in PlayerState and NpcsHeader (glide), armor/helmet/look, MsgGoods (31) and A's offers (32, 33); 36: MsgSummon; 37: MsgShot; 38: spell projectiles, MsgPlayerSpell; 39: MsgNpcSpell; 40: creatures; 41: town reputation (MsgEnclave); 42: world gate (MsgWorld); 43: MsgDialogLine; 44: up to 250 container entries
+constexpr uint16_t ProtocolVersion = 59;  // 59: motion progress (PlayerState.motionFrac, NpcRecord.motionFrac); 58: action numbers (PlayerState.actionSeq/actionMs, NpcRecord.actionSeq); 57: HitNpcMsg.seen (lag-compensated block, Stufe 3.3); 56: EnclavePolitical (a freed town's political crime for the other heroes, enclaves.cpp); 55: world state kind 18 (an NPC remembers a fight with the other player, fightmem.cpp); 54: world state kind 17 (the epilogue for everyone, ending.cpp), the hero's chapter as a story event; 53: world state kind 16 (an NPC with an important info walks up to a client, address.cpp); 52: world state kind 15 (a dialog partner's gestures); 51: dialog options for the listener (DialogLineNote kinds 3, 4); 50: WitnessJudge (witness op 3, P7); 49: world state kind 14 (respawn rolls); 48: HitNpcMsg.outcome (knock-outs by another machine's player), EnclaveCredit; 47: robbery (MsgRansack 34, gold and flag bit 4 in PlayerState), witnesses (MsgWitness 35), subtitles (DialogLineNote.text); 46: item quality in goods and offers; 45: send times in PlayerState and NpcsHeader (glide), armor/helmet/look, MsgGoods (31) and A's offers (32, 33); 36: MsgSummon; 37: MsgShot; 38: spell projectiles, MsgPlayerSpell; 39: MsgNpcSpell; 40: creatures; 41: town reputation (MsgEnclave); 42: world gate (MsgWorld); 43: MsgDialogLine; 44: up to 250 container entries
 enum : uint8_t { MsgHello = 1, MsgWelcome = 2, MsgState = 3, MsgLeave = 4, MsgNpcs = 5, MsgMotionName = 6, MsgHitNpc = 7, MsgHitPlayer = 8, MsgStates = 9, MsgTalk = 10, MsgItem = 11, MsgContents = 12, MsgContainerTx = 13, MsgTxResult = 14, MsgWatch = 15, MsgKilled = 16, MsgRefused = 17, MsgDeath = 18, MsgCampaign = 19, MsgFileChunk = 20, MsgFileDone = 21, MsgClock = 22, MsgWorldState = 23, MsgSummon = 24, MsgShot = 25, MsgPlayerSpell = 26, MsgNpcSpell = 27, MsgEnclave = 28, MsgWorld = 29, MsgDialogLine = 30, MsgGoods = 31 };
 // UDP payload per datagram (ENet default 1392 = up to 1420-byte IP packets): VPNs such as Hamachi carry about 1400, so
 // stay well below (C, re/findings/hamachi-net-c.md, 21.10.). ENet splits larger messages into fragments of this size.
@@ -33,7 +34,7 @@ struct Leave { uint8_t type; uint8_t id; };
 struct NpcsHeader { uint8_t type; uint32_t sequence; uint32_t sent; uint8_t count; uint8_t owner; };
 struct MotionNameMsg { uint8_t type; uint32_t hash; char name[96]; };
 // to: the player who applies it (the NPC's owner, the hit player); from: who sent it (set by the host).
-struct HitNpcMsg { uint8_t type; uint8_t guid[16]; int32_t delta; uint8_t weapon[16]; uint8_t to; uint8_t from; uint8_t npc[16]; uint8_t outcome; };
+struct HitNpcMsg { uint8_t type; uint8_t guid[16]; int32_t delta; uint8_t weapon[16]; uint8_t to; uint8_t from; uint8_t npc[16]; uint8_t outcome; uint32_t seen; };
 struct HitPlayerMsg { uint8_t type; int32_t delta; uint8_t attacker[16]; uint8_t attackerPlayer; uint8_t to; };
 struct StatesHeader { uint8_t type; uint8_t kind; uint8_t count; };
 struct TalkMsg { uint8_t type; uint8_t begin; uint8_t guid[16]; };
@@ -68,6 +69,7 @@ uint32_t lastConnectAttempt = 0;
 uint32_t startedAt = 0;      // client: when it began to connect (enet_time_get)
 bool everConnected = false;  // client: an ENet connection to the host came up once (owner 24.10.: "host not reachable")
 bool isHost = false;
+bool overSteam = false;      // transport = steam and Steam started: datagrams also pass steam.cpp's relay
 uint8_t localId = 0;
 bool connected = false;
 uint32_t welcomes = 0;  // client side: welcomes so far (WelcomeSerial), never sent
@@ -200,6 +202,13 @@ void OnReceive(ENetPeer* peer, ENetPacket* packet)
                 if (hello.parity[i] != ours[i]) {
                     strcat_s(refusal.reason, refusal.reason[0] ? ", " : "install differs from the host: ");
                     strcat_s(refusal.reason, parity::ItemName(i));
+                    // Which option, the client cannot tell from a hash: the host's values (the host on Hard, the client on Medium,
+                    // playtest 27.10.); the reason is cut at its 160 characters.
+                    if (i == parity::Options) {
+                        strncat_s(refusal.reason, " (host: ", _TRUNCATE);
+                        strncat_s(refusal.reason, parity::OptionsText(), _TRUNCATE);
+                        strncat_s(refusal.reason, ")", _TRUNCATE);
+                    }
                 }
         }
         if (refusal.reason[0]) {
@@ -286,7 +295,7 @@ void OnReceive(ENetPeer* peer, ENetPacket* packet)
             }
         }
         if (hitNpcHandler && message.from)
-            hitNpcHandler(message.from, message.guid, message.delta, message.weapon, message.npc, message.outcome);
+            hitNpcHandler(message.from, message.guid, message.delta, message.weapon, message.npc, message.outcome, message.seen);
     } else if (type == MsgHitPlayer && packet->dataLength == sizeof(HitPlayerMsg)) {
         HitPlayerMsg message;
         std::memcpy(&message, packet->data, sizeof(message));
@@ -633,10 +642,11 @@ void SetHitHandlers(HitNpcHandler npc, HitPlayerHandler player)
     hitPlayerHandler = player;
 }
 
-void SendHitNpc(uint8_t to, uint8_t const guid[16], int32_t delta, uint8_t const weapon[16], uint8_t const npc[16], uint8_t outcome)
+void SendHitNpc(uint8_t to, uint8_t const guid[16], int32_t delta, uint8_t const weapon[16], uint8_t const npc[16], uint8_t outcome,
+                uint32_t seen)
 {
     if (!host || to == localId) return;
-    HitNpcMsg message{MsgHitNpc, {}, delta, {}, to, localId, {}, outcome};
+    HitNpcMsg message{MsgHitNpc, {}, delta, {}, to, localId, {}, outcome, seen};
     std::memcpy(message.guid, guid, 16);
     std::memcpy(message.weapon, weapon, 16);
     if (npc) std::memcpy(message.npc, npc, 16);
@@ -1007,9 +1017,10 @@ void Stop()
         enet_peer_disconnect_now(server, 0);
     }
     enet_host_flush(host);
+    if (overSteam) steam::Stop();  // passes the goodbyes on first
 }
 
-bool Start(bool asHost, char const* address, unsigned short port, char const* name)
+bool Start(bool asHost, char const* address, unsigned short port, char const* name, bool steamTransport)
 {
     if (enet_initialize() != 0) { Log("net: enet_initialize failed"); return false; }
     isHost = asHost;
@@ -1023,22 +1034,35 @@ bool Start(bool asHost, char const* address, unsigned short port, char const* na
         localId = 1;
         connected = true;
         Logf("net: hosting on UDP %u: %s", port, host ? "ok" : "FAILED");
+        // Friends over Steam reach the same ENet port through steam.cpp's relay; the UDP port stays open for addresses.
+        overSteam = host && steamTransport && steam::Start(true, port);
+        if (steamTransport) Logf("net: Steam %s", overSteam ? "on: friends can join over Steam" : steam::Error());
     } else {
         host = enet_host_create(nullptr, 1, ChannelCount, 0, 0);
         if (host) host->mtu = Mtu;  // before connecting: the connect proposes it, both sides keep the smaller
-        enet_address_set_host(&target, address);
-        target.port = port;
+        // Over Steam ENet connects to the relay on 127.0.0.1, which passes everything to the host found among the Steam
+        // friends. Without Steam (not running, no steam_api.dll) the address from the INI is the fallback.
+        overSteam = host && steamTransport && steam::Start(false, 0);
+        if (overSteam) {
+            enet_address_set_host(&target, "127.0.0.1");
+            target.port = steam::RelayPort();
+        } else {
+            if (steamTransport) Logf("net: Steam not available (%s); connecting to the address instead", steam::Error());
+            enet_address_set_host(&target, address);
+            target.port = port;
+        }
         server = host ? enet_host_connect(host, &target, ChannelCount, 0) : nullptr;
         lastConnectAttempt = enet_time_get();
         startedAt = enet_time_get();
-        Logf("net: connecting to %s:%u: %s", address, port, server ? "pending" : "FAILED");
+        if (overSteam) Logf("net: connecting over Steam (relay 127.0.0.1:%u): %s", target.port, server ? "pending" : "FAILED");
+        else Logf("net: connecting to %s:%u: %s", address, port, server ? "pending" : "FAILED");
     }
     return host != nullptr;
 }
 
-void Tick(PlayerState const& local, bool haveLocal)
+namespace {
+void Service(PlayerState const& local, bool haveLocal)
 {
-    if (!host) return;
     ENetEvent event;
     // At most 512 events a frame: a flood must not stall the game (Fable's review 22.10. 1.9); the rest waits for the next.
     for (int events = 0; events < 512 && enet_host_service(host, &event, 0) > 0; ++events) {
@@ -1102,6 +1126,66 @@ void Tick(PlayerState const& local, bool haveLocal)
         Send(server, &message, sizeof(message), ChannelState, false);
     }
     enet_host_flush(host);
+}
+}
+
+// Round trip and packet loss of every connection (Stufe 1, owner 27.10.: how much of the delay is the connection, Hamachi or
+// Steam). ENet measures both itself; every 5 s one line per peer. Over Steam ENet runs through the relay, so this is the
+// whole way.
+bool rttLog = true;  // QA negative control: rttlogoff
+enet_uint32 lastRttLog = 0;
+void RttLine(ENetPeer* peer, char const* who, char* out, size_t size)
+{
+    Format(out, size, "net: rtt=%u ms (+-%u) loss=%.1f%% sent=%u lost=%u to %s", peer->roundTripTime, peer->roundTripTimeVariance,
+           peer->packetLoss * 100.0 / ENET_PEER_PACKET_LOSS_SCALE, peer->packetsSent, peer->packetsLost, who);
+}
+void RttLog()
+{
+    if (!rttLog) return;
+    const enet_uint32 now = enet_time_get();
+    if (now - lastRttLog < 5000) return;
+    lastRttLog = now;
+    char line[200];
+    if (isHost) {
+        for (uint8_t i = 2; i < MaxPlayers; ++i)
+            if (peers[i] && peers[i]->state == ENET_PEER_STATE_CONNECTED) { RttLine(peers[i], PeerName(i), line, sizeof(line)); Log(line); }
+    } else if (server && connected) {
+        RttLine(server, "host", line, sizeof(line));
+        Log(line);
+    }
+}
+
+void Tick(PlayerState const& local, bool haveLocal)
+{
+    if (!host) return;
+    RttLog();
+    if (overSteam) steam::Pump();  // Steam -> ENet before the service
+    Service(local, haveLocal);
+    if (overSteam) steam::Pump();  // what ENet sent in this frame goes out now, not a frame later
+}
+
+// QA: NETSTATS lines, one per connection, now; rttlogoff stops the 5-s lines.
+void Stats(void (*log)(char const*))
+{
+    char line[200];
+    int n = 0;
+    if (isHost) {
+        for (uint8_t i = 2; i < MaxPlayers; ++i)
+            if (peers[i] && peers[i]->state == ENET_PEER_STATE_CONNECTED) { RttLine(peers[i], PeerName(i), line, sizeof(line)); log(line + 5); ++n; }
+    } else if (server && connected) {
+        RttLine(server, "host", line, sizeof(line));
+        log(line + 5);
+        ++n;
+    }
+    Format(line, "NETSTATS peers=%d rtt_log=%d", n, rttLog ? 1 : 0);
+    log(line);
+}
+void RttLogOff(void (*log)(char const*)) { rttLog = false; log("SWITCH rttlogoff ok=1"); }
+
+uint32_t RoundTrip(uint8_t player)
+{
+    ENetPeer* peer = isHost ? (player < MaxPlayers ? peers[player] : nullptr) : (connected ? server : nullptr);
+    return peer && peer->state == ENET_PEER_STATE_CONNECTED ? peer->roundTripTime : 0;
 }
 
 // QA, client (stage W1): leave the host and connect again at once, as a player whose connection dropped and came back.

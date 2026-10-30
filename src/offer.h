@@ -21,7 +21,7 @@ uint32_t Send(uint8_t seller, Delta const* deltas, int count, int32_t gold);
 using ResultFn = void (*)(uint32_t serial, bool accepted);
 void SetResultHandler(ResultFn handler);  // trade.cpp: trade::OnResult
 
-void Start();         // the network handlers; the key clash check (partner_key, offer_accept_key, offer_decline_key)
+void Start();         // the network handlers; the key clash check (partner_key, offer_accept_key, offer_decline_key, price_up_key, price_down_key)
 void Tick();          // once per frame: the seller's keys and 30 s, the buyer's 40 s
 void OnWorldChange(); // an open offer ends (the seller answers "ran out", the buyer's are declined)
 
@@ -32,5 +32,5 @@ void Report(LogFn log);                             // QA: OFFERSTATE line
 void PartialOn(LogFn log);                          // QA negative control: no check before, no undo on a failure (as a naive apply)
 void AddCommand(char const* argument, LogFn log);   // QA: "<name>_<amount>" puts that many of the item into the hero's inventory
 void CountCommand(char const* name, LogFn log);     // QA: HEROCOUNT line, how many of the item the hero has and can trade
-void KeyCheck(LogFn log);                           // QA: KEYCHECK line, the three keys and the clashes found at the start
+void KeyCheck(LogFn log);                           // QA: KEYCHECK line, the five keys and the clashes found at the start
 }

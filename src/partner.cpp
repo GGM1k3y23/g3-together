@@ -29,6 +29,8 @@ int KeyFromName(char const* name, int fallback)
     if (!_stricmp(name, "END")) return VK_END;
     if (!_stricmp(name, "INSERT")) return VK_INSERT;
     if (!_stricmp(name, "DELETE")) return VK_DELETE;
+    if (!_stricmp(name, "NUMPLUS")) return VK_ADD;
+    if (!_stricmp(name, "NUMMINUS")) return VK_SUBTRACT;
     if (name[0] && !name[1]) {
         const char c = static_cast<char>(toupper(static_cast<unsigned char>(name[0])));
         if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) return c;
@@ -40,7 +42,8 @@ int KeyFromName(char const* name, int fallback)
 void KeyName(int code, char* out, size_t size)
 {
     char const* named = code == VK_NEXT ? "PAGEDOWN" : code == VK_PRIOR ? "PAGEUP" : code == VK_HOME ? "HOME" : code == VK_END ? "END"
-                        : code == VK_INSERT ? "INSERT" : code == VK_DELETE ? "DELETE" : nullptr;
+                        : code == VK_INSERT ? "INSERT" : code == VK_DELETE ? "DELETE" : code == VK_ADD ? "NUMPLUS"
+                        : code == VK_SUBTRACT ? "NUMMINUS" : nullptr;
     if (named) strcpy_s(out, size, named);
     else if (code >= VK_F1 && code <= VK_F24) Format(out, size, "F%d", code - VK_F1 + 1);
     else if ((code >= 'A' && code <= 'Z') || (code >= '0' && code <= '9')) Format(out, size, "%c", code);

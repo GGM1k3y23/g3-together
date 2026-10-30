@@ -14,6 +14,7 @@ void Start();
 void Tick();
 void OnWorldDeactivate();
 bool IsMirrored(eCEntity const* entity);  // a client NPC currently driven from host snapshots
+void LocalHit(eCEntity* entity);  // our hero hit this mirror: a short stumble here at once, only the look (Stufe 1)
 // The NPC with this GUID from the network: null unless it is an NPC (NPC, script routine and damage receiver property sets)
 // and neither the local hero nor a puppet (Fable's review 22.10. 1.6, 1.7: handlers ran NPC wrappers on any entity).
 eCEntity* NpcByGuid(uint8_t const guid[16]);
@@ -49,6 +50,12 @@ void DeadPoseReport(LogFn log);  // QA: DEADPOSE line
 void LayDownCorpse(eCEntity* entity);  // a death applied here outside mirroring (journal.cpp): lay the body down like a dead mirror
 unsigned HoldChanges();  // QA: weapons put into mirrors' hands so far
 bool Claimed(eCEntity const* entity);  // client: taken over by this player
+bool DeadStays();  // an NPC dead on the host stays dead everywhere (playtest 27.10.)
+// It stood up again (respawn.cpp): no longer held dead here (code review 28.10. P2: the mark stayed, and once this client
+// simulated the animal, KeepDead put it back to dead).
+void NewLife(uint8_t const guid[16]);
+// Host: the client that took this NPC over as its companion, 0 none.
+uint8_t CompanionOwner(eCEntity* entity);
 uint8_t ClaimedBy(eCEntity const* entity);  // host: the client that took this NPC over as its companion, 0 if none
 void Mirrored(std::vector<eCEntity*>& out);  // client: the NPCs driven from another machine's snapshots now (guide.cpp)
 // Host: an NPC a client simulates guides or follows the host's hero (guide.cpp): simulated here from now on, the client's
@@ -64,6 +71,20 @@ void EdgeReport(LogFn log);    // QA (host): EDGENPC lines, the NPCs processed h
 void HostWinsOff(LogFn log);  // QA negative control (client): keep simulating an NPC itself although the host sends it
 void OwnOff(LogFn log);      // QA negative control (client): send none of its own NPCs
 uint8_t OwnerOf(eCEntity const* entity);  // player simulating this mirrored NPC, 0 if simulated here
+// Stufe 3.3, the lag-compensated block: the owner's send time of the state this mirror shows (0: no mirror), and on the owner
+// whether that NPC parried (IsInParadeMode) in the state it sent at about that time (last 1.5 s; false: not known, or
+// lagblockoff).
+uint32_t SeenAt(eCEntity const* entity);
+// QA (Stufe 4.1): frames of mirrors within 1 s after a replayed combat move, and how many of them had a weapon in the right
+// hand whose damage type was set (the swing's hit window).
+void SwingSamples(unsigned& armed, unsigned& samples);
+// Stufe 4.2: a mirror within 30 m of our hero fights it (or its party), as its owner says: the fight music the game plays
+// only for NPCs this machine simulates in combat mode.
+bool MirrorFightsHero();
+// QA: NPC snapshots this machine sent with the fighting bit; MirrorFightsHero calls that saw a fighting mirror at all, one
+// fighting our hero, and one doing so within 30 m.
+void FightStats(unsigned& sent, unsigned& seenAny, unsigned& seenUs, unsigned& seenNear);
+bool ParryingAt(eCEntity const* entity, uint32_t at, bool& parrying);
 void XpGuardOff(LogFn log);  // QA negative control: mirrors die through the game's death script again (and pay)
 // Client: does an NPC's death that names no killer pay this machine's hero? Only for an NPC simulated here (sent in the
 // last update, or claimed). The deaths a script causes far away (the orcs a freed town's script kills: Ardea_Orkboss,
@@ -71,4 +92,5 @@ void XpGuardOff(LogFn log);  // QA negative control: mirrors die through the gam
 bool PaysDeathWithoutKiller(eCEntity const* victim);
 void FarXpOff(LogFn log);  // QA negative control: such deaths pay the client's hero again
 void Report(LogFn log);  // QA: one NPC line per NPC within 40 m of the local hero
+bool Switch(char const* action, LogFn log);  // QA negative controls of the play-evening fixes (27.10.): true if it was one
 }

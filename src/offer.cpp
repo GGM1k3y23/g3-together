@@ -329,7 +329,7 @@ uint32_t Send(uint8_t seller, Delta const* deltas, int count, int32_t gold) { re
 void SetResultHandler(ResultFn handler) { resultHandler = handler; }
 
 namespace {
-// The trade keys and the jump key are all INI choices, and two the same do both at one press (B 23.10.: partner_key =
+// The trade keys (offer and price) and the jump key are all INI choices, and two the same do both at one press (B 23.10.: partner_key =
 // INSERT also accepts an offer). Warned once in the log at the start and once on the screen when the game runs.
 struct Clash { std::string key, settings; };
 std::vector<Clash> clashes;
@@ -340,14 +340,17 @@ void CheckKeys()
 {
     Config const& config = GetConfig();
     struct Use { char const* setting; int code; };
-    const Use uses[3] = {{"partner_key", partner::KeyFromName(config.partnerKey, VK_NEXT)},
-                         {"offer_accept_key", partner::KeyFromName(config.offerAcceptKey, VK_INSERT)},
-                         {"offer_decline_key", partner::KeyFromName(config.offerDeclineKey, VK_DELETE)}};
-    bool listed[3] = {};
-    for (int i = 0; i < 3; ++i) {
+    const Use uses[] = {{"partner_key", partner::KeyFromName(config.partnerKey, VK_NEXT)},
+                        {"offer_accept_key", partner::KeyFromName(config.offerAcceptKey, VK_INSERT)},
+                        {"offer_decline_key", partner::KeyFromName(config.offerDeclineKey, VK_DELETE)},
+                        {"price_up_key", partner::KeyFromName(config.priceUpKey, VK_ADD)},
+                        {"price_down_key", partner::KeyFromName(config.priceDownKey, VK_SUBTRACT)}};
+    constexpr int count = sizeof(uses) / sizeof(uses[0]);
+    bool listed[count] = {};
+    for (int i = 0; i < count; ++i) {
         if (listed[i]) continue;
         std::string settings = uses[i].setting;
-        for (int j = i + 1; j < 3; ++j)
+        for (int j = i + 1; j < count; ++j)
             if (uses[j].code == uses[i].code) {
                 settings += std::string(", ") + uses[j].setting;
                 listed[i] = listed[j] = true;
@@ -386,12 +389,15 @@ void Start()
 void KeyCheck(LogFn log)
 {
     Config const& config = GetConfig();
-    char names[3][16];
+    char names[5][16];
     partner::KeyName(partner::KeyFromName(config.partnerKey, VK_NEXT), names[0], sizeof(names[0]));
     partner::KeyName(partner::KeyFromName(config.offerAcceptKey, VK_INSERT), names[1], sizeof(names[1]));
     partner::KeyName(partner::KeyFromName(config.offerDeclineKey, VK_DELETE), names[2], sizeof(names[2]));
+    partner::KeyName(partner::KeyFromName(config.priceUpKey, VK_ADD), names[3], sizeof(names[3]));
+    partner::KeyName(partner::KeyFromName(config.priceDownKey, VK_SUBTRACT), names[4], sizeof(names[4]));
     std::string line = "KEYCHECK partner=" + std::string(names[0]) + " accept=" + names[1] + " decline=" + names[2] +
-                       " checked=" + (keysChecked ? "1" : "0") + " clashes=" + std::to_string(clashes.size()) + " shown=" + (clashShown ? "1" : "0");
+                       " checked=" + (keysChecked ? "1" : "0") + " clashes=" + std::to_string(clashes.size()) + " shown=" + (clashShown ? "1" : "0") +
+                       " price_up=" + names[3] + " price_down=" + names[4];
     for (Clash const& clash : clashes) line += " [" + clash.key + ": " + clash.settings + "]";
     log(line.c_str());
 }

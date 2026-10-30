@@ -4,6 +4,7 @@
 #include "body.h"
 #include "hud.h"
 #include "i18n.h"
+#include "items.h"
 #include "log.h"
 #include "net.h"
 #include "remote.h"
@@ -14,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 namespace g3t::downed {
 namespace {
@@ -32,6 +34,12 @@ unsigned redirects = 0, revives = 0, releases = 0, deaths = 0, potionsPaid = 0, 
 bool autoHelp = false;
 bool helpOption = true;  // QA negative control: helpoptionoff (no option is offered)
 char const* const HelpLine = "INFO_SKALVERAM320060309153144";
+// The help counts only once its line is spoken (infocmd.cpp sees the Say): the info manager's current info was ours as
+// soon as a dialog with the puppet began, so talking to a downed partner, or choosing the trade, helped it up and paid a
+// potion without the line being chosen (the host's report, playtest 27.10.: "chose to help" in the same ms as the trade).
+bool helpLineOnly = true;  // false: as before 27.10.
+uint32_t helpSaidAt = 0;
+unsigned helpNotSaid = 0;
 bool helpStarted[net::MaxPlayers] = {};  // our option for player i is the running info (once per choice)
 uint32_t lastOffer = 0;
 unsigned optionsOffered = 0, optionsChosen = 0;
@@ -51,6 +59,8 @@ uint32_t lethalAt = 0;          // when RedirectDeath set it
 bool nativeNoted = false;       // logged once per knock-out of the game's own
 bool dying = false;             // nobody could help: the hero dies like in the single-player game
 uint32_t diedAt = 0;            // when the death task was (last) set
+std::string inHand[2];         // the hero's right and left hand while standing (a knock-out drops them)
+bool wasDown = false;
 uint32_t aloneSince = 0;        // when the knocked-out hero last had nobody able to help (0: someone can)
 int revivedBy = 0;              // a partner paid for our revive (set by the network, handled in Tick)
 bool told[net::MaxPlayers] = {};  // this player already saw "X is down" for player i
@@ -188,7 +198,12 @@ void OfferHelp(Entity& hero, net::Remote const* remotes, uint32_t now)
         Format(infoName, "G3T_HelpUp_%d", i);
         // Chosen: the running info is ours (once per choice; the option hides itself when it ran).
         const bool ours = running && !std::strcmp(running->AccessName().GetText(), infoName);
-        if (ours && !helpStarted[i]) {
+        // Or the game marked the shown option given: it does when the option runs (shown, it is not given, OfferHelp below).
+        gCInfo_PS* helpInfo = ours ? manager->GetInfo(bCString(infoName)) : nullptr;
+        const bool said = !helpLineOnly || (helpSaidAt && now - helpSaidAt < 5000) || (helpInfo && helpInfo->AccessInfoGiven());
+        if (ours && !helpStarted[i] && !said) ++helpNotSaid;
+        if (ours && !helpStarted[i] && said) {
+            helpSaidAt = 0;
             helpStarted[i] = true;
             ++optionsChosen;
             Logf("downed: the player chose to help player %d up", i);
@@ -302,6 +317,16 @@ void Tick()
 
     if (hero.IsDead()) { held = false; lethal = false; return; }
     const bool down = hero.IsDown();
+    if (!down) {
+        for (int i = 0; i < 2; ++i) {
+            Entity item = hero.Inventory.GetItemFromSlot(i ? gESlot_LeftHand : gESlot_RightHand);
+            inHand[i] = item.GetInstance() ? item.GetName().GetText() : "";
+        }
+    } else if (!wasDown && !net::IsHost()) {
+        for (auto const& n : inHand)
+            if (!n.empty()) items::NoteOwnDrop(n.c_str());
+    }
+    wasDown = down;
     if (down && lethal) lethalSeenDown = true;
     if (!down) {
         // The knock-out task RedirectDeath sets makes the hero lie a frame or more later: not standing up yet (22.10.:
@@ -491,5 +516,14 @@ void HelpOptionOff(LogFn log)
 {
     helpOption = false;
     log("HELPOPTIONOFF ok");
+}
+void HelpLineSaid() { helpSaidAt = net::Now() ? net::Now() : 1; }
+
+// QA negative controls of the play-evening fixes (27.10.): each switches its fix off (on: clientfameon).
+bool Switch(char const* action, LogFn log)
+{
+    if (!std::strcmp(action, "helplineoff")) { helpLineOnly = false; log("SWITCH helplineoff ok=1"); return true; }
+    if (!std::strcmp(action, "autohelpoff")) { autoHelp = false; log("SWITCH autohelpoff ok=1"); return true; }
+    return false;
 }
 }

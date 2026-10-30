@@ -7,6 +7,8 @@
 //   PlayerOpenTrade); PlayerOpenTrade with a puppet does too.
 // - A swap in the screen shows as a difference between the puppet and the goods it was filled with: one offer to that
 //   player (offer.cpp, agent A), provisional until the answer; a refusal is undone on the hero and on the puppet.
+// - The buyer sets its own price in the window (owner 27.10.: free prices) with price_up_key / price_down_key; the offer
+//   carries that gold instead of the items' value.
 #pragma once
 
 class eCEntity;
@@ -26,6 +28,8 @@ void GoodsReport(char const* argument, LogFn log);
 void FillOff(LogFn log);                            // QA negative control: a puppet is not filled with its player's goods
 void Price(char const* argument, LogFn log);        // QA (tradeprice): "<partner>_<Item>": buy and sell price of one piece
 void PricesOff(LogFn log);                          // QA negative control (tradepricesoff): a puppet's prices as a trader's
+void AdjustCommand(char const* argument, LogFn log);  // QA (tradeadjust): "<gold>" (n50 = -50) the price keys' change, in an open window
+void AdjustOff(LogFn log);                          // QA negative control (tradeadjustoff): the offer carries the screen's gold
 void HoldOff(LogFn log);                            // QA negative control (tradeholdoff): the buyer keeps what it got before the seller answered
 void QualityOff(LogFn log);                         // QA negative control (tradequalityoff): traded items arrive at quality 0 (as before 24.10.)
 void GiveQuality(char const* argument, LogFn log);  // QA (givequality): "<Item>_<quality>" one of the item at that quality

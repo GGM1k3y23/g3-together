@@ -12,9 +12,19 @@
 #include <cstring>
 #include <map>
 #include <string>
+#include <vector>
 
 namespace g3t::items {
 namespace {
+// Client: a knock-out drops the weapon in hand as a world item of this machine only (the host drops its puppet's own copy).
+// The host does not know it, refused the take as someone else's, and the weapon was gone (playtest 27.10.). A refusal for
+// such a weapon keeps it, once; the host's copy may then be a second one (better than none).
+struct OwnDrop { std::string name; uint32_t at; };
+std::vector<OwnDrop> ownDrops;
+constexpr uint32_t OwnDropKeep = 600000;  // ms
+unsigned keptOwn = 0;
+bool keepOwnDrop = true;  // false: a refusal deletes such a weapon too (as before 27.10.)
+
 bool ParseGuid(char const* text, _GUID& out)
 {
     unsigned d1, d2, d3, b[8];
@@ -225,6 +235,14 @@ void OnItem(uint8_t from, net::ItemNote const& note)
             ++removed;
         }
     } else if (note.op == net::ItemDenied) {
+        const uint32_t now = GetTickCount();
+        for (auto it = ownDrops.begin(); keepOwnDrop && it != ownDrops.end(); ++it) {
+            if (now - it->at >= OwnDropKeep || it->name != note.name) continue;
+            ownDrops.erase(it);
+            ++keptOwn;
+            Logf("items: kept %s (this hero's own weapon, dropped when knocked out)", note.name);
+            return;
+        }
         // Someone else had it first: give back what this hero took.
         eCDynamicEntity* hero = gCSession::GetInstance().GetHero();
         if (!hero) return;
@@ -238,6 +256,14 @@ void OnItem(uint8_t from, net::ItemNote const& note)
 }
 
 void Start() { net::SetItemHandler(&OnItem); }
+
+void NoteOwnDrop(char const* name)
+{
+    const uint32_t now = GetTickCount();
+    for (auto it = ownDrops.begin(); it != ownDrops.end();) it = now - it->at >= OwnDropKeep ? ownDrops.erase(it) : std::next(it);
+    ownDrops.push_back({name, now});
+    Logf("items: this hero dropped %s when knocked out (kept if the host refuses it)", name);
+}
 
 void Pick(char const* guid, LogFn log)
 {
@@ -320,5 +346,11 @@ void Containers(LogFn log)
         ++found;
     }
     log("CONTAINERS end");
+}
+// QA negative controls of the play-evening fixes (27.10.): each switches its fix off (on: clientfameon).
+bool Switch(char const* action, LogFn log)
+{
+    if (!std::strcmp(action, "owndropoff")) { keepOwnDrop = false; log("SWITCH owndropoff ok=1"); return true; }
+    return false;
 }
 }

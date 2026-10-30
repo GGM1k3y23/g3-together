@@ -9,6 +9,7 @@ class gCScriptProcessingUnit;
 
 namespace g3t::items {
 void Start();
+void NoteOwnDrop(char const* name);  // client: the weapon this hero held when it was knocked out (downed.cpp)
 using LogFn = void (*)(char const*);
 void List(LogFn log);                      // QA: world items within 30 m of the hero, then "ITEMS end"
 void Take(char const* guid, LogFn log);    // QA: put a world item into the hero's inventory (as _AI_TakeItem does)
@@ -24,4 +25,5 @@ unsigned Returned();  // client: how many takes the host gave to someone else (e
 unsigned TakesBegun();  // this hero's _AI_TakeItem calls on a world item
 unsigned TakesDone();   // ... after which the item was in the hero's inventory
 void Containers(LogFn log);  // QA: chests and corpses near the hero with their contents
+bool Switch(char const* action, LogFn log);  // QA negative controls of the play-evening fixes (27.10.): true if it was one
 }

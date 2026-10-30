@@ -3,6 +3,9 @@
 #include "log.h"
 
 #include "body.h"
+#include "ai.h"
+#include "config.h"
+#include "net.h"
 #include "remote.h"
 
 #include <Engine.h>
@@ -12,6 +15,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <Windows.h>
 
 namespace g3t::world {
 namespace {
@@ -34,6 +38,299 @@ bTSmallArray<eCEntity*> const* Processed()
 }
 
 bTSmallArray<eCEntity*> const* ProcessedEntities() { return Processed(); }
+
+// Host: its processing range as host_roi says (owner 27.10., "80 m"). The engine keeps the radius in the entity admin
+// (EntityAdmin+0x10, SetROISphere; the centre follows the camera every frame) and read it at start from Entity.ROI in the
+// engine setup, a float there although the SDK declares an int (re/findings/range-guid-clock.md). Both are set, then a full
+// rebuild of the processing list; checked every 2 s, since a load may put the setup's value back.
+uint32_t lastRoiCheck = 0;
+float roiLogged = 0.0f;
+
+// Stufe 2, host_sim = elastic: the host's processing sphere takes in every player (re/findings/stufe2-elastic-roi-c.md).
+// eCEntityAdmin::Process (Engine.dll 0x230a70) takes the current camera's position (camera +0x8c) as the sphere's centre in
+// every frame and builds its lists anew once that moved 2.5 m; SetROISphere's centre does not last. Process is wrapped: for
+// its run the camera stands in the middle of the players and the radius (+0x10) reaches all of them plus a margin, then the
+// camera goes back before anything renders. Only what the prefetcher loaded around the camera (its view distance, camera
+// +0xbc) can be processed: a player farther away keeps the machines' own split (the client simulates its surroundings).
+constexpr float ElasticMargin = 4000.0f;   // cm beyond the farthest player
+constexpr float ElasticMax = 15000.0f;     // cm, largest radius
+using ProcessFn = void(__thiscall*)(eCEntityAdmin*);
+ProcessFn originalProcess = nullptr;
+bool elasticTried = false, elasticActive = false;
+unsigned elasticFrames = 0, elasticTooFar = 0;
+float elasticRadius = 0.0f, elasticCentre[3] = {};
+char const* elasticWhy = "not yet";
+uint32_t elasticLogged = 0;
+
+bool ElasticSphere(eCEntity* camera, float centre[3], float& radius)
+{
+    eCEntity* hero = gCSession::GetInstance().GetHero();
+    if (!hero || !camera) { elasticWhy = "no hero"; return false; }
+    float points[net::MaxPlayers][3];
+    int n = 0;
+    const bCVector& h = remote::ControlledBody() ? remote::ControlledBody()->GetWorldPosition() : hero->GetWorldPosition();
+    points[n][0] = h.GetX(); points[n][1] = h.GetY(); points[n][2] = h.GetZ(); ++n;
+    net::Remote const* remotes = net::Remotes();
+    for (int id = 2; id < net::MaxPlayers; ++id) {
+        net::Remote const& r = remotes[id];
+        if (!r.connected || !(r.latest.flags & 1) || r.latest.world != remote::CurrentWorld()) continue;
+        std::memcpy(points[n++], r.latest.position, sizeof(float) * 3);
+    }
+    if (n < 2) { elasticWhy = "alone"; return false; }
+    float lo[3], hi[3];
+    for (int k = 0; k < 3; ++k) lo[k] = hi[k] = points[0][k];
+    for (int i = 1; i < n; ++i)
+        for (int k = 0; k < 3; ++k) lo[k] = std::fmin(lo[k], points[i][k]), hi[k] = std::fmax(hi[k], points[i][k]);
+    for (int k = 0; k < 3; ++k) centre[k] = (lo[k] + hi[k]) * 0.5f;
+    float farthest = 0.0f;
+    for (int i = 0; i < n; ++i) farthest = std::fmax(farthest, body::Distance(centre, points[i]));
+    radius = std::fmax(GetConfig().hostRoi, farthest + ElasticMargin);
+    // The prefetcher's sphere around the real camera: a centre that leaves a player outside it would process nothing there.
+    const float loaded = *reinterpret_cast<float const*>(reinterpret_cast<char const*>(camera) + 0xbc);
+    float fromCamera = 0.0f;
+    const float* at = reinterpret_cast<float const*>(reinterpret_cast<char const*>(camera) + 0x8c);
+    for (int i = 0; i < n; ++i) fromCamera = std::fmax(fromCamera, body::Distance(at, points[i]));
+    if (radius > ElasticMax || (loaded > 0.0f && fromCamera > loaded - 1000.0f)) { ++elasticTooFar; elasticWhy = "too far apart"; return false; }
+    elasticWhy = "on";
+    return true;
+}
+
+// Stufe 2 in full, host_sim = spheres (re/findings/stufe2-spheres-plan.md): one sphere around each other player besides the
+// camera's own. The engine asks only three functions whether a box lies in its processing range: CullProcessingRangeRegion
+// (Engine.dll 0x2317d0: the box against the range's box at EntityAdmin+0x64..+0x78, then its sphere at +0x20: 0 outside, 1
+// inside, 2 partly), CullOldProcessingRangeRegion (0x231840, the same against the range before the last rebuild, +0x7c..+0x90
+// and +0x30) and IntersectsProcessingRangeRegion (0x2318c0, the box only). Their first instructions are longer than JumpTo
+// takes (7 and 10 bytes), so they are rebuilt here whole and the spheres added: in one of them counts as in range. The
+// spheres change only when the engine rebuilds its lists (the camera moved 2.5 m, +0x40) or a player moved that far (then
+// +0xfd asks for the rebuild); the spheres before are the old range then, for whatever left it. Only what the prefetcher loaded
+// around the camera can be processed: a player farther away keeps the machines' own split, as with elastic.
+struct Sphere
+{
+    float at[3];
+    float radius;
+};
+Sphere spheres[net::MaxPlayers], oldSpheres[net::MaxPlayers];
+int sphereCount = 0, oldSphereCount = 0;
+bool spheresHooked = false, spheresActive = false;
+unsigned sphereRebuilds = 0, sphereTooFar = 0;
+eCEntityAdmin* lastAdmin = nullptr;
+
+float const* Field(eCEntityAdmin const* admin, int offset) { return reinterpret_cast<float const*>(reinterpret_cast<char const*>(admin) + offset); }
+
+// As the engine compares: the box (min x y z, max x y z) meets the range's box lo..hi.
+bool BoxMeets(float const* box, float const* lo, float const* hi)
+{
+    return box[0] <= hi[0] && lo[0] <= box[3] && box[1] <= hi[1] && lo[1] <= box[4] && box[2] <= hi[2] && lo[2] <= box[5];
+}
+
+int CullSpheres(bCBox const& box, Sphere const* list, int count, int result)
+{
+    float const* b = reinterpret_cast<float const*>(&box);
+    for (int i = 0; i < count && result != 1; ++i) {
+        Sphere const& s = list[i];
+        const float lo[3] = {s.at[0] - s.radius, s.at[1] - s.radius, s.at[2] - s.radius};
+        const float hi[3] = {s.at[0] + s.radius, s.at[1] + s.radius, s.at[2] + s.radius};
+        if (!BoxMeets(b, lo, hi)) continue;
+        result = bCSphere(bCVector(s.at[0], s.at[1], s.at[2]), s.radius).Contains(box) ? 1 : 2;
+    }
+    return result;
+}
+
+int Cull(eCEntityAdmin const* admin, bCBox const& box, int range, int sphere)
+{
+    if (!BoxMeets(reinterpret_cast<float const*>(&box), Field(admin, range), Field(admin, range + 0xc))) return 0;
+    return reinterpret_cast<bCSphere const*>(Field(admin, sphere))->Contains(box) ? 1 : 2;
+}
+
+int __fastcall SpheresCull(eCEntityAdmin* admin, void*, bCBox const& box)
+{
+    return CullSpheres(box, spheres, sphereCount, Cull(admin, box, 0x64, 0x20));
+}
+
+int __fastcall SpheresCullOld(eCEntityAdmin* admin, void*, bCBox const& box)
+{
+    return CullSpheres(box, oldSpheres, oldSphereCount, Cull(admin, box, 0x7c, 0x30));
+}
+
+bool __fastcall SpheresIntersect(eCEntityAdmin* admin, void*, bCBox const& box)
+{
+    float const* b = reinterpret_cast<float const*>(&box);
+    if (BoxMeets(b, Field(admin, 0x64), Field(admin, 0x70))) return true;
+    for (int i = 0; i < sphereCount; ++i) {
+        Sphere const& s = spheres[i];
+        const float lo[3] = {s.at[0] - s.radius, s.at[1] - s.radius, s.at[2] - s.radius};
+        const float hi[3] = {s.at[0] + s.radius, s.at[1] + s.radius, s.at[2] + s.radius};
+        if (BoxMeets(b, lo, hi)) return true;
+    }
+    return false;
+}
+
+void HookSpheres()
+{
+    HMODULE engine = GetModuleHandleA("Engine.dll");
+    struct Hook
+    {
+        char const* name;
+        unsigned char start[10];
+        size_t length;
+        void* detour;
+    } const hooks[] = {
+        {"?CullProcessingRangeRegion@eCEntityAdmin@@QAE?AW4eEProcessingRangeCull@1@ABVbCBox@@@Z", {0x8b, 0x54, 0x24, 0x04, 0xd9, 0x41, 0x70}, 7,
+         reinterpret_cast<void*>(&SpheresCull)},
+        {"?CullOldProcessingRangeRegion@eCEntityAdmin@@QAE?AW4eEProcessingRangeCull@1@ABVbCBox@@@Z",
+         {0x8b, 0x54, 0x24, 0x04, 0xd9, 0x81, 0x88, 0x00, 0x00, 0x00}, 10, reinterpret_cast<void*>(&SpheresCullOld)},
+        {"?IntersectsProcessingRangeRegion@eCEntityAdmin@@QAE_NABVbCBox@@@Z", {0x8b, 0x54, 0x24, 0x04, 0xd9, 0x41, 0x70}, 7,
+         reinterpret_cast<void*>(&SpheresIntersect)},
+    };
+    unsigned char* code[3] = {};
+    for (int i = 0; i < 3; ++i) {
+        code[i] = engine ? reinterpret_cast<unsigned char*>(GetProcAddress(engine, hooks[i].name)) : nullptr;
+        if (!code[i] || std::memcmp(code[i], hooks[i].start, hooks[i].length)) {
+            Logf("world: %s %s; host_sim spheres stays off", hooks[i].name, code[i] ? "has other code" : "not found");
+            return;
+        }
+    }
+    for (int i = 0; i < 3; ++i)
+        if (!ai::JumpTo(code[i], hooks[i].detour)) {  // no way back needed: the detours are the whole function
+            Logf("world: %s could not be redirected; host_sim spheres stays off", hooks[i].name);
+            return;  // the ones before answer as the engine would, without spheres
+        }
+    spheresHooked = true;
+    Logf("world: processing range functions redirected (host_sim spheres)");
+}
+
+// Before Process: the spheres for this frame (only at a rebuild, see above).
+void PlaceSpheres(eCEntityAdmin* admin, eCEntity* camera)
+{
+    lastAdmin = admin;
+    Sphere wanted[net::MaxPlayers];
+    int n = 0;
+    float const* at = camera ? reinterpret_cast<float const*>(reinterpret_cast<char const*>(camera) + 0x8c) : nullptr;
+    const float step = *Field(admin, 0x40);
+    if (spheresHooked && at && net::IsHost()) {
+        const float loaded = *reinterpret_cast<float const*>(reinterpret_cast<char const*>(camera) + 0xbc);
+        net::Remote const* remotes = net::Remotes();
+        for (int id = 2; id < net::MaxPlayers; ++id) {
+            net::Remote const& r = remotes[id];
+            if (!r.connected || !(r.latest.flags & 1) || r.latest.world != remote::CurrentWorld()) continue;
+            if (loaded > 0.0f && body::Distance(at, r.latest.position) > loaded - 1000.0f) { ++sphereTooFar; continue; }
+            std::memcpy(wanted[n].at, r.latest.position, sizeof(wanted[n].at));
+            wanted[n++].radius = GetConfig().hostRoi + step;
+        }
+    }
+    bool changed = n != sphereCount;
+    for (int i = 0; i < n && !changed; ++i)
+        changed = body::Distance(wanted[i].at, spheres[i].at) > step || wanted[i].radius != spheres[i].radius;
+    auto* bytes = reinterpret_cast<unsigned char*>(admin);
+    const bool rebuild = bytes[0xfd] == 1 || (at && body::Distance(Field(admin, 0x24), at) > step);
+    if (changed || rebuild) {
+        std::memcpy(oldSpheres, spheres, sizeof(spheres));
+        oldSphereCount = sphereCount;
+        std::memcpy(spheres, wanted, sizeof(wanted));
+        sphereCount = n;
+        if (changed) {
+            bytes[0xfd] = 1;
+            ++sphereRebuilds;
+        }
+    }
+    spheresActive = sphereCount > 0;
+}
+
+void __fastcall ElasticProcess(eCEntityAdmin* admin, void*)
+{
+    eCEntity* camera = nullptr;
+    camera = reinterpret_cast<eCEntity*>(&eCApplication::GetInstance().GetCurrentCamera());  // Process reads the same one
+    if (GetConfig().hostSimSpheres) {
+        PlaceSpheres(admin, camera);
+        originalProcess(admin);
+        return;
+    }
+    float centre[3], radius = 0.0f, saved[3];
+    float* at = camera ? reinterpret_cast<float*>(reinterpret_cast<char*>(camera) + 0x8c) : nullptr;
+    elasticActive = GetConfig().hostSimElastic && net::IsHost() && at && ElasticSphere(camera, centre, radius);
+    if (elasticActive) {
+        std::memcpy(saved, at, sizeof(saved));
+        std::memcpy(at, centre, sizeof(saved));
+        *reinterpret_cast<float*>(reinterpret_cast<char*>(admin) + 0x10) = radius;
+        std::memcpy(elasticCentre, centre, sizeof(centre));
+        elasticRadius = radius;
+        ++elasticFrames;
+    }
+    originalProcess(admin);
+    if (elasticActive) std::memcpy(at, saved, sizeof(saved));
+}
+
+void HookElastic()
+{
+    if (elasticTried || !(GetConfig().hostSimElastic || GetConfig().hostSimSpheres)) return;
+    elasticTried = true;
+    if (GetConfig().hostSimSpheres) HookSpheres();
+    auto* code = reinterpret_cast<unsigned char*>(GetProcAddress(GetModuleHandleA("Engine.dll"), "?Process@eCEntityAdmin@@QAEXXZ"));
+    static const unsigned char prologue[] = {0x55, 0x8b, 0xec, 0x83, 0xe4, 0xf8};
+    if (!code || std::memcmp(code, prologue, sizeof(prologue))) {
+        Logf("world: eCEntityAdmin::Process %s; host_sim stays off", code ? "has another prologue" : "not found");
+        return;
+    }
+    originalProcess = reinterpret_cast<ProcessFn>(ai::JumpTo(code, reinterpret_cast<void*>(&ElasticProcess)));
+    Logf("world: eCEntityAdmin::Process %s", originalProcess ? "wrapped (host_sim)" : "could not be wrapped");
+}
+
+bool Extended() { return elasticActive || spheresActive; }
+
+bool HostProcesses(float const at[3], float margin)
+{
+    if (elasticActive) return body::Distance(at, elasticCentre) <= elasticRadius - margin;
+    if (!spheresActive || !lastAdmin) return false;
+    if (body::Distance(at, Field(lastAdmin, 0x24)) <= *Field(lastAdmin, 0x10) - margin) return true;  // the camera's own
+    const float step = *Field(lastAdmin, 0x40);
+    for (int i = 0; i < sphereCount; ++i)
+        if (body::Distance(at, spheres[i].at) <= spheres[i].radius - step - margin) return true;
+    return false;
+}
+
+void Tick()
+{
+    if (!net::IsHost()) return;
+    HookElastic();
+    if (GetConfig().hostSimSpheres && net::Now() - elasticLogged >= 5000) {
+        elasticLogged = net::Now();
+        if (spheresActive)
+            Logf("world: spheres %d around players (first %.0f,%.0f,%.0f radius %.0f cm), %u rebuilds, %u times too far", sphereCount,
+                 spheres[0].at[0], spheres[0].at[1], spheres[0].at[2], spheres[0].radius, sphereRebuilds, sphereTooFar);
+        else if (spheresHooked)
+            Logf("world: spheres none now (%u times too far)", sphereTooFar);
+    }
+    if (GetConfig().hostSimElastic && net::Now() - elasticLogged >= 5000) {
+        elasticLogged = net::Now();
+        if (elasticActive)
+            Logf("world: elastic range centre %.0f,%.0f,%.0f radius %.0f cm (%u frames)", elasticCentre[0], elasticCentre[1], elasticCentre[2],
+                 elasticRadius, elasticFrames);
+        else if (originalProcess)
+            Logf("world: elastic range off now (%s; %u times too far apart)", elasticWhy, elasticTooFar);
+    }
+    if (elasticActive) return;  // the radius is set every frame then; host_roi below only when it is not
+    const uint32_t now = net::Now();
+    if (now - lastRoiCheck < 2000) return;
+    lastRoiCheck = now;
+    if (!gCSession::GetInstance().IsGameRunning()) return;
+    auto* scene = static_cast<eCSceneAdmin*>(eCModuleAdmin::GetInstance().FindModule(bCString("eCSceneAdmin")));
+    if (!scene) return;
+    eCEntityAdmin& admin = scene->GetAccessToEntityAdmin();
+    const float wanted = GetConfig().hostRoi;
+    bCSphere sphere = admin.GetROISphere();
+    const float before = sphere.GetRadius();
+    if (std::fabs(before - wanted) < 1.0f) return;
+    auto& setup = const_cast<eSSetupEngine&>(eCApplication::GetInstance().GetEngineSetup());
+    std::memcpy(&setup.Entity_ROI, &wanted, sizeof(float));
+    sphere.SetRadius(wanted);
+    admin.SetROISphere(sphere);
+    admin.FourceFullROIUpdate();
+    const float after = admin.GetROISphere().GetRadius();
+    if (after != roiLogged) {
+        roiLogged = after;
+        Logf("world: processing range %.0f -> %.0f cm (host_roi %.0f)", before, after, wanted);
+    }
+}
 
 namespace {
 bool listAll = false;  // QA: usables all -> every entity with an Interaction set that is no NPC

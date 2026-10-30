@@ -14,6 +14,7 @@
 #include <Game.h>
 #include <Script.h>
 #include <Windows.h>
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -29,6 +30,8 @@ struct Puppet
     bool spawned = false;
     std::string heldRight, heldLeft;  // what the puppet holds (item names)
     uint32_t holdChecked = 0;
+    std::string heldItems[2];         // GUIDs of the items in its right and left hand (NoDrop)
+    uint32_t dropChecked = 0;
     uint32_t wearChecked = 0;
     uint32_t world = 0;
     body::State body;
@@ -93,6 +96,9 @@ bool LocalState(net::PlayerState& state)
     state.movementMode = static_cast<uint8_t>(Entity(hero).CharacterMovement.GetMovementMode());
     state.aniState = static_cast<uint8_t>(static_cast<int>(Entity(hero).Routine.AniState));
     body::CurrentMotion(hero, state.animation, sizeof(state.animation));
+    static body::ActionClock heroClock;  // protocol 58: each start of an action motion numbered
+    state.actionSeq = body::ActionSeq(hero, heroClock, state.animation, &state.actionMs);
+    state.motionFrac = body::MotionFraction(hero);  // protocol 59
     Entity self(hero);
     const Entity right = self.Inventory.GetItemFromSlot(gESlot_RightHand), left = self.Inventory.GetItemFromSlot(gESlot_LeftHand);
     strncpy_s(state.heldRight, right.GetInstance() ? right.GetName().GetText() : "", _TRUNCATE);
@@ -174,6 +180,45 @@ void Forget(int id, eCEntity* entity)
 // through the GetAttitude wrapper (ai.cpp). Kept switchable for comparison only.
 bool puppetParty = false;  // QA: PuppetPartyOff (now the default)
 bool puppetHold = true;   // QA negative control: PuppetHoldOff
+
+// A knock-out makes the game drop what a body holds: the puppet's copy of the player's weapon lay here while the player
+// picked up its own over there, and the host's hero took that copy as well (two weapons, playtest 27.10.). The items in
+// the puppet's hands are remembered; one of them that lies in the world now is removed. false: as before 27.10.
+bool puppetNoDrop = true;
+int puppetLead = -1;  // QA puppetleadon/off: 1/0; -1: puppet_lead in the INI (Stufe 3.2)
+// Display step 1 (review 28.10.), the walk line, QA walklineon (off by default): the puppet on one timeline of its player's
+// states, WalkDelay behind the newest possible one. The shown pose, the speed and the controller's goal come from that line:
+// the goal WalkAhead further along it (beyond the newest state along its velocity, at most body::MaxAhead), the newest state
+// itself once the player stopped, so the controller never reaches its goal between two states while the player runs on (the
+// cause of the still frames: steered to the newest state, arrived, waited). Errors up to 6 m are walked off, not set.
+bool walkLine = false;
+constexpr int32_t WalkDelay = 100, WalkAhead = 250;  // ms
+unsigned walkLineFrames = 0;
+unsigned puppetDropsRemoved = 0;
+void NoDrop(Puppet& puppet, uint32_t now)
+{
+    if (!puppetNoDrop || static_cast<int32_t>(now - puppet.dropChecked) < 250) return;
+    puppet.dropChecked = now;
+    for (int i = 0; i < 2; ++i) {
+        std::string& key = puppet.heldItems[i];
+        if (key.size() == 16) {
+            _GUID raw;
+            std::memcpy(&raw, key.data(), 16);
+            Entity item = Entity(bCPropertyID(bCGuid(raw)));
+            if (item.GetInstance() && item.IsItem() && !item.GetOwner().GetInstance()) {
+                Logf("remote: %s fell from a puppet's hand; removed (its player's own copy counts)", item.GetName().GetText());
+                item.Decay();
+                ++puppetDropsRemoved;
+            }
+        }
+        key.clear();
+        const Entity held = puppet.entity.Inventory.GetItemFromSlot(i ? gESlot_LeftHand : gESlot_RightHand);
+        if (held.GetInstance()) {
+            const eCEntityProxy proxy(held.GetInstance());
+            key.assign(reinterpret_cast<char const*>(&proxy.GetEntityID().GetCore()), 16);
+        }
+    }
+}
 bool puppetCombat = true; // QA negative control: PuppetCombatOff
 
 // The stack of an item (by name) in the puppet's inventory; created if missing (a puppet's inventory holds only
@@ -340,9 +385,58 @@ void UpdatePuppet(int id, net::Remote const& remote, eCEntity const& hero)
     if (!puppet.entity.Dialog.TradeEnabled) puppet.entity.Dialog.TradeEnabled = GETrue;
     const float speed = body::Speed(remote.previous.position, remote.latest.position, remote.previous.sent, remote.latest.sent,
                                     remote.previousTicks, remote.latestTicks);
-    const body::Target target{remote.latest.position, remote.latest.rotation, remote.latest.movementMode, remote.latest.animation, speed,
-                              remote.latest.aniState};
+    const uint32_t newestBefore = puppet.body.track.count ? puppet.body.track.snaps[puppet.body.track.count - 1].sent : 0;
+    body::Feed(puppet.body.track, remote.latest.position, remote.latest.rotation, remote.latest.sent, remote.latestTicks);
+    const uint32_t roundTrip = net::RoundTrip(static_cast<uint8_t>(id));
+    // QA (Stufe 3.2): how far the puppet stood from where its player was (half the round trip before the state arrived)
+    if (puppet.body.track.count && puppet.body.track.snaps[puppet.body.track.count - 1].sent != newestBefore && speed > 100.0f)
+        body::NoteTruth(puppet.body, remote.latest.position, remote.latestTicks - roundTrip / 2);
+    // Stufe 3.2, puppet lead: the sample half a round trip ahead of the newest state (at most 150 ms), so the puppet stands about
+    // where its player is now; the host's NPCs then strike at that place, not where the player was. The movement controller
+    // walks to that point too (not to the older newest state, which it would reach and stop at).
+    const bool lead = (puppetLead < 0 ? GetConfig().puppetLead : puppetLead > 0) && roundTrip;
+    const int32_t shift = lead ? static_cast<int32_t>(std::min<uint32_t>(roundTrip / 2, 150)) : -body::BufferDelay;
+    // Stufe 3.2b: the lead only while the player moves steadily, rising over 200 ms; it stops, starts, brakes or turns: none at
+    // once (the overshoot after a stop showed as gliding: 4 % with the lead, 1-2 % without, stageGlide 28.10.). The shown point
+    // is blended from the newest state towards the predicted one, so the factor moves it smoothly.
+    const float steadiness = body::Steadiness(puppet.body.track, puppet.body, now);
+    const float factor = lead ? (body::leadOld ? 1.0f : steadiness) : 0.0f;
+    if (lead) {
+        body::glide[1].leadFactorSum += factor;
+        ++body::glide[1].leadFactorFrames;
+    }
+    float shownAt[3], shownTurn[4];
+    bool buffered = false;
+    if (lead && factor > 0.0f && body::Sample(puppet.body.track, now, shownAt, shownTurn, shift)) {
+        for (int k = 0; k < 3; ++k) shownAt[k] = remote.latest.position[k] + factor * (shownAt[k] - remote.latest.position[k]);
+        std::memcpy(shownTurn, remote.latest.rotation, sizeof(shownTurn));
+        buffered = true;
+    } else if (!lead && body::interpolate) {
+        buffered = body::Sample(puppet.body.track, now, shownAt, shownTurn, shift);
+    }
+    float ahead[3];
+    body::Target target{buffered ? shownAt : remote.latest.position, buffered ? shownTurn : remote.latest.rotation,
+                        remote.latest.movementMode, remote.latest.animation, speed, remote.latest.aniState,
+                        lead ? nullptr : body::SteerGoal(puppet.body.track, now, ahead, buffered ? remote.latest.position : nullptr)};
+    target.smooth = lead && !body::leadOld;
+    target.actionSeq = remote.latest.actionSeq;
+    target.motionFrac = remote.latest.motionFrac;  // protocol 59: where its player's motion was, and how long ago
+    target.motionAgeMs = now - remote.latestTicks + roundTrip / 2;
+    float lineAt[3], lineTurn[4], lineBefore[3], lineBeforeTurn[4], lineGoal[3], lineGoalTurn[4];
+    if (walkLine && body::Sample(puppet.body.track, now, lineAt, lineTurn, -WalkDelay, false) &&
+        body::Sample(puppet.body.track, now - 100, lineBefore, lineBeforeTurn, -WalkDelay, false) &&
+        body::Sample(puppet.body.track, now, lineGoal, lineGoalTurn, -WalkDelay + WalkAhead, false)) {
+        const bool stopped = speed < 40.0f;  // its newest two states: the player stands
+        target.position = lineAt;
+        target.rotation = lineTurn;
+        target.speed = body::Distance(lineAt, lineBefore) * 10.0f;  // cm/s along the line, not from the newest two states
+        target.goal = stopped ? remote.latest.position : lineGoal;
+        target.smooth = true;
+        target.snapAt = 600.0f;
+        if (++walkLineFrames == 1 || walkLineFrames % 6000 == 0) Logf("remote: walk line drives puppet %d (%u frames)", id, walkLineFrames);
+    }
     if (!*remote.latest.shape) {  // a creature holds and wears nothing
+        NoDrop(puppet, now);
         Hold(puppet, remote.latest.heldRight, remote.latest.heldLeft, now);
         Wear(puppet, remote.latest.armor, remote.latest.helmet, now);
     }
@@ -408,7 +502,7 @@ void Start()
     }
     Config const& config = GetConfig();
     parity::Compute();
-    started = net::Start(config.host, config.address, config.port, config.name);
+    started = net::Start(config.host, config.address, config.port, config.name, config.steam);
 }
 
 void OnWorldDeactivate()
@@ -572,6 +666,30 @@ void WalkTo(int index, LogFn log)
     const bCVector target(anchor.GetX() + 1500.0f * std::cos(angle), anchor.GetY(), anchor.GetZ() + 1500.0f * std::sin(angle));
     const GEBool ok = Entity(hero).StartGoto(target, gEWalkMode_Run);
     Format(line, "WALKTO index=%d started=%d target=%.1f,%.1f,%.1f", index, ok, target.GetX(), target.GetY(), target.GetZ());
+    log(line);
+}
+
+// QA (stageWalk, display review 28.10.): the hero runs to anchor + (dx, dz) cm by the game's goto; "stop" ends it where it is.
+void WalkRel(char const* argument, LogFn log)
+{
+    char line[200];
+    eCDynamicEntity* hero = gCSession::GetInstance().GetHero();
+    if (!hero || !gCSession::GetInstance().IsGameRunning()) { log("REFUSED walkrel: no hero"); return; }
+    if (!haveAnchor) { anchor = hero->GetWorldPosition(); haveAnchor = true; }
+    Entity self(hero);
+    if (argument && !std::strcmp(argument, "stop")) {
+        self.Routine.FullStop();
+        self.CharacterMovement.StopMovement();
+        const bCVector& p = hero->GetWorldPosition();
+        Format(line, "WALKREL stop pos=%.1f,%.1f,%.1f", p.GetX(), p.GetY(), p.GetZ());
+        log(line);
+        return;
+    }
+    float dx = 0.0f, dz = 0.0f;
+    if (!argument || std::sscanf(argument, "%f_%f", &dx, &dz) != 2) { log("REFUSED walkrel: need dx_dz"); return; }
+    const bCVector target(anchor.GetX() + dx, anchor.GetY(), anchor.GetZ() + dz);
+    const GEBool ok = self.StartGoto(target, gEWalkMode_Run);
+    Format(line, "WALKREL started=%d target=%.1f,%.1f,%.1f", ok, target.GetX(), target.GetY(), target.GetZ());
     log(line);
 }
 
@@ -777,5 +895,20 @@ void PuppetTradeOn(char const* argument, LogFn log)
     Format(line, "PUPPETTRADE id=%s name=%s trade=%d has_info=%d", argument, puppet->GetName().GetText(), body.Dialog.TradeEnabled ? 1 : 0,
               manager && manager->HasInfos(puppet) ? 1 : 0);
     log(line);
+}
+// QA negative controls of the play-evening fixes (27.10.): each switches its fix off (on: clientfameon).
+bool Switch(char const* action, LogFn log)
+{
+    if (!std::strcmp(action, "puppetnodropoff")) { puppetNoDrop = false; log("SWITCH puppetnodropoff ok=1"); return true; }
+    if (!std::strcmp(action, "puppetleadon")) { puppetLead = 1; log("SWITCH puppetleadon ok=1"); return true; }
+    if (!std::strcmp(action, "walklineon")) { walkLine = true; log("SWITCH walklineon ok=1"); return true; }
+    if (!std::strcmp(action, "puppetleadoff")) { puppetLead = 0; log("SWITCH puppetleadoff ok=1"); return true; }
+    if (!std::strcmp(action, "offsetwindowoff")) { body::offsetWindow = false; log("SWITCH offsetwindowoff ok=1"); return true; }
+    if (!std::strcmp(action, "goalaheadon")) { body::goalAhead = true; log("SWITCH goalaheadon ok=1"); return true; }
+    if (!std::strcmp(action, "staggereffectsoff")) { body::staggerEffects = false; log("SWITCH staggereffectsoff ok=1"); return true; }
+    if (!std::strcmp(action, "mirrorleadon")) { body::mirrorLead = true; log("SWITCH mirrorleadon ok=1"); return true; }
+    if (!std::strcmp(action, "leadoldon")) { body::leadOld = true; log("SWITCH leadoldon ok=1"); return true; }
+    if (!std::strcmp(action, "goalaheadoff")) { body::goalAhead = false; log("SWITCH goalaheadoff ok=1"); return true; }
+    return false;
 }
 }

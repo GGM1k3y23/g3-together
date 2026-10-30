@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 #include "trade.h"
 
+#include "config.h"
+#include "hud.h"
+#include "i18n.h"
 #include "log.h"
 #include "net.h"
 #include "offer.h"
+#include "partner.h"
 #include "remote.h"
 
 #include <Game.h>
@@ -62,6 +66,16 @@ struct Pending {
 };
 std::vector<Pending> pending;
 unsigned offersSent = 0, offersAccepted = 0, offersDeclined = 0, undone = 0, notSent = 0;
+// Free prices (owner 27.10., A): in the window the buyer sets the offer's gold with price_up_key / price_down_key (default
+// Num+ / Num-, 10 gold a press, 100 with Shift), starting from what the screen moved at the items' values; the seller sees
+// that gold in the offer and accepts or declines. Up is a higher price: more to pay when the buyer buys (the screen moved
+// gold to the seller), more to get when it sells.
+int32_t priceAdjust = 0;  // gold the buyer gives on top of the screen's (+), or gets on top of it (-)
+bool freePrices = true;   // QA negative control: tradeadjustoff (the offer carries the screen's gold, as before 27.10.)
+bool upWasDown = false, downWasDown = false, hintShown = false;
+DWORD priceShowAt = 0;    // the price is shown once the presses settle (one message a press filled the message list)
+unsigned priceChanges = 0, priceClamped = 0;
+int32_t lastOfferGold = 0, lastScreenGold = 0;
 // Prices between players (owner 23.10.: the same price both ways). The trade screen asks every price through the script
 // OnPlayerGetGoldCost (self: the other side, other: the owner of the stack, args: its index; C trade-screen-c.md 3.); a
 // trader buys at 30 % of an item's value and sells at 100 %. With a puppet on either side, both ways are the item's value.
@@ -287,6 +301,30 @@ int Take(Entity& self, std::string const& key, int amount)
 
 std::string Describe(Content const& items, int32_t gold);
 
+int32_t HeroGold(Entity& self)
+{
+    int32_t gold = 0;
+    for (int i = 0; i < self.Inventory.GetStackCount(); ++i)
+        if (Entity item = self.Inventory.GetTemplateItem(i); item.GetInstance() && !std::strcmp(item.GetName().GetText(), Gold))
+            gold += self.Inventory.GetAmount(i);
+    return gold;
+}
+
+// The offer's gold within what both have: the buyer pays at most the gold it had before the window (what the screen moved,
+// `moved`, is gone from the hero already), the seller at most the gold it last sent. A price goes down to nothing, not
+// past it: a buyer who buys (or swaps) gets no gold on top, one who sells pays none. All limits hold `moved` itself.
+int32_t ClampGold(int32_t gold, int32_t moved, int seller)
+{
+    int32_t low = moved, high = std::max(received[seller].gold, moved);
+    if (eCDynamicEntity* hero = gCSession::GetInstance().GetHero()) {
+        Entity self(hero);
+        low = moved - HeroGold(self);
+    }
+    if (moved > 0) low = std::max(low, 0);
+    else high = std::min(high, 0);
+    return gold < low ? low : gold > high ? high : gold;
+}
+
 std::string GoldKey()
 {
     const Template item(Gold);
@@ -342,26 +380,119 @@ void NoteSwap(eCEntity* body)
     Logf("trade: swap with player %d; this window so far: buyer gets %s", partner, Describe(windowDelta, windowGold).c_str());
 }
 
+std::wstring KeyLabel(char const* setting, int fallback)
+{
+    const int code = partner::KeyFromName(setting, fallback);
+    if (code == VK_ADD) return L"Num+";
+    if (code == VK_SUBTRACT) return L"Num-";
+    char name[16];
+    partner::KeyName(code, name, sizeof(name));
+    return std::wstring(name, name + std::strlen(name));
+}
+
+std::wstring PlayerName(int id)
+{
+    wchar_t out[96] = {};
+    MultiByteToWideChar(CP_UTF8, 0, net::PeerName(static_cast<uint8_t>(id)), -1, out, 95);
+    return out;
+}
+
+void ShowPrice()
+{
+    const int32_t gold = windowGold - priceAdjust;
+    wchar_t text[200];
+    _snwprintf_s(text, _TRUNCATE, i18n::Text(gold > 0 ? i18n::TradePriceGet : i18n::TradePricePay), gold > 0 ? gold : -gold,
+                 windowGold < 0 ? -windowGold : windowGold);
+    hud::Message(hud::Info, text);
+}
+
+// One press of a price key (or QA's tradeadjust): the price `step` gold higher (negative: lower), within ClampGold.
+// False: no window with goods to price.
+bool ChangePrice(int step)
+{
+    if (!partner || !windowOpen) return false;
+    if (eCEntity* body = remote::PuppetOf(partner)) NoteSwap(body);
+    if (windowDelta.empty()) {
+        hud::Message(hud::Info, i18n::Text(i18n::TradePriceNoGoods));
+        return false;
+    }
+    const int32_t wanted = windowGold - (priceAdjust + (windowGold > 0 ? -step : step));
+    const int32_t gold = ClampGold(wanted, windowGold, partner);
+    priceAdjust = windowGold - gold;
+    ++priceChanges;
+    if (gold != wanted) {
+        ++priceClamped;
+        hud::Message(hud::Warning, i18n::Text(i18n::TradePriceLimit));
+    }
+    priceShowAt = GetTickCount() + 400;
+    return true;
+}
+
+// In a trade window with a player: the hint once a trade, the price keys, the price once the presses settle.
+void PriceWindow()
+{
+    Config const& config = GetConfig();
+    if (!hintShown) {
+        hintShown = true;
+        wchar_t text[300];
+        _snwprintf_s(text, _TRUNCATE, i18n::Text(i18n::TradePriceHint), PlayerName(partner).c_str(), KeyLabel(config.priceUpKey, VK_ADD).c_str(),
+                     KeyLabel(config.priceDownKey, VK_SUBTRACT).c_str());
+        hud::Message(hud::Info, text);
+    }
+    // Not with Ctrl, as the offer keys.
+    const bool focused = partner::Focused() && !(GetAsyncKeyState(VK_CONTROL) & 0x8000);
+    const bool up = focused && (GetAsyncKeyState(partner::KeyFromName(config.priceUpKey, VK_ADD)) & 0x8000) != 0;
+    const bool down = focused && (GetAsyncKeyState(partner::KeyFromName(config.priceDownKey, VK_SUBTRACT)) & 0x8000) != 0;
+    const int step = (GetAsyncKeyState(VK_SHIFT) & 0x8000) ? 100 : 10;
+    if (up && !upWasDown) ChangePrice(step);
+    else if (down && !downWasDown) ChangePrice(-step);
+    upWasDown = up;
+    downWasDown = down;
+    if (priceShowAt && static_cast<int32_t>(GetTickCount() - priceShowAt) >= 0) {
+        priceShowAt = 0;
+        ShowPrice();
+    }
+}
+
 // The trade window closed: its swaps go to the seller as one offer. What the buyer got is taken back from it until the
 // answer; the puppet shows the seller's goods again.
 void CloseWindow(int seller)
 {
     if (eCEntity* body = remote::PuppetOf(seller)) NoteSwap(body);  // a swap right before closing
+    const int32_t adjust = freePrices && !windowDelta.empty() ? priceAdjust : 0;  // a price needs goods
+    priceAdjust = 0;
+    priceShowAt = 0;
     if (windowDelta.empty() && windowGold == 0) return;
     Content delta;
     delta.swap(windowDelta);
-    int32_t gold = windowGold;
+    const int32_t moved = windowGold;  // what the screen moved at the items' values (+: the buyer got it)
+    int32_t gold = adjust ? ClampGold(moved - adjust, moved, seller) : moved;
     windowGold = 0;
-    if (eCDynamicEntity* hero = gCSession::GetInstance().GetHero(); hero && holdBack) {
+    if (eCDynamicEntity* hero = gCSession::GetInstance().GetHero()) {
         Entity self(hero);
-        for (auto& [key, amount] : delta)
-            if (amount > 0) {
-                const int took = Take(self, key, amount);
-                if (took < amount) Logf("trade: only %d of %d %s could be held back", took, amount, NameOf(key));
-                amount = took;
+        if (holdBack)
+            for (auto& [key, amount] : delta)
+                if (amount > 0) {
+                    const int took = Take(self, key, amount);
+                    if (took < amount) Logf("trade: only %d of %d %s could be held back", took, amount, NameOf(key));
+                    amount = took;
+                }
+        // Until the answer the buyer has paid what it gives and holds back what it gets (gold it gets: nothing yet). The
+        // screen changed its gold by `moved`; the rest of the way to that, the free price's difference included, is here.
+        const int32_t target = holdBack ? std::min(gold, 0) : gold;
+        const int32_t change = target - moved;
+        if (change > 0) {
+            self.Inventory.CreateItems(Template(Gold), 0, change);
+        } else if (change < 0) {
+            const int32_t missing = -change - Take(self, GoldKey(), -change);
+            if (missing > 0) {
+                Logf("trade: %d gold could not be taken from the buyer; the offer's gold changes by that", missing);
+                gold += gold > 0 ? -missing : missing;
             }
-        if (gold > 0) gold = Take(self, GoldKey(), gold);
+        }
     }
+    lastScreenGold = moved;
+    lastOfferGold = gold;
     for (auto it = delta.begin(); it != delta.end();) it = it->second == 0 ? delta.erase(it) : ++it;
     if (eCEntity* body = remote::PuppetOf(seller)) {
         Entity puppet(body);
@@ -386,7 +517,8 @@ void CloseWindow(int seller)
     }
     ++offersSent;
     pending.push_back(Pending{sent, seller, delta, gold});
-    Logf("trade: window with player %d closed; offer %u: buyer gets %s (held back until the answer)", seller, sent, Describe(delta, gold).c_str());
+    Logf("trade: window with player %d closed; offer %u: buyer gets %s (held back until the answer; screen gold %d, free price %+d)", seller, sent,
+         Describe(delta, gold).c_str(), moved, moved - gold);
 }
 
 std::string Describe(Content const& items, int32_t gold)
@@ -449,8 +581,10 @@ void Tick()
                 Entity hero(self);
                 const bool inHud = !std::strncmp(hero.Routine.GetCurrentTask().GetText(), "PS_HUD", 6) ||
                                    !std::strncmp(hero.Routine.GetCurrentState().GetText(), "PS_HUD", 6);
-                if (inHud) windowOpen = true;
-                else if (windowOpen) {
+                if (inHud) {
+                    windowOpen = true;
+                    PriceWindow();
+                } else if (windowOpen) {
                     windowOpen = false;
                     CloseWindow(partner);
                 }
@@ -500,6 +634,7 @@ bool OnOpen(eCEntity* body)
     Wares const& goods = received[id];
     if (!fillOff) Fill(puppet, goods);
     partner = id;
+    hintShown = false;
     // What the puppet really holds now, not what was asked for: a create that failed must not look like a purchase (C).
     ReadPuppet(puppet, expected, expectedGold);
     idleSince = 0;
@@ -510,11 +645,13 @@ bool OnOpen(eCEntity* body)
 
 void Report(LogFn log)
 {
-    char line[500];
+    char line[600];
     Format(line, "TRADESYNC goods_sent=%u serial=%u own_items=%zu own_gold=%d goods_received=%u partner=%d fills=%u swaps=%u offers=%u accepted=%u"
-                    " declined=%u undone=%u not_sent=%u pending=%zu hero_releases=%u price_hooked=%d price_calls=%u price_equal=%u", goodsSent, serial,
+                    " declined=%u undone=%u not_sent=%u pending=%zu hero_releases=%u price_hooked=%d price_calls=%u price_equal=%u price_adjust=%d"
+                    " price_changes=%u price_clamped=%u last_screen_gold=%d last_offer_gold=%d", goodsSent, serial,
               sentItems.size(), sentGold, goodsReceived, partner, fills, swaps, offersSent, offersAccepted, offersDeclined, undone, notSent,
-              pending.size(), heroReleases, costHooked ? 1 : 0, costCalls, costEqual);
+              pending.size(), heroReleases, costHooked ? 1 : 0, costCalls, costEqual, priceAdjust, priceChanges, priceClamped, lastScreenGold,
+              lastOfferGold);
     log(line);
 }
 
@@ -579,6 +716,8 @@ void OnWorldChange()
     windowDelta.clear();
     windowGold = 0;
     windowOpen = false;
+    priceAdjust = 0;
+    priceShowAt = 0;
     partner = 0;
     puppetDialog = false;
     dialogOverSince = 0;
@@ -636,6 +775,23 @@ void Price(char const* argument, LogFn log)
     Format(line, "TRADEPRICE partner=%s item=%s buy=%d sell=%d value=%d hooked=%d calls=%u equal=%u no_entity=%u no_puppet=%u", who, name, buy,
               sell, value, costHooked ? 1 : 0, costCalls, costEqual, costNoEntity, costNoPuppet);
     log(line);
+}
+
+// QA: "<gold>" (n50 = -50) what that many presses' worth of the price keys does: the price up (down) by that much.
+void AdjustCommand(char const* argument, LogFn log)
+{
+    char line[300];
+    const int step = argument && (*argument == 'n' || *argument == 'N') ? -std::atoi(argument + 1) : std::atoi(argument ? argument : "0");
+    const bool ok = ChangePrice(step);
+    Format(line, "TRADEADJUST ok=%d step=%d adjust=%d screen_gold=%d offer_gold=%d window=%d partner=%d clamped=%u", ok ? 1 : 0, step,
+              priceAdjust, windowGold, windowGold - priceAdjust, windowOpen ? 1 : 0, partner, priceClamped);
+    log(line);
+}
+
+void AdjustOff(LogFn log)
+{
+    freePrices = false;
+    log("TRADEADJUSTOFF ok");
 }
 
 void PricesOff(LogFn log)

@@ -57,6 +57,10 @@ If your game cannot reach the host at all, the top line of the main menu says so
 and port from your INI (in the game: a message every 30 seconds). Check that the host's game is running, the address and port,
 and the host's firewall. The mod keeps trying; once it reaches the host, the line is back to normal.
 
+**Over Steam** (`transport = steam`, experimental, see [PLAYING.md](PLAYING.md#over-steam-experimental)): you need no
+address. Your game looks for the host among your Steam friends; until it finds one, the top line of the main menu says so
+after about 15 seconds. The host must be on your Steam friends list and have Steam and its game running.
+
 ## While playing
 
 - If you are downed, wait for your partner. A connected player in the same world can help you up by
@@ -64,13 +68,15 @@ and the host's firewall. The mod keeps trying; once it reaches the host, the lin
   down until they have a potion. If everyone is down or you are alone, you die as in single-player:
   game over, then load a save.
 - Carry healing potions for your partner.
-- Beyond about 35 m from the host, you see **"Far from host"**; below about 25 m, **"Back near the host."**
+- Each player's surroundings run on that player's PC and stay the same for both, so distance from the host shows no
+  message. When your partner is in another world, you see **"<name> is in another world."**
 - **Page Down** puts you directly behind your partner, including when they are downed. There is a
   five-second cooldown. To choose another key, set `partner_key = F9` in the INI (F1–F24, PAGEUP,
   HOME, END, INSERT, DELETE or a letter; Insert and Delete are the trade keys unless you change those).
 - Your partner is marked on your map and compass.
 - Your partner sees the armor and helmet you wear. `look = Diego` in your INI shows you as another character.
 - Trade with your partner: talk to their character, "Show me your wares!"; they confirm with Insert (Delete declines).
+  Set your own price in the open trade window with Num+ / Num− (Shift: steps of 100).
   Other keys: `offer_accept_key` and `offer_decline_key` in the INI; the mod warns at the start if two of your keys are the same.
 - The host saves the campaign.
 - See **Known issues** in the [full player guide](PLAYING.md) for problems and workarounds.

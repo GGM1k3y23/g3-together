@@ -24,7 +24,7 @@ target_compile_options(enet PRIVATE /Gz)
 set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/enet/compress.c" PROPERTIES COMPILE_OPTIONS /Gd)
 target_link_libraries(enet PUBLIC ws2_32 winmm)
 
-add_library(Script_G3Together SHARED src/Script_G3Together.cpp src/log.cpp src/qa.cpp src/config.cpp src/net.cpp
+add_library(Script_G3Together SHARED src/Script_G3Together.cpp src/log.cpp src/qa.cpp src/config.cpp src/net.cpp src/steam.cpp
             src/remote.cpp src/body.cpp src/npcs.cpp src/ai.cpp src/combat.cpp src/hitprobe.cpp src/story.cpp src/talk.cpp src/items.cpp src/containers.cpp src/explore.cpp src/parity.cpp src/downed.cpp src/hud.cpp src/range.cpp src/journal.cpp src/persist.cpp src/hero.cpp src/clock.cpp src/infocmd.cpp src/transform.cpp src/ranged.cpp src/partner.cpp src/summon.cpp src/shot.cpp src/spells.cpp src/crashlog.cpp src/trace.cpp src/world.cpp src/social.cpp src/enclaves.cpp src/doors.cpp src/dialogaudio.cpp src/offer.cpp src/trade.cpp src/mapmarks.cpp src/ransack.cpp src/witness.cpp src/guards.cpp src/pickpocket.cpp src/respawn.cpp src/occupancy.cpp src/address.cpp src/p7probe.cpp src/fightmem.cpp src/guide.cpp src/arena.cpp src/ending.cpp src/i18n.cpp src/exports.def)
 target_gothic_script_options(Script_G3Together)
 # Sources are UTF-8: without /utf-8 MSVC reads them as Windows-1252 and HUD texts show "lÃ¤uft" (plan 3.5).
@@ -33,3 +33,18 @@ target_compile_options(Script_G3Together PRIVATE /utf-8)
 target_link_options(Script_G3Together PRIVATE /MAP)
 target_link_libraries(Script_G3Together PRIVATE g3sdk::SDK enet)
 set_target_properties(Script_G3Together PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/artifacts")
+
+# Steam transport tests (tools/fakesteam/README.md): a stand-in for steam_api.dll over 127.0.0.1 and the transport alone,
+# without the game. Neither goes into the player package.
+add_library(fake_steam_api SHARED tools/fakesteam/fake_steam_api.c)
+target_compile_definitions(fake_steam_api PRIVATE _CRT_SECURE_NO_WARNINGS _WINSOCK_DEPRECATED_NO_WARNINGS)
+target_link_libraries(fake_steam_api PRIVATE ws2_32)
+add_executable(g3t_relaytest tools/fakesteam/relaytest.cpp src/net.cpp src/steam.cpp)
+target_include_directories(g3t_relaytest PRIVATE src)
+# /Gz like the ENet library it links; main stays __cdecl.
+target_compile_options(g3t_relaytest PRIVATE /Gz /utf-8 /EHsc)
+# The mod gets C++17 from the SDK's script options; the test program needs it too (nested namespaces).
+target_compile_features(g3t_relaytest PRIVATE cxx_std_17)
+target_compile_definitions(g3t_relaytest PRIVATE _CRT_SECURE_NO_WARNINGS)
+target_link_libraries(g3t_relaytest PRIVATE enet)
+set_target_properties(fake_steam_api g3t_relaytest PROPERTIES RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/artifacts/fakesteam")

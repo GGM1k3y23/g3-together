@@ -72,6 +72,26 @@ The mod connects directly over UDP port 34567. A private virtual network, such a
 service on both PCs and use the host's virtual-network address as `address`.
 Alternatively, the host can forward UDP port 34567 on their router to their PC.
 
+### Over Steam (experimental)
+
+With `transport = steam` in both INIs, the joining player's game finds the host among their Steam friends, and all traffic
+goes through Steam, relayed by Valve where needed: no address, no port forwarding, no Hamachi.
+
+- Both players need Steam running and logged in, and must be Steam friends. A GOG copy of Gothic 3 works too; only a
+  Steam account is needed.
+- The mod needs Valve's 32-bit `steam_api.dll` in `<Gothic 3>\G3Together\`. The setup puts it there (from the package, or
+  downloaded from the Steamworks.NET release 2025.164.1 after asking, checked by its SHA-256).
+- The mod runs as Valve's free sample app "Spacewar" (AppID 480), so Steam shows both players as playing Spacewar.
+  Nothing has to be bought.
+- With several friends hosting at once, the joining player sets `steam_host = <the host's Steam name>`. The host's
+  `g3together.log` also names its lobby number; `steam_lobby = <number>` joins exactly that one.
+- Without Steam (not running, no `steam_api.dll`) the joining player's game connects to `address` instead and says so in
+  the game. The host's UDP port stays open over Steam too, so a player with an address can join the same game.
+- The Steam overlay's invite may not open in Gothic 3. It is not needed: the joining player's game finds the host by
+  itself, and "Join game" in the Steam friends list works as well while their game is running.
+
+This connection was tested with a stand-in for Steam on one PC; play between two real Steam accounts is still unverified.
+
 ### Using Hamachi
 
 1. Both players install Hamachi and join the **same** Hamachi network.
@@ -193,8 +213,8 @@ these guides used two game copies on one PC; play over the real internet remains
 
 ## Known limitations
 
-- Beyond about 35 m from the host, the joining player sees "Far from host": that region is now
-  simulated on their PC. Below about 25 m, the message is "Back near the host."
+- Each player's surroundings run on that player's PC and stay the same for both; distance shows no
+  message. Host and joining player only see "<name> is in another world." when the partner is in another world.
 - **Jump to your partner:** **Page Down** puts you 1.5 m behind the other player in the same world,
   including a downed partner you want to help. There is a five-second cooldown. Staying together
   is preferable, but you can separate and regroup. To change the key, use `partner_key = F9` in
@@ -207,10 +227,13 @@ these guides used two game copies on one PC; play over the real internet remains
 - **Trading with your partner:** talk to the other player's character and choose "Show me your wares!". The game's trade
   window opens with what your partner can trade (not what they wear, no quest items) and their gold; prices are the
   same both ways; a sharpened, blessed or forged weapon stays so. On your very first trade a tip box comes first: click Ok. Swap as often as you like, then close the
-  window: your partner gets one offer and accepts with Insert or declines with Delete within 30 seconds. Until then
+  window: your partner gets one offer and accepts with Insert or declines with Delete within 30 seconds. **Your own
+  price:** while the window is open, Num+ and Num− set how much gold changes hands (10 a press, 100 with Shift); the
+  price starts at the goods' value and shows on the screen. Your partner sees it in the offer and decides. It cannot go
+  beyond the gold either of you has, nor below nothing (that makes it a gift). Until then
   you have neither what you get nor what you gave; afterwards everything is where it belongs. Other keys:
-  `offer_accept_key = F7` and `offer_decline_key = F8` in the INI (the same names as for `partner_key`). If two of
-  these three keys are the same, one press does both: the mod says so on the screen at the start and in `g3together.log`.
+  `offer_accept_key = F7`, `offer_decline_key = F8`, `price_up_key` and `price_down_key` (default `NUMPLUS`,
+  `NUMMINUS`) in the INI (the same names as for `partner_key`). If two of these keys are the same, one press does both: the mod says so on the screen at the start and in `g3together.log`.
 - Dialog changes to NPCs, such as trader, teacher, guard and routine settings, apply to everyone,
   as do dialog-triggered duels, attacks and companion recruitment. Dialog items go to the player
   speaking.

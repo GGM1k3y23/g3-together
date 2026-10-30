@@ -72,8 +72,8 @@ choose independently; the setting changes only mod messages.
 | 8–18 min | Shared combat | Fight a small encounter near the host. Both attack the same NPC. Check that hits and deaths appear on both PCs and the actual killer earns the experience. Record quest state and counters; one success does not verify every kill-quest case. |
 | 18–28 min | Recruit and dismiss a companion | The joining player recruits a suitable NPC. Check that it follows that player, appears on both PCs and is not simulated twice. The same player then dismisses it; both check that it no longer acts as their companion. |
 | 28–38 min | Knock-out and help | In a safe setting, let one player be knocked down in a controlled way. Their partner first stands next to them for a few seconds: nothing should happen. Then the partner talks to them and chooses "I will help you.". Check the recovery, notice and consumption of one healing potion. Without a potion, both should receive a notice and the player should remain down. Optionally at the end, before reloading: with both players down, both die and reach game over. |
-| 38–50 min | Dialog, quest, trade and loot | Speak to an NPC, trigger a known quest step, perform a clearly identifiable trade and take an item from a chest or corpse. Compare quest and dialog state, gold and item counts. Then trade with each other using the mouse: one player talks to the other's character and chooses "Show me your wares!" (on the very first trade, click Ok on the tip), takes one item, gives one and closes the window; the other accepts with Insert. Compare items and gold on both PCs. Trade once more and decline with Delete: nothing should change hands. Bots could not test the trade window's mouse controls. |
-| 50–70 min | Distance, separate regions and regrouping | Move apart. Beyond about 35 m, check for "Far from host" and that the host is told who is away. While separated, each player fights a different NPC in their region; record whether results agree and whether anything appears to be simulated twice. Regroup within about 25 m and check for "Back near the host." and matching world state. Accept a kill quest and kill a target in the joining player's region: the counter in the host's quest log should increase. |
+| 38–50 min | Dialog, quest, trade and loot | Speak to an NPC, trigger a known quest step, perform a clearly identifiable trade and take an item from a chest or corpse. Compare quest and dialog state, gold and item counts. Then trade with each other using the mouse: one player talks to the other's character and chooses "Show me your wares!" (on the very first trade, click Ok on the tip), takes one item, gives one and closes the window; the other accepts with Insert. Compare items and gold on both PCs. Trade once more and decline with Delete: nothing should change hands. Then set your own price: in the open window press Num+ a few times (Shift+Num+ for 100), the price shows on the screen; the other player sees it in the offer and accepts; compare the gold on both PCs. Bots could not test the trade window's mouse controls or the price keys. |
+| 50–70 min | Distance, separate regions and regrouping | Move apart. Beyond about 35 m, check that no distance message appears on either PC (no "Far from host", no "is far away"). While separated, each player fights a different NPC in their region; record whether results agree and whether anything appears to be simulated twice. Regroup and check that no message appears ("Back near the host." is gone) and that the world state matches. Accept a kill quest and kill a target in the joining player's region: the counter in the host's quest log should increase. |
 | 70–82 min | Save and load | The host saves with a distinct name. Check that the other player keeps their hero for this save. Use a separate test save or backup for loading. Let the world and players settle, then compare their state. If the joining player had a companion, it should follow them again after loading and rejoining. |
 | 82–90 min | Rejoin and bug report | If time remains, test a clean disconnect and rejoin, in the same process or after restarting. Record campaign, hero record, NPC ownership and companion state. If something failed, collect both players' logs as described below and give them privately to the host. |
 
@@ -136,6 +136,18 @@ and saving on the host. Test separate regions and rejoining in a follow-up sessi
 | Story moves | After Ardea is freed, both players go far away: Diego, Gorn and Milten stand at the same new places on both PCs. With Diego following the joining player, he stays with that player. |
 | Freed town | The joining player frees a town with shared reputation: the rebels speak to the host about it as to the joining player. |
 | Sleeping animal | The joining player walks up to a sleeping animal: it wakes up as it would for the host. |
+
+### Optional: over Steam (experimental)
+
+Both set `transport = steam` (or choose Steam in the setup) and are Steam friends; see [PLAYING.md](PLAYING.md#over-steam-experimental).
+
+| Stage | Steps and observations |
+|---|---|
+| Finding the host | The host starts first, then the joining player without an address: within a few seconds it joins (note how long). Steam shows both as playing Spacewar. |
+| Different networks | Play from two different homes (no LAN, no VPN): joining, the save transfer and an hour of play work. Note stutters compared with Hamachi. |
+| Join game | The joining player's game runs first; then "Join game" on the host in the Steam friends list: it joins. |
+| Leaving | The joining player quits: the host sees it gone at once. It starts again and rejoins. |
+| Without Steam | The joining player closes Steam and starts the game: a message says Steam cannot be used, and with an address in the INI it connects by address. |
 
 ## Recording a bug
 

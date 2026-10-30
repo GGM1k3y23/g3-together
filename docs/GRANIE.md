@@ -72,6 +72,27 @@ Mod łączy się bezpośrednio przez UDP, port 34567. Prywatna sieć wirtualna, 
 graczom połączyć się bez przekierowania portu na routerze. Zainstaluj wybraną usługę na obu komputerach i wpisz jako
 `address` adres hosta w sieci wirtualnej. Host może też przekierować na routerze port UDP 34567 na swój komputer.
 
+### Przez Steam (eksperymentalnie)
+
+Z `transport = steam` w obu plikach INI gra dołączającego gracza sama znajduje hosta wśród jego znajomych na Steam, a cały
+ruch idzie przez Steam, w razie potrzeby przez przekaźniki Valve: bez adresu, bez przekierowania portów, bez Hamachi.
+
+- Obaj gracze potrzebują uruchomionego i zalogowanego Steam i muszą być znajomymi na Steam. Gothic 3 z GOG też działa;
+  potrzebne jest tylko konto Steam.
+- Mod potrzebuje 32-bitowego pliku `steam_api.dll` od Valve w `<Gothic 3>\G3Together\`. Instalator umieszcza go tam (z
+  paczki albo, po pytaniu, pobrany z wydania Steamworks.NET 2025.164.1 i sprawdzony sumą SHA-256).
+- Mod działa jako darmowa przykładowa aplikacja Valve „Spacewar” (AppID 480), więc Steam pokazuje obu graczy jako grających
+  w Spacewar. Nic nie trzeba kupować.
+- Gdy hostuje kilku znajomych naraz, dołączający gracz wpisuje `steam_host = <nazwa hosta na Steam>`. Plik
+  `g3together.log` hosta podaje też numer lobby; `steam_lobby = <numer>` dołącza dokładnie do niego.
+- Bez Steam (nie działa, brak `steam_api.dll`) gra dołączającego gracza łączy się zamiast tego z `address` i mówi o tym w
+  grze. Port UDP hosta pozostaje otwarty także przy Steam, więc gracz z adresem może dołączyć do tej samej gry.
+- Zaproszenie przez nakładkę Steam może się w Gothic 3 nie otworzyć. Nie jest potrzebne: gra dołączającego gracza sama
+  znajduje hosta, a „Dołącz do gry” na liście znajomych Steam też działa, gdy jego gra jest uruchomiona.
+
+To połączenie przetestowano z zastępnikiem Steam na jednym komputerze; gra między dwoma prawdziwymi kontami Steam nie została
+jeszcze sprawdzona.
+
 ### Hamachi
 
 1. Obaj gracze instalują Hamachi i dołączają do **tej samej** sieci Hamachi.
@@ -189,8 +210,8 @@ gry na jednym komputerze; gra przez prawdziwy internet nie została jeszcze spra
 
 ## Znane ograniczenia
 
-- Dalej niż około 35 m od hosta dołączający gracz widzi „Daleko od hosta”: ten region jest teraz symulowany na jego
-  komputerze. Bliżej niż około 25 m komunikat brzmi „Znów w pobliżu hosta.”
+- Okolica każdego gracza działa na jego komputerze i jest taka sama dla obu; odległość nie wywołuje komunikatu. Host i
+  dołączający gracz widzą tylko „Gracz <nazwa> jest w innym świecie.”, gdy drugi gracz jest w innym świecie.
 - **Skok do drugiego gracza:** **Page Down** stawia cię 1,5 m za drugim graczem w tym samym świecie, także za powalonym
   graczem, któremu chcesz pomóc. Można go użyć raz na pięć sekund. Lepiej trzymać się razem, ale możecie się rozdzielić
   i potem zebrać. Aby zmienić klawisz, wpisz w INI `partner_key = F9` (F1–F24, PAGEUP, HOME, END, INSERT, DELETE albo
@@ -203,9 +224,13 @@ gry na jednym komputerze; gra przez prawdziwy internet nie została jeszcze spra
   handlu gry z tym, czym drugi gracz może handlować (nie z tym, co ma na sobie, bez przedmiotów fabularnych), i jego
   złotem; ceny są takie same w obie strony; naostrzona, poświęcona albo wykuta broń taka pozostaje. Przy pierwszym handlu
   najpierw pojawi się okno ze wskazówką: kliknij Ok. Wymieniaj, ile chcesz, potem zamknij okno: drugi gracz dostaje jedną
-  ofertę i w ciągu 30 sekund przyjmuje ją klawiszem Insert albo odrzuca klawiszem Delete. Do tego czasu nie masz ani tego,
-  co dostajesz, ani tego, co dałeś; potem wszystko jest tam, gdzie powinno. Inne klawisze: `offer_accept_key = F7`
-  i `offer_decline_key = F8` w INI (te same nazwy co dla `partner_key`). Jeśli dwa z tych trzech klawiszy są takie same,
+  ofertę i w ciągu 30 sekund przyjmuje ją klawiszem Insert albo odrzuca klawiszem Delete. **Własna cena:** dopóki okno
+  jest otwarte, klawiszami Num+ i Num− ustawiasz, ile złota przechodzi z rąk do rąk (10 na naciśnięcie, z Shift 100);
+  cena zaczyna się od wartości towaru i widać ją na ekranie. Drugi gracz widzi ją w ofercie i decyduje. Nie może
+  przekroczyć złota, które macie, ani spaść poniżej zera (wtedy to prezent). Do tego czasu nie masz ani tego,
+  co dostajesz, ani tego, co dałeś; potem wszystko jest tam, gdzie powinno. Inne klawisze: `offer_accept_key = F7`,
+  `offer_decline_key = F8`, `price_up_key` i `price_down_key` (domyślnie `NUMPLUS`, `NUMMINUS`) w INI (te same nazwy co
+  dla `partner_key`). Jeśli dwa z tych klawiszy są takie same,
   jedno naciśnięcie wywołuje obie akcje: mod mówi o tym na ekranie przy starcie i w `g3together.log`.
 - Zmiany postaci przez dialogi, np. ustawienia handlarza, nauczyciela, strażnika i rozkładu dnia, obowiązują wszystkich,
   podobnie jak pojedynki, ataki i werbowanie towarzyszy wywołane dialogiem. Przedmioty z dialogów dostaje gracz, który

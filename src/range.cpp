@@ -14,16 +14,13 @@
 
 namespace g3t::range {
 namespace {
-// The engine processes entities within Entity.ROI (4000 cm in ge3.ini) of the camera, plus a 250 cm movement
-// threshold (static analysis; ~45 m measured in exploration 1). Past 35 m a client's own surroundings start to
-// fall outside the host's range; back under 25 m counts as together again (no flicker at the edge).
-constexpr float FarAt = 3500.0f;
-constexpr float NearAt = 2500.0f;
-constexpr uint32_t Reminder = 60000;  // ms between reminders while still far away
+// Each player's surroundings run on that player's PC and stay the same for both (stage E), so distance alone needs
+// no notice any more. Only a partner in another world is told, to host and client alike.
+constexpr uint32_t Reminder = 60000;  // ms between reminders while still in another world
 constexpr uint32_t StaleState = 5000;
 
 bool enabled = true;
-bool isFar[net::MaxPlayers] = {};        // client: index 1 = me from the host; host: each client
+bool isFar[net::MaxPlayers] = {};        // in another world; client: index 1 = the host; host: each client
 uint32_t lastTold[net::MaxPlayers] = {};
 unsigned warnings = 0, allClears = 0;
 float distance[net::MaxPlayers] = {};
@@ -51,31 +48,19 @@ void Tick()
         const bool otherWorld = r.latest.world != remote::CurrentWorld();
         distance[i] = otherWorld ? 1e9f : body::Distance(r.latest.position, here);
         const bool wasFar = isFar[i];
-        if (!wasFar && distance[i] > FarAt) isFar[i] = true;
-        else if (wasFar && distance[i] < NearAt) isFar[i] = false;
-        wchar_t text[200], name[32] = {};
-        if (!MultiByteToWideChar(CP_UTF8, 0, r.latest.name, -1, name, 32)) name[0] = 0;
-        name[31] = 0;
+        isFar[i] = otherWorld;
         if (isFar[i] && (!wasFar || now - lastTold[i] > Reminder)) {
             lastTold[i] = now;
             ++warnings;
-            if (host) {
-                if (otherWorld) swprintf_s(text, i18n::Text(i18n::PartnerInOtherWorld), name);
-                else swprintf_s(text, i18n::Text(i18n::PartnerFarAway), name, static_cast<int>(distance[i] / 100.0f));
-                hud::Message(hud::Warning, text);
-            } else {
-                hud::Message(hud::Warning, i18n::Text(i18n::FarFromHost));
-            }
-            Logf("range: player %d far away (%.0f m)", i, distance[i] / 100.0f);
+            wchar_t text[200], name[32] = {};
+            if (!MultiByteToWideChar(CP_UTF8, 0, r.latest.name, -1, name, 32)) name[0] = 0;
+            name[31] = 0;
+            swprintf_s(text, i18n::Text(i18n::PartnerInOtherWorld), name);
+            hud::Message(hud::Warning, text);
+            Logf("range: player %d in another world", i);
         } else if (!isFar[i] && wasFar) {
             ++allClears;
-            if (host) {
-                swprintf_s(text, i18n::Text(i18n::PartnerNearby), name);
-                hud::Message(hud::Good, text);
-            } else {
-                hud::Message(hud::Good, i18n::Text(i18n::NearHost));
-            }
-            Logf("range: player %d near again (%.0f m)", i, distance[i] / 100.0f);
+            Logf("range: player %d in this world again (%.0f m)", i, distance[i] / 100.0f);
         }
     }
 }

@@ -69,6 +69,29 @@ virtuelles privates Netz, das alle Spieler installieren, zum Beispiel **Tailscal
 Als `address` trägt man dann die Tailscale- bzw. ZeroTier-Adresse des Hosts ein.
 Alternativ leitet der Host UDP-Port 34567 in seinem Router auf seinen PC weiter.
 
+### Über Steam (experimentell)
+
+Mit `transport = steam` in beiden INIs findet das Spiel des Mitspielers den Host unter seinen Steam-Freunden, und der ganze
+Verkehr läuft über Steam, wo nötig über Valves Relay: keine Adresse, keine Portfreigabe, kein Hamachi.
+
+- Beide brauchen ein laufendes, angemeldetes Steam und müssen Steam-Freunde sein. Ein Gothic 3 von GOG geht auch; nötig
+  ist nur ein Steam-Konto.
+- Die Mod braucht Valves 32-Bit-`steam_api.dll` in `<Gothic 3>\G3Together\`. Das Setup legt sie dort ab (aus dem Paket oder
+  nach Rückfrage aus dem Steamworks.NET-Release 2025.164.1 heruntergeladen, per SHA-256 geprüft).
+- Die Mod läuft als Valves kostenlose Beispiel-App „Spacewar“ (AppID 480); Steam zeigt beide als „spielt Spacewar“.
+  Kaufen muss man nichts.
+- Hosten mehrere Freunde gleichzeitig, trägt der Mitspieler `steam_host = <Steam-Name des Hosts>` ein. Die
+  `g3together.log` des Hosts nennt auch die Lobby-Nummer; `steam_lobby = <Nummer>` tritt genau dieser bei.
+- Ohne Steam (läuft nicht, keine `steam_api.dll`) verbindet das Spiel des Mitspielers stattdessen mit `address` und sagt
+  das im Spiel. Der UDP-Port des Hosts bleibt auch über Steam offen, ein Spieler mit Adresse kann also demselben Spiel
+  beitreten.
+- Die Einladung über das Steam-Overlay geht in Gothic 3 vielleicht nicht auf. Sie ist nicht nötig: Das Spiel des
+  Mitspielers findet den Host von selbst, und „Spiel beitreten“ in der Steam-Freundesliste geht auch, solange sein Spiel
+  läuft.
+
+Getestet ist diese Verbindung mit einem Steam-Ersatz auf einem PC; zwischen zwei echten Steam-Konten ist sie noch nicht
+geprüft.
+
 ### Über Hamachi
 
 1. Beide Spieler installieren Hamachi und treten **demselben** Hamachi-Netz bei.
@@ -200,8 +223,8 @@ beschriebenen Tests liefen auf einem PC mit zwei Spielkopien; Spielen über das 
 
 ## Bekannte Grenzen
 
-- Ab etwa 35 m vom Host meldet das Spiel „Weit weg vom Host“: Die Gegend läuft dann beim Mitspieler. Unter etwa
-  25 m kommt „Wieder beim Host“.
+- Die Gegend jedes Spielers läuft bei ihm und bleibt für beide gleich; Abstand löst keine Meldung aus. Host und Mitspieler
+  sehen nur „<Name> ist in einer anderen Welt.“, wenn der andere in einer anderen Welt ist.
 - **Zum Mitspieler springen:** Die Taste **Bild ab** (Page Down) setzt dich 1,5 m hinter deinen Mitspieler, in derselben
   Welt, auch wenn er bewusstlos ist (dann kannst du ihm aufhelfen). Danach 5 Sekunden Pause. So könnt ihr euch trennen und
   jederzeit wieder treffen; am besten bleibt ihr meist zusammen. Andere Taste: `partner_key = F9` in der INI
@@ -216,9 +239,12 @@ beschriebenen Tests liefen auf einem PC mit zwei Spielkopien; Spielen über das 
   Gold; die Preise sind in beide Richtungen gleich, eine geschärfte, gesegnete oder geschmiedete Waffe bleibt es. Beim
   allerersten Handel kommt zuerst ein Tipp: auf „Ok“ klicken.
   Tausche so oft du willst und schließe dann das Fenster: Dein Mitspieler bekommt ein Angebot und nimmt es innerhalb von
-  30 Sekunden mit Einfg an oder lehnt mit Entf ab. Bis dahin hast du weder, was du bekommst, noch, was du hergegeben hast;
-  danach ist alles beim Richtigen. Andere Tasten: `offer_accept_key = F7` und `offer_decline_key = F8` in der INI
-  (dieselben Namen wie bei `partner_key`). Sind zwei dieser drei Tasten gleich, löst ein Druck beides aus: Die Mod sagt
+  30 Sekunden mit Einfg an oder lehnt mit Entf ab. **Eigener Preis:** Solange das Fenster offen ist, stellst du mit
+  Num+ und Num− ein, wie viel Gold fließt (10 pro Druck, mit Shift 100); der Preis startet beim Wert der Ware und steht
+  oben auf dem Bildschirm. Dein Mitspieler sieht ihn im Angebot und entscheidet. Mehr Gold, als einer von euch hat, geht
+  nicht, und unter null geht der Preis nicht (dann ist es ein Geschenk). Bis dahin hast du weder, was du bekommst, noch, was du hergegeben hast;
+  danach ist alles beim Richtigen. Andere Tasten: `offer_accept_key = F7`, `offer_decline_key = F8`, `price_up_key` und
+  `price_down_key` (Standard `NUMPLUS`, `NUMMINUS`) in der INI (dieselben Namen wie bei `partner_key`). Sind zwei dieser Tasten gleich, löst ein Druck beides aus: Die Mod sagt
   das beim Start auf dem Bildschirm und in `g3together.log`.
 - Dialog-Auswirkungen: Was ein Dialog bei einem NPC ändert (Händler, Lehrer, Wache, Tagesablauf ...), Duelle und
   Angriffe aus Dialogen und das Anwerben von Gefolgsleuten gelten für alle. Gegenstände aus Dialogen bekommt, wer

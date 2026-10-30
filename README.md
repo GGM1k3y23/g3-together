@@ -40,6 +40,8 @@ Choose one **host** and one **joining player**, enter names and the host's addre
 
 The default is **UDP port 34567**. Allow Gothic 3 through the host's firewall and use a reachable host address. See the [network guide](docs/PLAYING.md#connecting-over-the-internet) for VPN and port-forwarding options.
 
+Experimental: choose **Steam** in the setup (`transport = steam`) and the joining player's game finds the host among its Steam friends, with no address or port forwarding. See [over Steam](docs/PLAYING.md#over-steam-experimental).
+
 | Host starts first… | Joining player… |
 | --- | --- |
 | Load a saved campaign. | **Wait in the main menu**; the campaign transfers and loads automatically. |
@@ -134,4 +136,4 @@ The compiled QA bot activates only with `qa-enable.txt`. Use it only in disposab
 
 ## License and credits
 
-**GPL-3.0-or-later** — see [COPYING](COPYING). Built on the unofficial [Gothic 3 SDK](https://github.com/georgeto/gothic3sdk); bundles [ENet 1.3.18](https://github.com/lsalzman/enet) under its [MIT license](thirdparty/enet/LICENSE).
+**GPL-3.0-or-later** — see [COPYING](COPYING). Built on the unofficial [Gothic 3 SDK](https://github.com/georgeto/gothic3sdk); bundles [ENet 1.3.18](https://github.com/lsalzman/enet) under its [MIT license](thirdparty/enet/LICENSE). With an [additional permission](COPYING.STEAMWORKS) under GPLv3 section 7 for combining it with Valve's Steamworks API library (`steam_api.dll`, the optional Steam connection). The Steam transport is adapted from [Jericho Co-op](https://github.com/dolbaras/jericho-coop) ([MIT](thirdparty/licenses/jericho-coop-LICENSE)).
