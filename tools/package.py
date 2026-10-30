@@ -44,12 +44,10 @@ price_down_key = NUMMINUS
 # How far around the host its game runs the world, in cm (default 8000; the game itself uses 4000). Larger keeps the
 # NPCs near the other player on this PC longer, so they change hands less often.
 # host_roi = 8000
-# Recommended for co-op (off by default): elastic makes the host run the world around both players while they are within
-# its view distance, so the NPCs near the other player stay on this PC. Remove the # to use it; off is the previous behaviour.
-# host_sim = elastic
-# Or spheres (off by default): the host runs a sphere of host_roi around each player instead of one around both; the same
-# limit (the host's view distance), less work between the players.
-# host_sim = spheres
+# spheres (default): the host runs the world in a sphere of host_roi around each player, so the NPCs near the other player
+# stay on this PC (up to the host's view distance). elastic: one sphere around both players instead. off: each PC runs its
+# own surroundings (before 0.7.0).
+# host_sim = off
 # auto (default) shows the other player where they probably are now, not where their last state came from (a little ahead
 # along their movement); off as before. Each player decides for their own screen.
 # puppet_lead = off

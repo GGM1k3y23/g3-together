@@ -35,8 +35,9 @@ struct Config
     // world, so the host simulates the NPCs around the clients too; off: each machine its own surroundings (as before).
     bool hostSimElastic = false;
     // host_sim = spheres (world.cpp, Stufe 2 in full, 28.10.): instead of one sphere around all, the host processes one sphere
-    // around each other player as well as its own (host_roi each), the camera stays where it is.
-    bool hostSimSpheres = false;
+    // around each other player as well as its own (host_roi each), the camera stays where it is. Default since 30.10. (owner;
+    // stageRoiHold at 60 m: spheres 3/3, host_sim = off red).
+    bool hostSimSpheres = true;
     // puppet_lead = auto | off (body.cpp, Stufe 3.2): auto shows the other players' puppets where they probably are now (their
     // last movement carried on by half the round trip, at most 150 ms) instead of where their last state came from; off: as
     // before. Each player for the puppets on its own screen. Auto by default since 28.10. (stageWalk under G3_NETSIM: the
